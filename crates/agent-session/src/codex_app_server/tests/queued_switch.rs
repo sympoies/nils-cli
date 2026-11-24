@@ -2,14 +2,14 @@ use super::*;
 use pretty_assertions::assert_eq;
 use std::os::fd::AsRawFd;
 
-#[tokio::test]
-async fn manual_switch_applies_after_usage_limit_without_live_idle_probe() {
-    after_usage_limit(false).await;
+#[test]
+fn manual_switch_applies_after_usage_limit_without_live_idle_probe() {
+    control_fixture::run(async |root| after_usage_limit(root, false).await);
 }
 
-#[tokio::test]
-async fn automatic_failover_applies_after_structured_failure_without_live_idle_probe() {
-    after_usage_limit(true).await;
+#[test]
+fn automatic_failover_applies_after_structured_failure_without_live_idle_probe() {
+    control_fixture::run(async |root| after_usage_limit(root, true).await);
 }
 
 async fn shutdown_control(
@@ -25,11 +25,10 @@ async fn shutdown_control(
         .expect("control shutdown failed");
 }
 
-async fn after_usage_limit(automatic: bool) {
+async fn after_usage_limit(root: &Path, automatic: bool) {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
-    let broker = tmp.path().join("broker");
-    let broker_calls = tmp.path().join("broker-calls");
+    let broker = root.join("broker");
+    let broker_calls = root.join("broker-calls");
     fs::write(
         &broker,
         r#"#!/bin/sh
@@ -69,7 +68,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
     let (_dir, socket_path) = nils_test_support::short_socket_path("manual-switch.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
-        state_dir: tmp.path().join("state"),
+        state_dir: root.join("state"),
         host: None,
     };
     let mut record = record_with_runtime("manual-switch", &socket_path);
@@ -676,13 +675,18 @@ fn assert_resumed_thread_idle_response(scenario: &'static str) {
     drop(runtime);
 }
 
-#[tokio::test]
-async fn resumed_control_subscribes_before_snapshot_and_projects_later_start() {
-    let tmp = tempfile::TempDir::new().unwrap();
+#[test]
+fn resumed_control_subscribes_before_snapshot_and_projects_later_start() {
+    control_fixture::run(
+        exercise_resumed_control_subscribes_before_snapshot_and_projects_later_start,
+    );
+}
+
+async fn exercise_resumed_control_subscribes_before_snapshot_and_projects_later_start(root: &Path) {
     let (_socket_dir, socket_path) = nils_test_support::short_socket_path("resume-control.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
-        state_dir: tmp.path().join("state"),
+        state_dir: root.join("state"),
         host: None,
     };
     let mut record = record_with_runtime("resume-control", &socket_path);

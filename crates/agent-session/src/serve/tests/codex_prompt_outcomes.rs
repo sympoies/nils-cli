@@ -264,16 +264,19 @@ fn chatgpt_control_reads_usage_and_admits_keyed_prompt() {
     });
 }
 
-#[tokio::test]
-async fn first_keyed_api_key_prompt_survives_delayed_thread_start() {
+#[test]
+fn first_keyed_api_key_prompt_survives_delayed_thread_start() {
+    control_fixture::run(exercise_first_keyed_api_key_prompt_survives_delayed_thread_start);
+}
+
+async fn exercise_first_keyed_api_key_prompt_survives_delayed_thread_start(root: &Path) {
     let id = "delayed-api-key-start";
-    let tmp = tempfile::TempDir::new().unwrap();
-    let launch = seed_codex_app_server_session(tmp.path(), id);
+    let launch = seed_codex_app_server_session(root, id);
     let (_socket_dir, upstream) = nils_test_support::short_socket_path("delayed-start.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let proxy_path = upstream.with_extension("proxy");
-    let (tmux, terminal_enter) = empty_composer_tmux_marking_enter(tmp.path());
-    let st = state(tmp.path(), Some(TOKEN), tmux);
+    let (tmux, terminal_enter) = empty_composer_tmux_marking_enter(root);
+    let st = state(root, Some(TOKEN), tmux);
     let mut record = load_session_record(&st.context, id).unwrap();
     let runtime = record.runtime.as_mut().unwrap();
     runtime.extra.insert(

@@ -4360,11 +4360,14 @@ fn control_reconnect_resumes_the_bound_loaded_thread() {
     control_fixture::run(control_fixture::assert_reconnect_resumes_bound_thread);
 }
 
-#[tokio::test]
-async fn control_reconnect_applies_external_auth_before_thread_discovery() {
+#[test]
+fn control_reconnect_applies_external_auth_before_thread_discovery() {
+    control_fixture::run(exercise_control_reconnect_applies_external_auth_before_thread_discovery);
+}
+
+async fn exercise_control_reconnect_applies_external_auth_before_thread_discovery(root: &Path) {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
-    let broker = tmp.path().join("broker");
+    let broker = root.join("broker");
     fs::write(
         &broker,
         "#!/bin/sh\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"acct1\",\"access_token\":\"token-acct1\",\"chatgpt_account_id\":\"workspace-acct1\",\"plan\":\"team\"}'\n",
@@ -4379,7 +4382,7 @@ async fn control_reconnect_applies_external_auth_before_thread_discovery() {
     let (_socket_dir, socket_path) = nils_test_support::short_socket_path("auth-reconnect.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
-        state_dir: tmp.path().join("state"),
+        state_dir: root.join("state"),
         host: None,
     };
     let mut record = record_with_runtime("auth-reconnect", &socket_path);
@@ -4987,12 +4990,17 @@ async fn proxy_rejects_runtime_replacement_while_account_apply_is_pending() {
     let _ = proxy.await;
 }
 
-#[tokio::test]
-async fn managed_handoff_boundary_preserves_thread_and_arms_one_continuation() {
+#[test]
+fn managed_handoff_boundary_preserves_thread_and_arms_one_continuation() {
+    control_fixture::run(
+        exercise_managed_handoff_boundary_preserves_thread_and_arms_one_continuation,
+    );
+}
+
+async fn exercise_managed_handoff_boundary_preserves_thread_and_arms_one_continuation(root: &Path) {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
-    let broker = tmp.path().join("broker");
-    let broker_calls = tmp.path().join("broker-calls");
+    let broker = root.join("broker");
+    let broker_calls = root.join("broker-calls");
     fs::write(
         &broker,
         r#"#!/bin/sh
@@ -5032,7 +5040,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
     let (_socket_dir, socket_path) = nils_test_support::short_socket_path("apply-next.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
-        state_dir: tmp.path().join("state"),
+        state_dir: root.join("state"),
         host: None,
     };
     let mut record = record_with_runtime("apply-next", &socket_path);
@@ -5329,13 +5337,16 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
     let _ = control.await;
 }
 
-#[tokio::test]
-async fn submit_prompt_rejects_response_without_acknowledged_turn_id() {
-    let tmp = tempfile::TempDir::new().unwrap();
+#[test]
+fn submit_prompt_rejects_response_without_acknowledged_turn_id() {
+    control_fixture::run(exercise_submit_prompt_rejects_response_without_acknowledged_turn_id);
+}
+
+async fn exercise_submit_prompt_rejects_response_without_acknowledged_turn_id(root: &Path) {
     let (_socket_dir, socket_path) = nils_test_support::short_socket_path("missing-turn-id.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
-        state_dir: tmp.path().join("state"),
+        state_dir: root.join("state"),
         host: None,
     };
     let record = record_with_runtime("missing-turn-id", &socket_path);
@@ -5393,11 +5404,16 @@ async fn submit_prompt_rejects_response_without_acknowledged_turn_id() {
     let _ = control.await;
 }
 
-#[tokio::test]
-async fn failed_reconnect_waits_for_explicit_rebind_before_thread_discovery() {
+#[test]
+fn failed_reconnect_waits_for_explicit_rebind_before_thread_discovery() {
+    control_fixture::run(
+        exercise_failed_reconnect_waits_for_explicit_rebind_before_thread_discovery,
+    );
+}
+
+async fn exercise_failed_reconnect_waits_for_explicit_rebind_before_thread_discovery(root: &Path) {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
-    let broker = tmp.path().join("broker");
+    let broker = root.join("broker");
     fs::write(
         &broker,
         "#!/bin/sh\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"acct1\",\"access_token\":\"token-acct1\",\"chatgpt_account_id\":\"workspace-acct1\",\"plan\":\"team\"}'\n",
@@ -5412,7 +5428,7 @@ async fn failed_reconnect_waits_for_explicit_rebind_before_thread_discovery() {
     let (_socket_dir, socket_path) = nils_test_support::short_socket_path("failed-reconnect.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
-        state_dir: tmp.path().join("state"),
+        state_dir: root.join("state"),
         host: None,
     };
     let mut record = record_with_runtime("failed-reconnect", &socket_path);
@@ -7560,13 +7576,20 @@ async fn proxy_transport_loss_durably_fails_closed() {
     assert_eq!(view.failure_reason.as_deref(), Some("state_unavailable"));
 }
 
-#[tokio::test]
-async fn unix_control_recovers_raw_active_turn_after_reconnect_before_steering() {
-    let tmp = tempfile::TempDir::new().unwrap();
+#[test]
+fn unix_control_recovers_raw_active_turn_after_reconnect_before_steering() {
+    control_fixture::run(
+        exercise_unix_control_recovers_raw_active_turn_after_reconnect_before_steering,
+    );
+}
+
+async fn exercise_unix_control_recovers_raw_active_turn_after_reconnect_before_steering(
+    root: &Path,
+) {
     let (_socket_dir, socket) = nils_test_support::short_socket_path("reconnect.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let context = CliContext {
-        state_dir: tmp.path().join("state"),
+        state_dir: root.join("state"),
         host: None,
     };
     let record = record_with_runtime("reconnect-control", &socket);
@@ -7663,19 +7686,26 @@ async fn unix_control_recovers_raw_active_turn_after_reconnect_before_steering()
     let _ = control.await;
 }
 
-#[tokio::test]
-async fn unix_control_projects_live_failure_and_acknowledges_exact_turn_without_content() {
+#[test]
+fn unix_control_projects_live_failure_and_acknowledges_exact_turn_without_content() {
+    control_fixture::run(
+        exercise_unix_control_projects_live_failure_and_acknowledges_exact_turn_without_content,
+    );
+}
+
+async fn exercise_unix_control_projects_live_failure_and_acknowledges_exact_turn_without_content(
+    root: &Path,
+) {
     let env_lock = GlobalStateLock::new();
     let _broker = EnvGuard::set(
         &env_lock,
         "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
         r#"["/configured/broker"]"#,
     );
-    let tmp = tempfile::TempDir::new().unwrap();
     let (_socket_dir, socket) = nils_test_support::short_socket_path("codex.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let context = CliContext {
-        state_dir: tmp.path().join("state"),
+        state_dir: root.join("state"),
         host: None,
     };
     let id = "codex-control";

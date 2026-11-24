@@ -3,7 +3,7 @@
 
 ### Result
 
-- Keep Codex control test roots alive until the runtime drains retirement work.
+- Keep direct Codex control test roots alive until the runtime drains retirement work.
   Use a write-free tmux stub for provider usage fixtures.
 
 ### Why / context

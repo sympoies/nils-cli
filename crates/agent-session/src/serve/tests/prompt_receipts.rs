@@ -1,4 +1,5 @@
 use super::*;
+use crate::codex_app_server::tests::control_fixture;
 use codex_app_server::prompt_submit::{acknowledgement_unknown, not_confirmed, not_dispatched};
 use pretty_assertions::assert_eq;
 
@@ -827,14 +828,19 @@ async fn unkeyed_idle_claude_guard_returns_unknown_with_cleanup() {
     assert!(!tmp.path().join("submitted").exists());
 }
 
-#[tokio::test]
-async fn structured_prompt_waits_for_control_startup_before_record_lock() {
+#[test]
+fn structured_prompt_waits_for_control_startup_before_record_lock() {
+    control_fixture::run_short(
+        exercise_structured_prompt_waits_for_control_startup_before_record_lock,
+    );
+}
+
+async fn exercise_structured_prompt_waits_for_control_startup_before_record_lock(root: &Path) {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use tokio_tungstenite::tungstenite::Message;
-    let tmp = tempfile::tempdir_in("/tmp").unwrap();
     let id = "startup-prompt";
-    let launch_id = seed_codex_app_server_session(tmp.path(), id);
-    let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
+    let launch_id = seed_codex_app_server_session(root, id);
+    let st = state(root, Some(TOKEN), empty_composer_tmux(root));
     let attachment_dir = crate::session_dir(&st.context, id).join("attachments");
     fs::create_dir(&attachment_dir).unwrap();
     let image_path = attachment_dir.join("first.png");
@@ -845,7 +851,7 @@ async fn structured_prompt_waits_for_control_startup_before_record_lock() {
     let server_input = captured_input.clone();
     let record = load_session_record(&st.context, id).unwrap();
     codex_app_server::replace_thread_binding(&record, "startup-thread").unwrap();
-    let listener = tokio::net::UnixListener::bind(tmp.path().join("startup-prompt.sock")).unwrap();
+    let listener = tokio::net::UnixListener::bind(root.join("startup-prompt.sock")).unwrap();
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();

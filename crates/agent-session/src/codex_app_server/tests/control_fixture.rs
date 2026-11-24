@@ -5,11 +5,23 @@ use pretty_assertions::assert_eq;
 
 pub(crate) fn run(test: impl AsyncFnOnce(&Path)) {
     let root = nils_test_support::tempdir::ScopedTempDir::new();
+    run_at(root.path(), test);
+}
+
+/// Keep the existing short fixture paths for tests that bind sockets in the
+/// root. Explicit close checks cleanup even outside the probe's TMPDIR.
+pub(crate) fn run_short(test: impl AsyncFnOnce(&Path)) {
+    let root = tempfile::tempdir_in("/tmp").expect("create short control fixture");
+    run_at(root.path(), test);
+    root.close().expect("remove short control fixture");
+}
+
+fn run_at(root: &Path, test: impl AsyncFnOnce(&Path)) {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
-    runtime.block_on(test(root.path()));
+    runtime.block_on(test(root));
     // Connection drop can schedule blocking retirement after control exits.
     // Runtime drop joins that work while the fixture root is still live.
     drop(runtime);

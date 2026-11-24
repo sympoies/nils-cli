@@ -1,4 +1,5 @@
 use super::*;
+use crate::codex_app_server::tests::control_fixture;
 use futures_util::{SinkExt, StreamExt};
 use pretty_assertions::assert_eq;
 
@@ -28,15 +29,18 @@ impl TurnScenario {
     }
 }
 
-async fn interrupt_round_trip(scenario: TurnScenario) {
-    let tmp = tempfile::tempdir_in("/tmp").unwrap();
-    let launch = seed_codex_app_server_session(tmp.path(), "interrupt");
-    let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+fn interrupt_round_trip(scenario: TurnScenario) {
+    control_fixture::run_short(async |root| exercise_interrupt_round_trip(root, scenario).await);
+}
+
+async fn exercise_interrupt_round_trip(root: &Path, scenario: TurnScenario) {
+    let launch = seed_codex_app_server_session(root, "interrupt");
+    let state = state(root, Some(TOKEN), minimal_tmux(root));
     let record = load_session_record(&state.context, "interrupt").unwrap();
     let id = record.id.clone();
     codex_app_server::replace_thread_binding(&record, THREAD).unwrap();
     activity::activate_runtime(&state.context, &record).unwrap();
-    let listener = tokio::net::UnixListener::bind(tmp.path().join("interrupt.sock")).unwrap();
+    let listener = tokio::net::UnixListener::bind(root.join("interrupt.sock")).unwrap();
     let peer = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
@@ -225,26 +229,26 @@ fn completion(thread: &str, turn: &str, status: &str) -> ClientMessage {
     )
 }
 
-#[tokio::test]
-async fn codex_interrupt_reports_the_exact_provider_terminal_status() {
-    interrupt_round_trip(TurnScenario::Interrupted).await;
-    interrupt_round_trip(TurnScenario::Failed).await;
+#[test]
+fn codex_interrupt_reports_the_exact_provider_terminal_status() {
+    interrupt_round_trip(TurnScenario::Interrupted);
+    interrupt_round_trip(TurnScenario::Failed);
 }
 
-#[tokio::test]
-async fn codex_interrupt_reports_completed_when_the_turn_wins_the_race() {
-    interrupt_round_trip(TurnScenario::CompletedRace).await;
+#[test]
+fn codex_interrupt_reports_completed_when_the_turn_wins_the_race() {
+    interrupt_round_trip(TurnScenario::CompletedRace);
 }
 
-#[tokio::test]
-async fn codex_interrupt_is_an_explicit_no_op_on_an_idle_thread() {
-    interrupt_round_trip(TurnScenario::Idle).await;
-    interrupt_round_trip(TurnScenario::FreshIdle).await;
+#[test]
+fn codex_interrupt_is_an_explicit_no_op_on_an_idle_thread() {
+    interrupt_round_trip(TurnScenario::Idle);
+    interrupt_round_trip(TurnScenario::FreshIdle);
 }
 
-#[tokio::test]
-async fn codex_interrupt_refuses_an_unsupported_provider_method() {
-    interrupt_round_trip(TurnScenario::Unsupported).await;
+#[test]
+fn codex_interrupt_refuses_an_unsupported_provider_method() {
+    interrupt_round_trip(TurnScenario::Unsupported);
 }
 
 #[test]

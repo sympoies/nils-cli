@@ -1,21 +1,22 @@
 // Exercise the real controller queue and native receiver over a local socket.
 use super::*;
+use crate::codex_app_server::tests::control_fixture;
 use futures_util::{SinkExt, StreamExt};
 use pretty_assertions::assert_eq;
 
-#[tokio::test]
-async fn mailbox_native_start_and_steer_confirm_exact_rows_after_provider_ingress() {
-    native_wakes(&[(false, None), (true, None)]).await;
+#[test]
+fn mailbox_native_start_and_steer_confirm_exact_rows_after_provider_ingress() {
+    native_wakes(&[(false, None), (true, None)]);
 }
 
-#[tokio::test]
-async fn mailbox_native_draft_defers_until_composer_clears() {
-    native_wakes(&[(false, Some(Draft::BeforeClaim))]).await;
+#[test]
+fn mailbox_native_draft_defers_until_composer_clears() {
+    native_wakes(&[(false, Some(Draft::BeforeClaim))]);
 }
 
-#[tokio::test]
-async fn mailbox_native_draft_at_write_retries_without_starting_a_turn() {
-    native_wakes(&[(false, Some(Draft::AfterObservation))]).await;
+#[test]
+fn mailbox_native_draft_at_write_retries_without_starting_a_turn() {
+    native_wakes(&[(false, Some(Draft::AfterObservation))]);
 }
 
 #[derive(Clone, Copy)]
@@ -24,24 +25,28 @@ enum Draft {
     AfterObservation,
 }
 
-async fn native_wakes(cases: &[(bool, Option<Draft>)]) {
+fn native_wakes(cases: &[(bool, Option<Draft>)]) {
     for &(working, draft_boundary) in cases {
+        control_fixture::run_short(async |root| exercise_native_wake(root, working, draft_boundary).await);
+    }
+}
+
+async fn exercise_native_wake(root: &Path, working: bool, draft_boundary: Option<Draft>) {
         let lock = GlobalStateLock::new();
         let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
-        let tmp = tempfile::tempdir_in("/tmp").unwrap();
-        seed_session_with_runtime(tmp.path(), "alpha", "codex", "modeled-alpha");
-        let launch = seed_codex_app_server_session(tmp.path(), "beta");
-        let state = state(tmp.path(), Some(TOKEN), fixture::composer_tmux(tmp.path(), &launch));
-        let composer = tmp.path().join("composer");
+        seed_session_with_runtime(root, "alpha", "codex", "modeled-alpha");
+        let launch = seed_codex_app_server_session(root, "beta");
+        let state = state(root, Some(TOKEN), fixture::composer_tmux(root, &launch));
+        let composer = root.join("composer");
         let draft = "  Unsent operator text.  ".as_bytes();
         match draft_boundary {
             Some(Draft::BeforeClaim) => fs::write(&composer, draft).unwrap(),
             Some(Draft::AfterObservation) => {
-                fs::write(tmp.path().join("draft-after-capture"), draft).unwrap()
+                fs::write(root.join("draft-after-capture"), draft).unwrap()
             }
             None => {}
         }
-        let record = fixture::bind(&state.context, "beta", tmp.path(), "mailbox-thread");
+        let record = fixture::bind(&state.context, "beta", root, "mailbox-thread");
         codex_app_server::replace_thread_binding(&record, "mailbox-thread").unwrap();
         activity::activate_runtime(&state.context, &record).unwrap();
         for kind in if working {
@@ -58,8 +63,8 @@ async fn native_wakes(cases: &[(bool, Option<Draft>)]) {
         let alpha = load_session_record(&state.context, "alpha").unwrap();
         let sender = provision_ready_coordination_fixture(&state.context, &alpha);
         provision_ready_coordination_fixture(&state.context, &record);
-        let listener = tokio::net::UnixListener::bind(tmp.path().join("beta.sock")).unwrap();
-        let transcript = fixture::path(tmp.path(), "beta");
+        let listener = tokio::net::UnixListener::bind(root.join("beta.sock")).unwrap();
+        let transcript = fixture::path(root, "beta");
         let (sent, mut observed) = tokio::sync::mpsc::unbounded_channel();
         let peer = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
@@ -153,7 +158,7 @@ async fn native_wakes(cases: &[(bool, Option<Draft>)]) {
                 "native turn started under an operator draft"
             );
             assert_eq!(fs::read(&composer).unwrap(), draft);
-            let queued = notification_fixture(tmp.path());
+            let queued = notification_fixture(root);
             assert_eq!(queued["state"], "queued");
             assert_eq!(
                 queued["attempted_generation"],
@@ -180,13 +185,13 @@ async fn native_wakes(cases: &[(bool, Option<Draft>)]) {
             .await;
             drain_coordination_notifications(state.clone()).await;
             assert_eq!(
-                notification_fixture(tmp.path())["notified_generation"],
+                notification_fixture(root)["notified_generation"],
                 queued["generation"]
             );
         }
         let request = observed.try_recv().expect("one native mutation");
         assert_eq!(
-            notification_fixture(tmp.path())["state"],
+            notification_fixture(root)["state"],
             "prompt_submitted"
         );
         let history = provider_history::stable_history_id("codex", None, "mailbox-thread");
@@ -194,12 +199,12 @@ async fn native_wakes(cases: &[(bool, Option<Draft>)]) {
             vec![HistorySource {
                 provider: "codex".into(),
                 agent_profile: None,
-                root: tmp.path().join("codex-home/sessions"),
+                root: root.join("codex-home/sessions"),
             }],
-            provider_history::archive_root(tmp.path()),
-            provider_history::star_root(tmp.path()),
+            provider_history::archive_root(root),
+            provider_history::star_root(root),
         )
-        .with_session_state_dir(tmp.path().to_owned());
+        .with_session_state_dir(root.to_owned());
         let page = catalog
             .messages_with_parts(&history, None, 10, HistoryMessageDirection::Forward, true)
             .unwrap();
@@ -215,10 +220,9 @@ async fn native_wakes(cases: &[(bool, Option<Draft>)]) {
             observed.try_recv().is_err(),
             "the consumed generation cannot write twice"
         );
-        assert!(!tmp.path().join("terminal-write").exists());
+        assert!(!root.join("terminal-write").exists());
         control.abort();
         let _ = control.await;
         peer.abort();
         let _ = peer.await;
-    }
 }
