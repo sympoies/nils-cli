@@ -1107,9 +1107,12 @@ devlog check --base origin/main --fragments-only
 
 `new` writes a unique pending fragment without touching a shared month file or
 index. `scripts/ci/devlog-check.py` runs the fragment-only merge-base check in
-local-fast, docs-only, full and CI change detection lanes. It requires a
-fetched `origin/main`; `NILS_CLI_DEVLOG_BASE` selects the immutable base in CI.
-CI builds the workspace devlog binary and exports the same writer setting.
+local-fast, docs-only, full and CI change detection lanes. Local PR validation
+and pull-request CI use `NILS_CLI_DEVLOG_BASE`, which defaults to a fetched
+`origin/main`. For a merge group, the checker verifies that the checkout
+matches the event head and uses the event's immutable `merge_group.base_sha`,
+which must be an ancestor of that head. CI builds the workspace devlog binary
+and exports the same writer setting.
 
 After a successful release, the Release workflow calls the canonical fold
 and opens a dedicated maintenance PR when it finds eligible fragments.

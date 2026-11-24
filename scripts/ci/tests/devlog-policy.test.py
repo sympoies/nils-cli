@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Repository devlog policy, through the contributor docs gate and real CLI."""
 from datetime import datetime, timedelta, timezone
+import json
 import os
 from pathlib import Path
 import shutil
@@ -66,6 +67,14 @@ class DevlogPolicy(unittest.TestCase):
 
     def gate(self):
         return self.run_cmd('bash', VERIFY, '--docs-only', check=False)
+
+    def merge_group_event(self, base):
+        event = self.repo / '.git/merge-group.json'
+        event.write_text(json.dumps({'merge_group': {
+            'base_sha': base,
+            'head_sha': self.git('rev-parse', 'HEAD'),
+        }}))
+        self.env.update(GITHUB_EVENT_NAME='merge_group', GITHUB_EVENT_PATH=str(event))
 
     def test_docs_gate_rejects_month_edit(self):
         self.write('docs/devlog/2020-01.md', '# Development log - 2020-01\n\nChanged history.\n')
@@ -282,15 +291,51 @@ class DevlogPolicy(unittest.TestCase):
         self.env.update(GITHUB_EVENT_NAME='pull_request', GITHUB_HEAD_REF=branch)
         result = self.gate()
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.env['GITHUB_EVENT_NAME'] = 'merge_group'
+        base = self.git('rev-parse', 'main')
+        self.merge_group_event(base)
         self.env.pop('GITHUB_HEAD_REF')
         result = self.gate()
         self.assertEqual(result.returncode, 0, result.stdout)
         self.git('switch', '-q', '-c', 'ci/queue', 'main')
         self.git('merge', '--squash', fold)
         self.commit('chore(devlog): fold accepted fragments (#123)')
+        self.merge_group_event(base)
         result = self.gate()
         self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_release_merge_group_uses_folded_base_when_remote_ref_lags(self):
+        self.accepted_fold()
+        folded = self.git('rev-parse', 'HEAD')
+        approved = self.git('rev-parse', 'main')
+        self.git('update-ref', 'refs/remotes/origin/main', approved)
+        self.git('switch', '-q', '-c', 'chore/release-1-2-3', approved)
+        self.write('Cargo.toml', '[workspace.package]\nversion = "1.2.3"\n')
+        self.commit('chore(release): bump cli versions to 1.2.3')
+        self.git('switch', '-q', '--detach', folded)
+        self.git('merge', '--squash', 'chore/release-1-2-3')
+        self.commit('chore(release): bump cli versions to 1.2.3 (#123)')
+        self.env.pop('NILS_CLI_DEVLOG_BASE')
+        self.merge_group_event(folded)
+        result = self.gate()
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_merge_group_rejects_fragment_deletion_and_month_edit(self):
+        fragment = self.accepted_fragment('accepted-in-base')
+        base = self.git('rev-parse', 'main')
+        self.env['NILS_CLI_DEVLOG_BASE'] = 'chore/change'
+        for finding in ('fragment-deleted', 'month-file-changed'):
+            with self.subTest(finding=finding):
+                self.git('switch', '-q', '--detach', base)
+                if finding == 'fragment-deleted':
+                    fragment.unlink()
+                else:
+                    month = self.repo / 'docs/devlog/2020-01.md'
+                    month.write_text(month.read_text() + '\nChanged history.\n')
+                self.commit('Ordinary queued devlog edit')
+                self.merge_group_event(base)
+                result = self.gate()
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn(finding, result.stdout)
 
     def test_scheduled_default_branch_check_needs_no_pr_base(self):
         self.git('switch', '-q', '--detach', 'main')

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Enforce fragment PRs; admit only an exact fold on the maintenance PR path."""
+import json
 import os
 from pathlib import Path
 import re
@@ -102,13 +103,23 @@ def main():
     devlog = shutil.which('devlog')
     if devlog is None:
         raise ValueError('devlog >=1.31.16 is required; build nils-devlog or install the released tools')
-    base = os.environ.get('NILS_CLI_DEVLOG_BASE') or 'origin/main'
     branch = git('branch', '--show-current')
     event = os.environ.get('GITHUB_EVENT_NAME')
     if (event and event not in ('pull_request', 'merge_group')) or (not event and branch == 'main'):
         subprocess.run([devlog, 'check', '--base', 'HEAD'], env=env, check=True)
     else:
+        if event == 'merge_group':
+            # A moving remote ref may lag the base of the checked-out queue candidate.
+            group = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())['merge_group']
+            base = group['base_sha']
+            if (not isinstance(base, str) or not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', base)
+                    or group['head_sha'] != git('rev-parse', 'HEAD')):
+                raise ValueError('invalid devlog merge-group snapshot')
+        else:
+            base = os.environ.get('NILS_CLI_DEVLOG_BASE') or 'origin/main'
         baseline = git('merge-base', 'HEAD', base)
+        if event == 'merge_group' and baseline != base:
+            raise ValueError('devlog merge-group base is not an ancestor of HEAD')
         if is_fold_pr():
             exact_fold(baseline, devlog, env)
             subprocess.run([devlog, 'check', '--base', baseline], env=env, check=True)
@@ -119,6 +130,6 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+    except (KeyError, OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f'devlog policy: {error}', file=sys.stderr)
         sys.exit(1)
