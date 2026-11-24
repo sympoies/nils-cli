@@ -297,6 +297,7 @@ pub(super) async fn create_handler_inner(
     let deferred_prompt = selected_account.as_ref().and_then(|_| prompt.clone());
     let args = cli::StartArgs {
         resume: body.resume,
+        move_id: None,
         check_resume: false,
         initial_resume_account_explicit: resume_account_explicit,
         workspace: None,

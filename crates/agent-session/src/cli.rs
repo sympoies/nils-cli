@@ -5,6 +5,7 @@ pub(crate) mod drafts;
 mod message_send;
 pub(crate) mod operator_rules;
 pub(crate) mod permission;
+pub mod resume_move;
 pub(crate) mod send_key;
 mod service_mailbox;
 
@@ -216,6 +217,9 @@ pub struct StartArgs {
     /// Resume this exact provider conversation in a new managed record.
     #[arg(long, value_name = "PROVIDER_SESSION_ID")]
     pub resume: Option<String>,
+    /// Cross-host move ID. Refused until the complete move protocol is available.
+    #[arg(long, requires = "resume", value_name = "UUID")]
+    pub move_id: Option<String>,
     /// Check resume admission without creating a record, runtime, prompt or operation.
     #[arg(long, requires = "resume", conflicts_with = "reconcile")]
     pub check_resume: bool,

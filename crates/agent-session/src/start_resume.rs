@@ -12,6 +12,14 @@ pub struct StartView {
 
 pub(super) fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
     let format = args.format;
+    if args.move_id.is_some() {
+        let command = if args.check_resume {
+            CHECK_COMMAND
+        } else {
+            START_COMMAND
+        };
+        return render_error(command, format, refusal("resume-move-unavailable"));
+    }
     if args.check_resume {
         return run_check(context, &args);
     }
@@ -138,6 +146,7 @@ const CHECK_COMMAND: &str = "resume-preflight";
 
 pub(super) fn refusal(code: &'static str) -> CliError {
     let message = match code {
+        "resume-move-unavailable" => "the complete cross-host move protocol is unavailable",
         "resume-history-missing" => {
             "the exact provider conversation is unavailable in the selected account history"
         }
