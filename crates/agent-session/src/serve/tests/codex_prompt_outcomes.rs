@@ -251,13 +251,185 @@ async fn assert_prompt_admitted_with_usage(id: &str, api_key: bool) {
 }
 
 #[tokio::test]
-async fn api_key_control_is_ready_and_admits_keyed_prompt_without_usage() {
+async fn already_attached_api_key_control_admits_keyed_prompt_without_usage() {
     assert_prompt_admitted_with_usage("api-key-control", true).await;
 }
 
 #[tokio::test]
 async fn chatgpt_control_reads_usage_and_admits_keyed_prompt() {
     assert_prompt_admitted_with_usage("chatgpt-control", false).await;
+}
+
+#[tokio::test]
+async fn first_keyed_api_key_prompt_survives_delayed_thread_start() {
+    let id = "delayed-api-key-start";
+    let tmp = tempfile::TempDir::new().unwrap();
+    let launch = seed_codex_app_server_session(tmp.path(), id);
+    let (_socket_dir, upstream) = nils_test_support::short_socket_path("delayed-start.sock");
+    let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
+    let proxy_path = upstream.with_extension("proxy");
+    let (tmux, terminal_enter) = empty_composer_tmux_marking_enter(tmp.path());
+    let st = state(tmp.path(), Some(TOKEN), tmux);
+    let mut record = load_session_record(&st.context, id).unwrap();
+    let runtime = record.runtime.as_mut().unwrap();
+    runtime.extra.insert(
+        codex_app_server::SOCKET_KEY.into(),
+        json!(crate::display_path(&upstream)),
+    );
+    runtime.extra.insert(
+        codex_app_server::PROXY_KEY.into(),
+        json!(crate::display_path(&proxy_path)),
+    );
+    crate::write_session_record(&st.context, &record).unwrap();
+    crate::activity::activate_runtime(&st.context, &record).unwrap();
+    let marker = codex_app_server::thread_attached_path(&record)
+        .unwrap()
+        .to_owned();
+    assert!(!marker.exists());
+
+    let proxy_context = st.context.clone();
+    let proxy_args = crate::cli::CodexAppServerProxyArgs {
+        id: id.into(),
+        upstream,
+        listen: proxy_path.clone(),
+    };
+    let proxy = tokio::task::spawn_blocking(move || {
+        codex_app_server::run_proxy(&proxy_context, proxy_args)
+    });
+    let (startup_seen, startup_request) = tokio::sync::oneshot::channel();
+    let (startup_release, release) = tokio::sync::oneshot::channel();
+    let (control_initialized, control_initialized_rx) = tokio::sync::oneshot::channel();
+    let peer = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut tui_peer = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let start = receive_json(&mut tui_peer).await;
+        assert_eq!(start["method"], "thread/start");
+        startup_seen.send(()).unwrap();
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut control_peer = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let init = receive_json(&mut control_peer).await;
+        respond(&mut control_peer, &init, json!({})).await;
+        assert_eq!(
+            receive_json(&mut control_peer).await["method"],
+            "initialized"
+        );
+        control_initialized.send(()).unwrap();
+        let mut release = std::pin::pin!(release);
+        let mut thread_started = false;
+        let mut turn_started = false;
+        loop {
+            tokio::select! {
+                result = &mut release, if !thread_started => {
+                    result.unwrap();
+                    respond(&mut tui_peer, &start, json!({
+                        "thread": {"id": "thread-delayed", "status": {"type": "idle"}}
+                    })).await;
+                    thread_started = true;
+                }
+                frame = control_peer.next() => {
+                    let Some(Ok(ClientMessage::Text(text))) = frame else { break };
+                    let request: Value = serde_json::from_str(&text).unwrap();
+                    match request["method"].as_str().unwrap() {
+                        "thread/loaded/list" => {
+                            let ids = if thread_started { json!(["thread-delayed"]) } else { json!([]) };
+                            respond(&mut control_peer, &request, json!({"data": ids})).await;
+                        }
+                        "thread/resume" => respond(&mut control_peer, &request, json!({})).await,
+                        "account/rateLimits/read" => {
+                            control_peer.send(ClientMessage::Text(json!({
+                                "id": request["id"],
+                                "error": {"code": -32600, "message": "chatgpt authentication required to read rate limits"}
+                            }).to_string().into())).await.unwrap();
+                        }
+                        "turn/start" => {
+                            assert!(thread_started);
+                            assert!(!turn_started, "only one turn may be submitted");
+                            assert_eq!(request["params"]["threadId"], "thread-delayed");
+                            respond(&mut control_peer, &request, json!({"turn": {"id":"turn-delayed"}})).await;
+                            turn_started = true;
+                        }
+                        method => panic!("unexpected control request {method}"),
+                    }
+                }
+            }
+        }
+        // Keep the proxy peer alive until the synthetic TUI closes the connection.
+        let _ = tui_peer.next().await;
+        turn_started
+    });
+
+    let tui_stream = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(stream) = tokio::net::UnixStream::connect(&proxy_path).await {
+                break stream;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let (mut tui, _) = tokio_tungstenite::client_async("ws://localhost", tui_stream)
+        .await
+        .unwrap();
+    tui.send(ClientMessage::Text(
+        json!({
+            "id": 1, "method": "thread/start", "params": {}
+        })
+        .to_string()
+        .into(),
+    ))
+    .await
+    .unwrap();
+    startup_request.await.unwrap();
+
+    let (handle, commands, ready) = codex_app_server::starting_control_channel();
+    let control = tokio::spawn(codex_app_server::run_control(
+        st.context.clone(),
+        record,
+        commands,
+        ready,
+    ));
+    st.codex_controls.lock().unwrap().insert(
+        id.into(),
+        CodexControlEntry {
+            launch_id: launch.clone(),
+            handle,
+        },
+    );
+    control_initialized_rx.await.unwrap();
+    let prompt_state = st.clone();
+    let prompt = tokio::spawn(async move { submit(prompt_state, id, &launch).await });
+    // The proxy cannot attach until the peer completes the TUI request.
+    tokio::time::sleep(Duration::from_secs(11)).await;
+    let _ = startup_release.send(());
+    let (status, body) = prompt.await.unwrap();
+    let ready_after_prompt = !control.is_finished();
+    let bound = marker.is_file();
+
+    st.codex_controls.lock().unwrap().remove(id);
+    tui.send(ClientMessage::Close(None)).await.unwrap();
+    let control_result = control.await.unwrap();
+    let turn_started = peer.await.unwrap();
+    assert_eq!(proxy.await.unwrap(), 0);
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{body}; control result: {control_result:?}"
+    );
+    assert_eq!(body["data"]["receipt"]["outcome"], "submitted");
+    assert_eq!(body["data"]["receipt"]["request_id"], "protocol-attempt");
+    assert!(bound, "proxy must write the attachment");
+    assert!(
+        !terminal_enter.exists(),
+        "structured submission must not use the terminal"
+    );
+    assert!(turn_started, "the first keyed prompt must start a turn");
+    assert!(
+        ready_after_prompt,
+        "the original control must remain connected"
+    );
+    assert_eq!(control_result, Ok(()));
 }
 
 #[tokio::test]
