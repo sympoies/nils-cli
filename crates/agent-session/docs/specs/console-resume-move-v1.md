@@ -10,9 +10,9 @@ The capability is `resume-move-start/v1`. All three start routes use
 
 | Hop | Start route | Authority |
 | --- | --- | --- |
-| Managed caller to origin daemon | `POST /sessions/{caller}/console-resume-move/v1` | Authenticate the managed caller for this operation. The path ID and body binding must match its authenticated ID, current incarnation and owner. |
-| Origin daemon to Console relay | `POST /api/coordination/resume-move/v1` | Authenticate the origin and verify its delegated scope for the caller, owner and explicit destination. |
-| Console relay to destination daemon | `POST /sessions/resume-move/v1` | Authenticate the relay and verify the delegated caller, owner and route scope. Only the destination daemon may admit the move. |
+| Managed caller to origin daemon | `POST /sessions/{caller}/console-resume-move/v1` | Authenticate the managed caller for this operation. Match the path and caller IDs and the caller incarnation to the authenticated runtime. |
+| Origin daemon to Console relay | `POST /api/coordination/resume-move/v1` | Authenticate the origin and resolve the exact caller grant. Verify the asserted owner and the destination against that grant. |
+| Console relay to destination daemon | `POST /sessions/resume-move/v1` | Authenticate the relay and verify the delegated caller, derived owner and route scope in the authenticated relay binding. Only the destination daemon may admit the move. |
 
 Each hop validates capability, version, shape and scope before forwarding
 or admitting the request. The authenticated route resolves the explicit
@@ -21,6 +21,16 @@ through local configuration. Neither request nor reply can override this
 mapping. Missing capability on any hop or an unverifiable route returns
 `resume-move-unavailable` before possible dispatch to create. There is no
 fallback to ordinary Console start or ordinary resume.
+
+The relay derives the owner from its own grant for the authenticated origin
+machine, caller session ID and caller incarnation. The request's
+`caller.owner` is only a matched assertion. If it differs from the derived
+owner, refuse with `resume-move-binding-mismatch` before dispatch. The
+destination `machine` must be in the grant principal's permitted machines.
+Refuse a forbidden target with `resume-move-unavailable` before dispatch.
+The origin binding authenticated by the destination carries the relay's
+derived owner separately from the request body. A body assertion does not
+grant ownership.
 
 V1 covers managed origins and outcome reconciliation only. Routed
 `--check-resume` stays refused, and reconciliation must never invoke a
@@ -33,8 +43,14 @@ the relay's authority.
 
 These are the only JSON members. All are required and non-null. Reject
 unknown or duplicate fields at any level. UUIDs use lowercase hyphenated
-text. Forward the validated values unchanged between hops. Authentication uses the hop's existing
-authenticated transport rather than credentials in the body.
+text. Forward the validated values unchanged between hops. Authentication
+uses the hop's existing authenticated transport rather than credentials
+in the body.
+
+The managed origin client mints `operation_id` once before sending the first
+POST to the origin daemon. Every later hop validates the UUIDv7 and
+preserves it unchanged. No daemon or relay substitutes an ID or generates
+one for a missing field.
 
 | Object | Literal key | Type and meaning |
 | --- | --- | --- |
@@ -45,16 +61,16 @@ authenticated transport rather than credentials in the body.
 | Root | `session` | Object with the five session members below. |
 | `caller` | `session_id` | Managed caller ID, matching `{caller}` on the origin route. |
 | `caller` | `session_incarnation` | Canonical UUID of the authenticated caller incarnation. |
-| `caller` | `owner` | Nonempty identifier bound by authentication. |
+| `caller` | `owner` | Nonempty owner assertion that must match the relay-derived owner. |
 | `session` | `move_id` | Canonical UUID. The single launch key. |
 | `session` | `agent` | Literal `codex` or `claude`. |
 | `session` | `resume` | Canonical provider conversation UUID. |
 | `session` | `account` | Explicit, nonempty broker account alias. |
 | `session` | `cwd` | Nonempty destination checkout selector, not authority to open or launch from a path. |
 
-The caller binding authorizes the operation and receipt access. It does
-not identify the stopped source or prove that it stopped. The session
-fields are assertions. The destination matches them against its pinned
+The authenticated caller and its grant authorize the operation and receipt
+access. The body binding alone does neither. It does not identify the
+stopped source or prove that it stopped. The session fields are assertions. The destination matches them against its pinned
 reservation, signed ticket and stop proof, verified checkout identity
 and exact staged bytes. It launches from its verified local cwd.
 
@@ -90,6 +106,24 @@ binding rather than from caller metadata.
 Move lineage is separate from Console ownership, parent and work lineage
 and contains no credential, path or raw proof. Only the destination may
 record `created`, and only for the exact resulting ID and incarnation.
+
+After verifying `created` against the pinned machine, move binding and
+exact `move-<move_id>` managed ID, the relay records Console ownership and
+the start mark for that machine, ID and returned incarnation in the Console
+edge grant store. It uses the owner derived from the authenticated caller
+grant. The destination daemon does not stamp Console ownership, and the
+relay never uses an owner field on the daemon record. The claim is
+idempotent and cannot replace a different owner. Reconciliation can
+complete that Console bookkeeping from the same verified outcome without
+mutating the destination.
+
+The destination exposes `resume_move` on the exact session record in
+authenticated session listings. Console uses the verified source signer
+identity, source managed ID and source incarnation to map the source
+record to that destination session. It resolves the signer through the
+configured machine binding, not a name match or caller metadata. That
+mapping lets Console carry its own metadata forward under its ownership
+rules. Move lineage itself grants no access.
 
 ## Replies and refusal projection
 
@@ -157,8 +191,24 @@ session identity or terminal refusal, or reconciles read-only. It never
 forwards a second start. Changed bound values conflict, including an
 attempt to retarget the same move. A failed or uncertain receipt write
 must not result in forwarding. Restarts preserve the dispatch fence.
-An absent or expired receipt is not proof of non-dispatch and cannot
-reopen a previously submitted move for forwarding.
+Authorize a first dispatch only after atomically claiming an unused
+move key in an intact durable index. An absent hop receipt is not
+evidence that the key is unused.
+
+Retain relay and destination move receipts at least through the original
+destination's verified stop-proof expiry. The relay uses authenticated
+read-only evidence from the pinned destination to confirm freshness before
+a first forward and to determine when receipts may be compacted. It does
+not receive the proof bytes or use a create request to check freshness.
+
+After expiry, the relay may compact the full receipt only while retaining
+the move's dispatch fence, bound owner, destination, digest and terminal
+result or unresolved marker. An expired operation ID cannot reopen a move.
+With no receipt, a destination-confirmed expired proof is a
+`resume-move-proof-expired` refusal, not a first submission. If prior
+dispatch is known or cannot be ruled out, expiry does not establish no
+create or end reconciliation. If the store or verified freshness evidence
+is unavailable, do not dispatch.
 
 Read-only reconciliation uses the original pinned destination and exact
 `move_id` under the same owner and route checks. Use the native outcome
@@ -184,12 +234,15 @@ version first. A separate test-first nils-cli change then implements the
 daemon and CLI boundary and lifts the `--via-console` refusal only for
 end-to-end capability. This specification changes no runtime behavior.
 
-- Verify that all allowed values reach the destination unchanged.
-  Extra or duplicate fields, forged caller bindings and unverified routes
-  fail before create. Missing capability sends no fallback POST.
+- Verify that all allowed values, including the client-minted operation
+  ID, reach the destination unchanged. Extra or duplicate fields, forged
+  caller bindings, mismatched owner assertions and forbidden destinations
+  all fail before create. Missing capability sends no fallback POST.
 - Race native admission against abort. Only the destination decides the
   outcome under its lock. A completed start persists the exact identity
-  and proof-derived lineage.
+  and proof-derived lineage. The relay claims that incarnation for the
+  grant-derived owner in Console, and Console maps its source through the
+  authenticated listing without granting rights from lineage.
 - Verify that a typed refusal and its classification survive both hops.
   Unknown codes or malformed outcomes reconcile read-only without a
   no-create claim or raw error details.
@@ -199,3 +252,5 @@ end-to-end capability. This specification changes no runtime behavior.
 - Drop a reply after dispatch, restart a hop and repeat with a new
   operation ID. Verify at most one launch, the original created identity
   on read-only reconciliation, and no re-forward while outcome is unknown.
+  Repeat after proof expiry and receipt compaction to verify the same
+  fence. No receipt plus an expired proof must never forward a start.
