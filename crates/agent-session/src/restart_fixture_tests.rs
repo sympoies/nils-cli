@@ -1,4 +1,5 @@
 use super::*;
+use pretty_assertions::assert_eq;
 use std::time::Instant;
 
 fn pane_is_running(pid: &str) -> bool {
@@ -70,4 +71,60 @@ fn fake_tmux_pane_stops_when_its_owner_exits_without_teardown() {
         .args(["--", &format!("-{pid}")])
         .output();
     assert!(stopped, "pane outlived its owner process");
+}
+
+#[test]
+fn restart_fixture_drop_reclaims_its_short_root() {
+    let fixture = tempfile::tempdir().unwrap();
+    let context = context(fixture.path());
+    seed_exited_session(&context, fixture.path());
+    let tmux = fake_tmux(fixture.path());
+    running_session(&context, &tmux);
+    let marker = fixture
+        .path()
+        .join("state/agent-home/tmp")
+        .join(ID)
+        .join(".agent-session-short");
+    let token = fs::read_to_string(marker).unwrap();
+    let root = Path::new("/tmp").join(format!("ark-{token}"));
+    assert!(root.is_dir());
+    drop(tmux);
+    assert_eq!(
+        fs::symlink_metadata(root).unwrap_err().kind(),
+        std::io::ErrorKind::NotFound
+    );
+}
+
+#[test]
+fn fixture_cleanup_leaves_a_short_root_pointing_outside_its_home() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    struct RootGuard(PathBuf);
+    impl Drop for RootGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(self.0.join("t"));
+            let _ = fs::remove_dir(&self.0);
+        }
+    }
+    let fixture = tempfile::tempdir().unwrap();
+    let home = fixture.path().join("home");
+    let backing = home.join("tmp/session");
+    let outside = fixture.path().join("outside");
+    fs::create_dir_all(&backing).unwrap();
+    fs::create_dir(&outside).unwrap();
+    let token = uuid::Uuid::new_v4().simple().to_string();
+    let marker = backing.join(".agent-session-short");
+    fs::write(&marker, &token).unwrap();
+    fs::set_permissions(&marker, fs::Permissions::from_mode(0o600)).unwrap();
+    let root = Path::new("/tmp").join(format!("ark-{token}"));
+    fs::create_dir(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    let _root_guard = RootGuard(root.clone());
+    symlink(&outside, root.join("t")).unwrap();
+    super::super::short_roots::remove_owned_short_roots(fixture.path(), &home).unwrap();
+    assert!(root.join("t").is_symlink());
+    assert!(outside.is_dir());
+    fs::rename(&home, fixture.path().join("home-original")).unwrap();
+    symlink(&outside, &home).unwrap();
+    assert!(super::super::short_roots::remove_owned_short_roots(fixture.path(), &home).is_err());
+    assert!(root.join("t").is_symlink());
 }

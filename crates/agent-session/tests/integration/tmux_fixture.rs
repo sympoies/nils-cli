@@ -267,6 +267,18 @@ if [ "${AGENT_SESSION_FAKE_TMUX_ABSENT_AFTER_KILL:-0}" = "1" ] && { [ "$1" = "di
   exit 1
 fi
 
+if [ "$1" = "list-sessions" ]; then
+  if [ -f "$AGENT_SESSION_FAKE_TMUX_LOG.identities" ]; then
+    while IFS="$(printf '\t')" read -r name session_id pane_id pane_pid; do
+      target="$name"
+      if ! target_was_killed; then
+        printf '%s\t%s\n' "$session_id" "$name"
+      fi
+    done < "$AGENT_SESSION_FAKE_TMUX_LOG.identities"
+  fi
+  exit 0
+fi
+
 if [ "$1" = "has-session" ]; then
   if [ "${AGENT_SESSION_FAKE_TMUX_HAS_SESSION:-1}" = "0" ] || target_was_killed; then
     printf "%s\n" "can't find session: $target" >&2

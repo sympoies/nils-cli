@@ -2,14 +2,18 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand, ValueHint};
 use nils_common::cli_contract::OutputFormat;
-use serde_json::json;
+use serde::Deserialize;
+use serde_json::{Value, json};
 
-use crate::{CliContext, CliError, coordination};
+use crate::{
+    AgentKind, CliContext, CliError, ProviderResume, StartView, cli, coordination, lifecycle,
+    start_resume,
+};
 
-use super::{Refusal, SignedRecord, Verifier, cli_refusal, source, source_fence};
+use super::{Refusal, SignedRecord, Verifier, cli_refusal, destination, source, source_fence};
 
 // Destination admission and its abort receipt must ship together.
-const MOVE_AVAILABLE: bool = false;
+pub(crate) const MOVE_AVAILABLE: bool = false;
 const MAX_RECORD_BYTES: u64 =
     (6 * (super::MAX_PAYLOAD_BYTES + super::MAX_SIGNATURE_BYTES) + 256) as u64;
 
@@ -52,6 +56,53 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
     },
+    /// Inspect or reserve the local destination for an exact source plan.
+    Prepare {
+        /// Unique UUID for this move.
+        #[arg(long)]
+        move_id: String,
+        /// File containing the read-only source plan.
+        #[arg(long, value_hint = ValueHint::FilePath)]
+        plan_file: PathBuf,
+        /// Local destination checkout or working directory.
+        #[arg(long, value_hint = ValueHint::DirPath)]
+        cwd: PathBuf,
+        /// Validate the destination without writing a reservation.
+        #[arg(long)]
+        check: bool,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+    },
+    /// Verify a source proof and the exact privately staged provider history.
+    Stage {
+        /// Exact move UUID.
+        #[arg(long)]
+        move_id: String,
+        /// File containing the signed source stop proof.
+        #[arg(long, value_hint = ValueHint::FilePath)]
+        proof_file: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+    },
+    /// Read the durable destination outcome for an exact move.
+    Status {
+        /// Exact move UUID.
+        #[arg(long)]
+        move_id: String,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+    },
+    /// Verify or record a terminal abort before destination writer admission.
+    Abort {
+        /// Exact move UUID.
+        #[arg(long)]
+        move_id: String,
+        /// Signed source proof when staging has not recorded it.
+        #[arg(long, value_hint = ValueHint::FilePath)]
+        proof_file: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+    },
     /// Release a source move fence using a verified destination receipt.
     Recover {
         /// Move UUID used to fence the source.
@@ -70,7 +121,11 @@ impl MoveArgs {
         match self.command {
             Command::Plan { format, .. }
             | Command::Export { format, .. }
-            | Command::Recover { format, .. } => format,
+            | Command::Recover { format, .. }
+            | Command::Prepare { format, .. }
+            | Command::Stage { format, .. }
+            | Command::Status { format, .. }
+            | Command::Abort { format, .. } => format,
         }
     }
 
@@ -79,12 +134,21 @@ impl MoveArgs {
             Command::Plan { .. } => "resume-move-plan",
             Command::Export { .. } => "resume-move-export",
             Command::Recover { .. } => "resume-move-recover",
+            Command::Prepare { .. } => "resume-move-prepare",
+            Command::Stage { .. } => "resume-move-stage",
+            Command::Status { .. } => "resume-move-status",
+            Command::Abort { .. } => "resume-move-abort",
         }
     }
 }
 
 pub(crate) fn run(context: &CliContext, args: MoveArgs) -> i32 {
-    if !MOVE_AVAILABLE && !matches!(args.command, Command::Plan { .. }) {
+    if !MOVE_AVAILABLE
+        && !matches!(
+            args.command,
+            Command::Plan { .. } | Command::Prepare { check: true, .. } | Command::Status { .. }
+        )
+    {
         return crate::render_error(
             args.name(),
             args.format(),
@@ -117,7 +181,7 @@ pub(crate) fn run(context: &CliContext, args: MoveArgs) -> i32 {
             let result = (|| {
                 let verifier = verifier()?;
                 let ticket = read_record(&ticket_file)?;
-                let key = configured_path("AGENT_SESSION_RESUME_MOVE_SIGNING_KEY_FILE")?;
+                let key = signing_key()?;
                 source_fence::export(
                     context,
                     &verifier,
@@ -138,6 +202,87 @@ pub(crate) fn run(context: &CliContext, args: MoveArgs) -> i32 {
                 }),
                 Err(error) => crate::render_error(COMMAND, format, error),
             }
+        }
+        Command::Prepare {
+            move_id,
+            plan_file,
+            cwd,
+            check,
+            format,
+        } => {
+            let result = (|| {
+                let plan = read_plan(&plan_file)?;
+                let candidate = destination::check_plan(
+                    context,
+                    &plan,
+                    &cwd,
+                    &move_id,
+                    &source::local_host()?,
+                )?;
+                if check {
+                    return Ok(candidate.view());
+                }
+                let prepared = destination::prepare(
+                    context,
+                    plan,
+                    candidate,
+                    &verifier()?,
+                    &signing_key()?,
+                    now(),
+                )?;
+                serde_json::to_value(prepared).map_err(|_| cli_refusal(Refusal::StateUnavailable))
+            })();
+            render("resume-move-prepare", format, result, |_| {
+                "destination move preparation ready\n".into()
+            })
+        }
+        Command::Stage {
+            move_id,
+            proof_file,
+            format,
+        } => {
+            let result = (|| {
+                let proof = read_record(&proof_file)?;
+                destination::stage(
+                    context,
+                    &move_id,
+                    &proof,
+                    &verifier()?,
+                    &source::local_host()?,
+                    now(),
+                )?;
+                destination::status(context, &move_id)
+            })();
+            render("resume-move-stage", format, result, |_| {
+                "destination move staged\n".into()
+            })
+        }
+        Command::Status { move_id, format } => render(
+            "resume-move-status",
+            format,
+            destination::status(context, &move_id),
+            |_| "destination move status available\n".into(),
+        ),
+        Command::Abort {
+            move_id,
+            proof_file,
+            format,
+        } => {
+            let result = (|| {
+                let proof = proof_file.as_deref().map(read_record).transpose()?;
+                let receipt = destination::abort(
+                    context,
+                    &move_id,
+                    &verifier()?,
+                    &signing_key()?,
+                    &source::local_host()?,
+                    proof.as_ref(),
+                )?;
+                serde_json::to_value(receipt).map_err(|_| cli_refusal(Refusal::StateUnavailable))
+            })();
+            render("resume-move-abort", format, result, |_| {
+                "destination recorded a no-writer abort\n".into()
+            })
         }
         Command::Recover {
             move_id,
@@ -188,4 +333,181 @@ fn read_record(path: &Path) -> Result<SignedRecord, CliError> {
     let bytes = coordination::read_private_file(path, MAX_RECORD_BYTES)
         .map_err(|_| cli_refusal(Refusal::ProofInvalid))?;
     serde_json::from_slice(&bytes).map_err(|_| cli_refusal(Refusal::ProofInvalid))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlanEnvelope {
+    schema_version: String,
+    ok: bool,
+    data: source::Plan,
+}
+
+fn read_plan(path: &Path) -> Result<source::Plan, CliError> {
+    let malformed = || cli_refusal(Refusal::ProofInvalid);
+    let bytes = coordination::read_private_file(path, MAX_RECORD_BYTES).map_err(|_| malformed())?;
+    let envelope: PlanEnvelope = serde_json::from_slice(&bytes).map_err(|_| malformed())?;
+    if envelope.schema_version != "cli.agent-session.resume-move-plan.v1" || !envelope.ok {
+        return Err(malformed());
+    }
+    Ok(envelope.data)
+}
+
+fn signing_key() -> Result<PathBuf, CliError> {
+    configured_path("AGENT_SESSION_RESUME_MOVE_SIGNING_KEY_FILE")
+}
+
+fn now() -> i64 {
+    jiff::Timestamp::now().as_second()
+}
+
+fn render(
+    command: &'static str,
+    format: OutputFormat,
+    result: Result<Value, CliError>,
+    render_text: fn(&Value) -> String,
+) -> i32 {
+    match result {
+        Ok(data) => crate::render_single_success(command, format, &data, render_text),
+        Err(error) => crate::render_error(command, format, error),
+    }
+}
+
+pub(crate) fn move_preflight(
+    context: &CliContext,
+    args: &cli::StartArgs,
+) -> Result<Value, CliError> {
+    let host = source::local_host()?;
+    let request = admission_request(args, &host)?;
+    destination::check(context, &verifier()?, request, now())?;
+    Ok(json!({
+        "agent": "codex",
+        "provider_session_id": request.provider_session_id,
+        "machine": host,
+        "account": request.account,
+        "move_id": request.move_id,
+    }))
+}
+
+pub(crate) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<StartView, CliError> {
+    let host = source::local_host()?;
+    let request = admission_request(&args, &host)?;
+    let verifier = verifier()?;
+    let move_id = request.move_id.to_owned();
+    let thread = request.provider_session_id.to_owned();
+    let account = request.account.to_owned();
+    let launch_cwd =
+        crate::resolve_cwd(Some(request.cwd)).map_err(|_| cli_refusal(Refusal::PathMismatch))?;
+    let agent_bin = crate::resolve_agent_bin(AgentKind::Codex, args.agent_bin.as_deref());
+    if !crate::codex_app_server::resume_transport_supported(&agent_bin) {
+        return Err(start_resume::refusal("resume-unsupported"));
+    }
+    let roster = crate::codex_account::list_accounts()
+        .map_err(|_| start_resume::refusal("resume-unsupported"))?;
+    if !roster.iter().any(|item| item.account == account) {
+        return Err(cli_refusal(Refusal::AccountMismatch));
+    }
+    // Readiness is deterministic and must refuse before admission persists a writer.
+    // A created replay returns its existing session and needs no new runtime.
+    if !destination::check(context, &verifier, request, now())?
+        && !crate::codex_app_server::resume_runtime_ready(&agent_bin, &context.state_dir)
+    {
+        return Err(start_resume::refusal("resume-unsupported"));
+    }
+    let moved = destination::admit(context, &verifier, request, now())?;
+    let unknown = destination::outcome_unknown;
+    let destination::Admission::New {
+        provider_home,
+        _writer,
+    } = moved
+    else {
+        let destination::Admission::Existing {
+            session_id,
+            incarnation,
+        } = moved
+        else {
+            unreachable!("known move admission")
+        };
+        let record = crate::load_session_record(context, &session_id).map_err(|_| unknown())?;
+        if record
+            .runtime
+            .as_ref()
+            .is_none_or(|runtime| runtime.launch_id != incarnation)
+        {
+            return Err(unknown());
+        }
+        return Ok(StartView {
+            format: args.format,
+            result: crate::session_view(context, &record, None, None),
+            prompt_delivery_observation: None,
+        });
+    };
+    args.cwd = Some(launch_cwd);
+    args.account = Some(account.clone());
+    args.initial_codex_account = Some(account);
+    args.initial_codex_account_source = Some("explicit".into());
+    args.initial_provider_config_dir = Some(provider_home);
+    let session_id = args.id.clone().unwrap_or_else(|| format!("move-{move_id}"));
+    args.id = Some(session_id.clone());
+    let cwd = args.cwd.as_deref().ok_or_else(unknown)?;
+    let launch_args =
+        crate::canonical_provider_resume_args(AgentKind::Codex, &crate::display_path(cwd), &thread)
+            .ok_or_else(unknown)?;
+    let provider_resume = ProviderResume {
+        provider: "codex".into(),
+        session_id: thread,
+        captured_at: jiff::Timestamp::now().to_string(),
+        capture_method: "cross-host-stop-proof-v1".into(),
+        resume_args: launch_args.clone(),
+        extra: Default::default(),
+    };
+    let view = lifecycle::attempt_created(context, &session_id, "start", || {
+        crate::start_session_inner_unjournaled(
+            context,
+            args,
+            crate::StartFailureDisposition::ReturnError,
+            None,
+            Some(crate::InitialProviderPlan {
+                launch_args,
+                provider_resume: Some(provider_resume),
+            }),
+        )
+    })
+    .map_err(|_| unknown())?;
+    let record = crate::load_session_record(context, &view.result.id).map_err(|_| unknown())?;
+    let runtime = record.runtime.as_ref().ok_or_else(unknown)?;
+    destination::mark_created(context, &move_id, &view.result.id, &runtime.launch_id)
+        .map_err(|_| unknown())?;
+    Ok(view)
+}
+
+fn admission_request<'a>(
+    args: &'a cli::StartArgs,
+    host: &'a str,
+) -> Result<destination::AdmissionRequest<'a>, CliError> {
+    let unsupported = || start_resume::refusal("resume-unsupported");
+    let request = start_resume::Request::from_args(args);
+    if request.validate()? != AgentKind::Codex || args.via_console || !args.agent_args.is_empty() {
+        return Err(unsupported());
+    }
+    if args
+        .id
+        .as_ref()
+        .is_some_and(|id| crate::validate_id(id).is_err())
+    {
+        return Err(unsupported());
+    }
+    Ok(destination::AdmissionRequest {
+        destination_host: host,
+        move_id: args.move_id.as_deref().ok_or_else(unsupported)?,
+        account: args
+            .account
+            .as_deref()
+            .ok_or_else(|| cli_refusal(Refusal::AccountMismatch))?,
+        provider_session_id: args.resume.as_deref().ok_or_else(unsupported)?,
+        cwd: args
+            .cwd
+            .as_deref()
+            .ok_or_else(|| cli_refusal(Refusal::PathMismatch))?,
+    })
 }

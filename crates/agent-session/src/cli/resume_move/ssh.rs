@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 use base64::{Engine, engine::general_purpose::STANDARD};
 
 use super::{
-    MAX_PAYLOAD_BYTES, MAX_SIGNATURE_BYTES, Refusal, STOP_PROOF_SCHEMA, SignedRecord, StopProof,
+    MAX_PAYLOAD_BYTES, MAX_SIGNATURE_BYTES, NO_WRITER_SCHEMA, NoWriterReceipt, Refusal,
+    STOP_PROOF_SCHEMA, SignedRecord, StopProof, TICKET_SCHEMA, Ticket,
 };
 
 pub struct Verifier {
@@ -79,6 +80,27 @@ impl Verifier {
         proof: &StopProof,
         signing_key: &Path,
     ) -> Result<SignedRecord, Refusal> {
+        self.sign_record(proof, STOP_PROOF_SCHEMA, signing_key)
+    }
+
+    pub(super) fn sign_ticket(&self, ticket: &Ticket, key: &Path) -> Result<SignedRecord, Refusal> {
+        self.sign_record(ticket, TICKET_SCHEMA, key)
+    }
+
+    pub(super) fn sign_no_writer_receipt(
+        &self,
+        receipt: &NoWriterReceipt,
+        key: &Path,
+    ) -> Result<SignedRecord, Refusal> {
+        self.sign_record(receipt, NO_WRITER_SCHEMA, key)
+    }
+
+    fn sign_record(
+        &self,
+        record: &impl serde::Serialize,
+        namespace: &str,
+        signing_key: &Path,
+    ) -> Result<SignedRecord, Refusal> {
         let unavailable = |_| Refusal::SigningUnavailable;
         if !signing_key.is_absolute() {
             return Err(Refusal::SigningUnavailable);
@@ -93,7 +115,7 @@ impl Verifier {
         {
             return Err(Refusal::SigningUnavailable);
         }
-        let payload = serde_json::to_string(proof).map_err(|_| Refusal::SigningUnavailable)?;
+        let payload = serde_json::to_string(record).map_err(|_| Refusal::SigningUnavailable)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(Refusal::SigningUnavailable);
         }
@@ -104,7 +126,7 @@ impl Verifier {
         let stdout = output.try_clone().map_err(unavailable)?;
         let child = self
             .command()
-            .args(["-Y", "sign", "-n", STOP_PROOF_SCHEMA, "-f"])
+            .args(["-Y", "sign", "-n", namespace, "-f"])
             .arg(signing_key)
             .arg("-")
             .stdin(input)

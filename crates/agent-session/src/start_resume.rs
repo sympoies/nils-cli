@@ -12,7 +12,7 @@ pub struct StartView {
 
 pub(super) fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
     let format = args.format;
-    if args.move_id.is_some() {
+    if args.move_id.is_some() && (!cli::resume_move::MOVE_AVAILABLE || args.via_console) {
         let command = if args.check_resume {
             CHECK_COMMAND
         } else {
@@ -125,11 +125,15 @@ pub(super) fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
         ..initial_lineage
     });
     let resuming = args.resume.is_some();
+    let move_id = args.move_id.clone();
     match start_session(context, args, StartFailureDisposition::ReturnError) {
         Ok(view) if resuming => render_single_success(
             START_COMMAND,
             view.format,
-            &json!({"session":view.result}),
+            &match move_id {
+                Some(id) => json!({"session":view.result,"move_id":id,"admission":"created"}),
+                None => json!({"session":view.result}),
+            },
             |value| format!("started resumed session {}\n", value["session"]["id"]),
         ),
         Ok(view) => render_single_success(
@@ -147,6 +151,9 @@ const CHECK_COMMAND: &str = "resume-preflight";
 pub(super) fn refusal(code: &'static str) -> CliError {
     let message = match code {
         "resume-move-unavailable" => "the complete cross-host move protocol is unavailable",
+        "resume-move-aborted" => "the destination has recorded a terminal abort for this move",
+        "resume-move-proof-missing" => "the exact destination move proof is unavailable",
+        "resume-move-destination-reserved" => "the conversation is reserved for a destination move",
         "resume-history-missing" => {
             "the exact provider conversation is unavailable in the selected account history"
         }
@@ -319,6 +326,24 @@ pub(crate) fn matching_sources(
     id: &str,
     exclude: Option<&str>,
 ) -> Result<(Vec<SessionRecord>, Vec<fs::File>), CliError> {
+    find_matching_sources(context, agent, id, exclude, true)
+}
+
+pub(crate) fn has_matching_record(
+    context: &CliContext,
+    agent: AgentKind,
+    id: &str,
+) -> Result<bool, CliError> {
+    find_matching_sources(context, agent, id, None, false).map(|(matching, _)| !matching.is_empty())
+}
+
+fn find_matching_sources(
+    context: &CliContext,
+    agent: AgentKind,
+    id: &str,
+    exclude: Option<&str>,
+    take_locks: bool,
+) -> Result<(Vec<SessionRecord>, Vec<fs::File>), CliError> {
     let mut matching = Vec::new();
     let mut sources = Vec::new();
     let entries = match fs::read_dir(context.state_dir.join("sessions")) {
@@ -371,6 +396,10 @@ pub(crate) fn matching_sources(
                     .is_some_and(|p| p.provider == agent.as_str() && p.session_id == id)
         };
         if !matches(&observed) {
+            continue;
+        }
+        if !take_locks {
+            matching.push(observed);
             continue;
         }
         sources.push(lock_source(context, &source_id)?);
@@ -548,7 +577,9 @@ fn preflight_with_bin(
 }
 
 fn run_check(context: &CliContext, args: &cli::StartArgs) -> i32 {
-    let result = if args.via_console {
+    let result = if args.move_id.is_some() {
+        cli::resume_move::move_preflight(context, args)
+    } else if args.via_console {
         coordination::resume_preflight::check_args(context, args)
     } else {
         preflight_with_bin(
@@ -571,6 +602,9 @@ fn run_check(context: &CliContext, args: &cli::StartArgs) -> i32 {
 }
 
 pub(super) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<StartView, CliError> {
+    if args.move_id.is_some() {
+        return cli::resume_move::start(context, args);
+    }
     account_broker::adopt_serve_brokers(&context.state_dir);
     // An observational pass happens before any lock/store/operation creation.
     // It is not authorization: guarded admission is repeated after preparation
@@ -697,18 +731,21 @@ pub(crate) fn raw_conversation_lock(
     agent: AgentKind,
     id: &str,
 ) -> Result<fs::File, CliError> {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(format!("{}:{id}", agent.as_str()).as_bytes());
-    coordination::lock_private_store(
-        context,
-        &format!(
-            "provider-resume-{}.lock",
-            digest
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
-        ),
-    )
+    let _control = cli::resume_move::destination::writer_guard(context, agent, id)?;
+    committed_move_conversation_lock(context, agent, id)
+}
+
+pub(crate) fn committed_move_conversation_lock(
+    context: &CliContext,
+    agent: AgentKind,
+    id: &str,
+) -> Result<fs::File, CliError> {
+    coordination::lock_private_store(context, &conversation_lock_name(agent, id))
+}
+
+pub(crate) fn conversation_lock_name(agent: AgentKind, id: &str) -> String {
+    let digest = cli::resume_move::sha256(format!("{}:{id}", agent.as_str()).as_bytes());
+    format!("provider-resume-{digest}.lock")
 }
 
 pub(super) fn bind_claude(

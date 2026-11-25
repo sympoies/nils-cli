@@ -159,6 +159,7 @@ override `admission.json` or evict a session. A full state root returns HTTP `40
     "details": {
       "max_active_sessions": 1,
       "active_sessions": 1,
+      "unknown_sessions": 0,
       "retryable": true,
       "next_action": "wait-for-capacity",
       "recovery": {

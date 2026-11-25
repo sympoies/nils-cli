@@ -314,6 +314,116 @@ fn admission_unlimited_and_read_only_occupancy() {
     );
 }
 #[test]
+fn admission_many_stopped_records_do_not_exhaust_probe_budget() {
+    let f = Fixture::new(Some(1));
+    for id in ["old-one", "old-two", "old-three", "old-four", "old-five"] {
+        let dir = write_resumable_session_record_with_agent_bin(
+            &f.dir.path().join("state"),
+            id,
+            "codex",
+            &format!("hs-codex-{id}"),
+            f.dir.path(),
+            &[],
+            Some(&f.provider),
+        );
+        let path = dir.join("session.json");
+        let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        record
+            .as_object_mut()
+            .unwrap()
+            .remove("tmux_runtime_never_launched");
+        fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
+    }
+    let real = f.dir.path().join("tmux-real");
+    fs::rename(&f.tmux, &real).unwrap();
+    fs::write(
+        &f.tmux,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = has-session ]; then
+  case "$3" in
+    *old-*) sleep 0.4; echo "can't find session: stopped" >&2; exit 1 ;;
+  esac
+fi
+if [ "$1" = list-sessions ]; then
+  sleep 0.4
+  exit 0
+fi
+exec {} "$@"
+"#,
+            shell_words::quote(&real.to_string_lossy())
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&f.tmux, fs::Permissions::from_mode(0o700)).unwrap();
+    let output = f.start("replacement").output().unwrap();
+    assert!(
+        output.status.success(),
+        "stopped records must not occupy capacity: {output:?}"
+    );
+}
+
+#[test]
+fn admission_failed_listing_counts_unknown_records() {
+    let f = Fixture::new(Some(1));
+    let dir = write_resumable_session_record_with_agent_bin(
+        &f.dir.path().join("state"),
+        "old",
+        "codex",
+        "hs-codex-old",
+        f.dir.path(),
+        &[],
+        Some(&f.provider),
+    );
+    let path = dir.join("session.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    record
+        .as_object_mut()
+        .unwrap()
+        .remove("tmux_runtime_never_launched");
+    fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let output = f
+        .start("replacement")
+        .env("AGENT_SESSION_FAKE_TMUX_FAIL", "list-sessions")
+        .output()
+        .unwrap();
+    let error = envelope(&output);
+    assert_eq!(error["error"]["code"], "session-capacity-exceeded");
+    assert_eq!(error["error"]["details"]["active_sessions"], 1);
+    assert_eq!(error["error"]["details"]["unknown_sessions"], 1);
+
+    let ambiguous = f.dir.path().join("ambiguous-tmux");
+    fs::write(
+        &ambiguous,
+        "#!/bin/sh\necho \"can't find session: ambiguous\" >&2\nexit 1\n",
+    )
+    .unwrap();
+    fs::set_permissions(&ambiguous, fs::Permissions::from_mode(0o700)).unwrap();
+    let output = f
+        .start("ambiguous")
+        .env("AGENT_SESSION_TMUX_BIN", &ambiguous)
+        .output()
+        .unwrap();
+    assert_eq!(envelope(&output)["error"]["details"]["unknown_sessions"], 1);
+
+    let stalled = f.dir.path().join("stalled-tmux");
+    fs::write(
+        &stalled,
+        "#!/bin/sh\nif [ \"$1\" = list-sessions ]; then sleep 10; fi\nexit 42\n",
+    )
+    .unwrap();
+    fs::set_permissions(&stalled, fs::Permissions::from_mode(0o700)).unwrap();
+    let output = f
+        .start("timeout")
+        .env("AGENT_SESSION_TMUX_BIN", &stalled)
+        .output()
+        .unwrap();
+    let error = envelope(&output);
+    assert_eq!(error["error"]["code"], "session-capacity-exceeded");
+    assert_eq!(error["error"]["details"]["unknown_sessions"], 1);
+}
+
+#[test]
 fn admission_stopped_sessions_release_capacity() {
     let f = Fixture::new(Some(1));
     let first = f.start("first").output().unwrap();
@@ -470,7 +580,7 @@ fn admission_zero_and_invalid_settings_do_not_launch() {
     assert_eq!(value["error"]["code"], "session-capacity-exceeded");
     assert_eq!(
         value["error"]["details"],
-        json!({"max_active_sessions":0,"active_sessions":0,"retryable":true,"next_action":"wait-for-capacity","recovery":{"kind":"wait","condition":"active_sessions_below_limit","safe_to_retry":true}})
+        json!({"max_active_sessions":0,"active_sessions":0,"unknown_sessions":0,"retryable":true,"next_action":"wait-for-capacity","recovery":{"kind":"wait","condition":"active_sessions_below_limit","safe_to_retry":true}})
     );
     fs::write(
         f.dir.path().join("state/admission.json"),
