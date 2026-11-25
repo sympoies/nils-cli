@@ -407,6 +407,13 @@ pub(crate) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
     if !roster.iter().any(|item| item.account == account) {
         return Err(cli_refusal(Refusal::AccountMismatch));
     }
+    // Readiness is deterministic and must refuse before admission persists a writer.
+    // A created replay returns its existing session and needs no new runtime.
+    if !destination::check(context, &verifier, request, now())?
+        && !crate::codex_app_server::resume_runtime_ready(&agent_bin, &context.state_dir)
+    {
+        return Err(start_resume::refusal("resume-unsupported"));
+    }
     let moved = destination::admit(context, &verifier, request, now())?;
     let unknown = destination::outcome_unknown;
     let destination::Admission::New {
@@ -435,9 +442,6 @@ pub(crate) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
             prompt_delivery_observation: None,
         });
     };
-    if !crate::codex_app_server::resume_runtime_ready(&agent_bin, &context.state_dir) {
-        return Err(unknown());
-    }
     args.cwd = Some(launch_cwd);
     args.account = Some(account.clone());
     args.initial_codex_account = Some(account);

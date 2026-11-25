@@ -4,8 +4,9 @@
 ### Result
 
 - Added read-only destination checks, exact staged history validation, and
-  durable admission and abort outcomes. The production move selector remains
-  gated during the Claude slice.
+  durable admission and abort outcomes. Runtime readiness is checked before
+  writer admission, so an unready destination refuses and stays abortable. The
+  production move selector remains gated during the Claude slice.
 
 ### Why / context
 

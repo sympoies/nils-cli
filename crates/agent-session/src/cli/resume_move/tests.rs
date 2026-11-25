@@ -328,3 +328,5 @@ fn abort_receipt_is_bound_to_the_exact_authenticated_stop_proof() {
 mod source_work;
 
 mod destination_work;
+
+mod destination_start;

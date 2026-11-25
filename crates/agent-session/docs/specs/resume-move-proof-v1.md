@@ -150,7 +150,11 @@ checkout and bytes under the same control lock used to abort. Provider
 argument overrides are refused for a move. Codex recreates local indexes in
 the destination provider home.
 
-The destination persists writer admission before taking a session writer lock.
+Before admission the destination checks provider capability and runtime
+readiness, such as the private socket directory. A deterministic failure
+refuses with `resume-unsupported` and leaves the move staged, so abort still
+issues a no-writer receipt. The destination persists writer admission before
+taking a session writer lock.
 Any ambiguous result beyond that point remains fenced. An earlier abort
 records a terminal tombstone before signing the no-writer receipt. The same
 move cannot be admitted after that tombstone. A lost proof transfer can supply

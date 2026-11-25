@@ -266,13 +266,15 @@ pub(super) fn stage(
     write_moves(context, &moves)
 }
 
+/// Verify admission without writing; returns whether the move already created its session.
 pub(super) fn check(
     context: &CliContext,
     verifier: &Verifier,
     request: AdmissionRequest<'_>,
     now: i64,
-) -> Result<(), CliError> {
-    verify_admission(context, &read_moves(context)?, verifier, request, now).map(|_| ())
+) -> Result<bool, CliError> {
+    verify_admission(context, &read_moves(context)?, verifier, request, now)
+        .map(|entry| entry.created.is_some())
 }
 
 pub(super) fn admit(
