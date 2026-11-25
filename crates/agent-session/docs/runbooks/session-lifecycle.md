@@ -51,7 +51,8 @@ probe tmux liveness. Occupancy can change immediately after the snapshot.
 
 At capacity, CLI commands exit `1` with `error.code` set to
 `session-capacity-exceeded`. The refusal's `error.details` contains
-`max_active_sessions`, `active_sessions`, `retryable: true`,
+`max_active_sessions`, `active_sessions`, `unknown_sessions` (the number
+counted because liveness could not be determined), `retryable: true`,
 `next_action: "wait-for-capacity"`, and bounded `recovery` metadata with
 `safe_to_retry: true`; the human message tells the operator
 to stop or delete an active session. No refused create leaves a session directory
