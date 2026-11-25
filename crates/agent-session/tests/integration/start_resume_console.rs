@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
+    os::unix::process::CommandExt,
     process::{Child, Stdio},
     thread,
     time::{Duration, Instant},
@@ -379,12 +380,66 @@ fn cli_console_start_forwards_resume_account_and_ordinary_context_and_terminal_r
     }
 }
 
+/// A serve daemon in its own process group. The daemon starts short-lived
+/// helpers (fake tmux calls) that write into the fixture directory, so
+/// dropping it stops the whole group and waits until none is left. Killing only
+/// the daemon orphans an in-flight helper that can recreate a file while the
+/// fixture directory is being removed.
 struct Daemon(Child);
+impl Daemon {
+    fn spawn(mut command: std::process::Command) -> Self {
+        command.process_group(0);
+        Self(command.spawn().unwrap())
+    }
+}
 impl Drop for Daemon {
     fn drop(&mut self) {
-        let _ = self.0.kill();
+        let group = -(self.0.id() as libc::pid_t);
+        // SAFETY: the daemon leads the dedicated process group created by `spawn`.
+        unsafe { libc::kill(group, libc::SIGKILL) };
         let _ = self.0.wait();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        // SAFETY: signal 0 only probes whether any process remains in the group.
+        while unsafe { libc::kill(group, 0) } == 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
     }
+}
+
+#[test]
+fn daemon_guard_leaves_no_in_flight_child_running_after_it_drops() {
+    // The serve daemon starts short-lived helpers (a fake tmux call). Killing
+    // only the daemon orphans an in-flight helper that can still write into the
+    // fixture directory while the test tears it down.
+    let root = tempfile::tempdir().unwrap();
+    let pid_file = root.path().join("helper.pid");
+    let mut command = std::process::Command::new("sh");
+    command
+        .args(["-c", "sleep 30 & echo $! > \"$1\"; wait", "sh"])
+        .arg(&pid_file)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let daemon = Daemon::spawn(command);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let helper = loop {
+        if let Ok(pid) = fs::read_to_string(&pid_file)
+            && let Ok(pid) = pid.trim().parse::<libc::pid_t>()
+        {
+            break pid;
+        }
+        assert!(Instant::now() < deadline, "helper never started");
+        thread::sleep(Duration::from_millis(10));
+    };
+    drop(daemon);
+    // SAFETY: signal 0 only probes whether the process exists.
+    let alive = unsafe { libc::kill(helper, 0) } == 0;
+    if alive {
+        // Do not leave the probe's own helper behind when this test fails.
+        // SAFETY: the pid was written by the helper this test just started.
+        unsafe { libc::kill(helper, libc::SIGKILL) };
+    }
+    assert!(!alive, "the helper outlived the daemon guard");
 }
 
 #[test]
@@ -396,7 +451,7 @@ fn target_http_resume_creates_new_identity_and_preserves_account_context_and_pro
     let address = listener.local_addr().unwrap();
     drop(listener);
     let root = f.tmp.path();
-    let child = crate::serve_fixture::command(
+    let command = crate::serve_fixture::command(
         root,
         nils_test_support::bin::resolve("agent-session"),
         &f.state,
@@ -424,10 +479,8 @@ fn target_http_resume_creates_new_identity_and_preserves_account_context_and_pro
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
         },
-    )
-    .spawn()
-    .unwrap();
-    let mut daemon = Daemon(child);
+    );
+    let mut daemon = Daemon::spawn(command);
     let deadline = Instant::now() + Duration::from_secs(15);
     while TcpStream::connect(address).is_err() {
         assert!(daemon.0.try_wait().unwrap().is_none());
