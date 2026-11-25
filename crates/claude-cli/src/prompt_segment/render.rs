@@ -33,7 +33,7 @@ pub fn render_usage_json_with_options(
     stale: bool,
     stale_suffix: &str,
     show_five_hour: bool,
-    plan: Option<&str>,
+    account: Option<&str>,
     show_grants: bool,
 ) -> Option<String> {
     let value: Value = serde_json::from_str(raw).ok()?;
@@ -44,9 +44,9 @@ pub fn render_usage_json_with_options(
         .then(|| status::parse_limit_resets(status_body).cedar_ember)
         .flatten();
     let note = display::note(
-        plan,
+        None,
         resets.as_ref().and_then(display::remaining),
-        plan.is_some() || (show_grants && cedar_status.is_some()),
+        show_grants && cedar_status.is_some(),
     );
     render_usage(
         &usage,
@@ -54,6 +54,7 @@ pub fn render_usage_json_with_options(
         stale,
         stale_suffix,
         show_five_hour,
+        account,
         note,
     )
 }
@@ -92,6 +93,7 @@ fn render_usage(
     stale: bool,
     stale_suffix: &str,
     show_five_hour: bool,
+    account: Option<&str>,
     note: Option<String>,
 ) -> Option<String> {
     let color_enabled = color_enabled();
@@ -115,6 +117,9 @@ fn render_usage(
         return None;
     }
 
+    if let Some(account) = account {
+        parts.insert(0, account.to_owned());
+    }
     parts.push(format_reset_time(
         usage
             .seven_day
