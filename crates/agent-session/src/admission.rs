@@ -1,5 +1,6 @@
 //! Host-local admission at the initial durable session creation boundary.
 use super::*;
+use crate::lifecycle::failed_close::{self, FailedClose};
 
 const OCCUPANCY_LIVENESS_BUDGET: std::time::Duration = std::time::Duration::from_millis(1_500);
 
@@ -53,17 +54,25 @@ fn config_error() -> CliError {
 pub(crate) fn snapshot(
     context: &CliContext,
     tmux_bin: Option<&Path>,
-) -> Result<Snapshot, CliError> {
-    Ok(Snapshot {
-        max_active_sessions: limit(context)?,
-        active_sessions: occupancy(context, tmux_bin, None)?.0,
-    })
+) -> Result<(Snapshot, Vec<FailedClose>), CliError> {
+    let max_active_sessions = limit(context)?;
+    let mut failed_closes = Vec::new();
+    let (active_sessions, _) = occupancy(context, tmux_bin, None, Some(&mut failed_closes))?;
+    failed_closes.sort_unstable_by(|left, right| left.session_id.cmp(&right.session_id));
+    Ok((
+        Snapshot {
+            max_active_sessions,
+            active_sessions,
+        },
+        failed_closes,
+    ))
 }
 
 fn occupancy(
     context: &CliContext,
     tmux_bin: Option<&Path>,
     exclude_id: Option<&str>,
+    mut failed_closes: Option<&mut Vec<FailedClose>>,
 ) -> Result<(usize, usize), CliError> {
     let root = context.state_dir.join("sessions");
     let entries = match fs::read_dir(&root) {
@@ -137,6 +146,16 @@ fn occupancy(
                 || startup_projection(&record).is_some_and(|startup| startup.state == "starting"))
         {
             active += 1;
+            if let Some(failed_closes) = failed_closes.as_deref_mut()
+                && let Some(runtime) = &record.runtime
+            {
+                failed_closes.extend(failed_close::read(
+                    context,
+                    &id,
+                    &runtime.launch_id,
+                    runtime.generation,
+                ));
+            }
             continue;
         }
         // Unknown liveness conservatively occupies a slot. Failed/cancelled
@@ -145,21 +164,27 @@ fn occupancy(
         {
             continue;
         }
-        candidates.push(record.tmux_session);
+        let journal_target = failed_closes
+            .as_ref()
+            .and(record.runtime)
+            .map(|runtime| (id, runtime.launch_id, runtime.generation));
+        candidates.push((record.tmux_session, journal_target));
     }
     // Take the snapshot after examining lifecycle locks. Otherwise an in-flight
     // launch could finish between an early listing and its lock observation.
     if !candidates.is_empty() {
-        match list_tmux_sessions(&tmux) {
-            Some(sessions) => {
-                active += candidates
-                    .iter()
-                    .filter(|name| sessions.contains(*name))
-                    .count();
+        let sessions = list_tmux_sessions(&tmux);
+        for (name, target) in candidates {
+            let present = sessions.as_ref().map(|sessions| sessions.contains(&name));
+            if present == Some(false) {
+                continue;
             }
-            None => {
-                unknown = candidates.len();
-                active += unknown;
+            active += 1;
+            unknown += usize::from(present.is_none());
+            if let Some(failed_closes) = failed_closes.as_deref_mut()
+                && let Some((id, incarnation, generation)) = target
+            {
+                failed_closes.extend(failed_close::read(context, &id, &incarnation, generation));
             }
         }
     }
@@ -219,7 +244,7 @@ pub(super) fn reserve(
         return Ok(None);
     };
     let lock = coordination::lock_private_store(context, "session-admission.lock")?;
-    let (active, unknown) = occupancy(context, tmux_bin, exclude_id)?;
+    let (active, unknown) = occupancy(context, tmux_bin, exclude_id, None)?;
     if active as u64 >= max {
         return Err(capacity_error(max, active as u64, unknown as u64));
     }

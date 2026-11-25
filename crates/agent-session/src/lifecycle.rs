@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::{CliContext, CliError, SessionRecord};
 use serde_json::{Value, json};
 
+pub(crate) mod failed_close;
 pub(crate) mod recovery;
 
 const SEGMENT_BYTES: u64 = 256 * 1024;
@@ -88,9 +89,10 @@ fn attempt_resolved<T>(
     let id = resolved.as_deref().unwrap_or(id);
     let before = before.as_ref().filter(|record| record.id == id);
     let after = crate::load_session_record(context, id).ok();
+    let error = result.as_ref().err();
     record(
         context,
-        after.as_ref().or(before),
+        failed_close::journal_target(operation, error, before, after.as_ref()),
         id,
         operation,
         if serve_owner.is_some() {
@@ -187,7 +189,13 @@ pub(crate) fn record(
     let outcome = match result {
         Ok(()) => json!({"ok": true}),
         Err(error) => {
-            json!({"ok": false, "code": error.code(), "message": failure_message(error), "proof_step": proof_step(error)})
+            let mut outcome = json!({"ok": false, "code": error.code(), "message": failure_message(error), "proof_step": proof_step(error)});
+            if runtime.is_some()
+                && let Some(reason) = failed_close::reason(operation, error)
+            {
+                outcome["reason"] = json!(reason);
+            }
+            outcome
         }
     };
     let row = json!({
@@ -282,6 +290,10 @@ fn private_dir(path: &Path) -> Result<(), CliError> {
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(_) => return Err(unavailable()),
     }
+    check_private_dir(path)
+}
+
+fn check_private_dir(path: &Path) -> Result<(), CliError> {
     let m = fs::symlink_metadata(path).map_err(|_| unavailable())?;
     if !m.is_dir()
         || m.file_type().is_symlink()
@@ -521,12 +533,15 @@ pub(crate) async fn response(
     let operation = operation.to_owned();
     let refreshed = tokio::task::spawn_blocking(move || {
         let refreshed = apply_serve_auto_resume_default(&context, &operation, &target_id, &error);
-        let target = crate::load_session_record(&context, &target_id)
-            .ok()
-            .or(before);
+        let target = crate::load_session_record(&context, &target_id).ok();
         record(
             &context,
-            target.as_ref(),
+            failed_close::journal_target(
+                &operation,
+                error.as_ref(),
+                before.as_ref(),
+                target.as_ref(),
+            ),
             &target_id,
             &operation,
             "serve",
@@ -691,6 +706,65 @@ mod tests {
             state_dir: dir.to_path_buf(),
             host: None,
         }
+    }
+
+    #[test]
+    fn failed_close_journals_only_the_safe_reason_for_the_observed_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let context = context(dir.path());
+        let target: SessionRecord = serde_json::from_value(json!({
+            "schema_version": crate::SESSION_DOCUMENT_VERSION,
+            "id": "worker", "agent": "claude", "mode": "interactive", "cwd": dir.path(),
+            "tmux_session": "fixture", "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z", "runtime": {
+                "kind": "tmux", "tmux_session": "fixture", "generation": 2,
+                "started_at": "2026-01-01T00:00:00Z", "launch_id": "close-launch"
+            }
+        }))
+        .unwrap();
+        let error = CliError::runtime(
+            "session-termination-failed",
+            "private failure message",
+            Some(json!({
+                "reason": "process-still-running",
+                "blocking_processes": [{"command": "private command"}]
+            })),
+        );
+        let same_runtime =
+            failed_close::journal_target("archive", Some(&error), Some(&target), Some(&target));
+        record(
+            &context,
+            same_runtime,
+            "worker",
+            "archive",
+            "serve",
+            Err(&error),
+            None,
+        );
+
+        let mut replacement = target.clone();
+        replacement.runtime.as_mut().unwrap().generation = 3;
+        let superseded =
+            failed_close::journal_target("delete", Some(&error), Some(&target), Some(&replacement));
+        record(
+            &context,
+            superseded,
+            "worker",
+            "delete",
+            "cli",
+            Err(&error),
+            None,
+        );
+
+        let result = read(&context, "worker", 2).unwrap();
+        let rows = result["records"].as_array().unwrap();
+        assert_eq!(rows[0]["session_generation"], 2);
+        assert_eq!(rows[0]["result"]["reason"], "process-still-running");
+        assert_eq!(rows[1]["session_generation"], Value::Null);
+        assert_eq!(rows[1]["result"]["reason"], Value::Null);
+        let rendered = result.to_string();
+        assert!(!rendered.contains("private failure message"));
+        assert!(!rendered.contains("private command"));
     }
 
     #[test]
