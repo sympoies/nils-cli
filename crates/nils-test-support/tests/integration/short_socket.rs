@@ -67,7 +67,11 @@ fn short_socket_path_binds_under_a_long_temp_root_checkout_and_open_umask() {
         .join(&long_component)
         .join("repo")
         .join("crates");
-    let tmpdir = root.path().join(&long_component).join("tmp");
+    // Long on its own: the parent's temp root may be short (a default `/tmp`).
+    let mut tmpdir = root.path().join("tmp-root");
+    while tmpdir.as_os_str().len() < SUN_PATH_LIMIT {
+        tmpdir.push(&long_component);
+    }
     std::fs::create_dir_all(&work_dir).expect("create long checkout path");
     std::fs::create_dir_all(&tmpdir).expect("create long temp root");
 
