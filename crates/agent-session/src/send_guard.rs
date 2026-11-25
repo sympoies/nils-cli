@@ -117,16 +117,21 @@ impl Admission<'_> {
             stage,
             self.args.expected_idle_ready_boundary.is_none(),
             false,
+            false,
         )
     }
 
-    pub(crate) fn check_first_submit(&self, text: &str) -> Result<(), CliError> {
-        self.check_with_draft_repair(Some(text), "submit", false, true)
+    pub(crate) fn check_first_submit(
+        &self,
+        text: &str,
+        mailbox_wake: bool,
+    ) -> Result<(), CliError> {
+        self.check_with_draft_repair(Some(text), "submit", false, true, mailbox_wake)
     }
 
     /// Scheduler notices observe an empty composer without stashing or clearing a draft.
     pub(crate) fn check_preserving_draft(&self, stage: &str) -> Result<(), CliError> {
-        self.check_with_draft_repair(None, stage, false, false)
+        self.check_with_draft_repair(None, stage, false, false, false)
     }
 
     fn check_with_draft_repair(
@@ -135,6 +140,7 @@ impl Admission<'_> {
         stage: &str,
         repair_draft: bool,
         settle_paste: bool,
+        mailbox_wake: bool,
     ) -> Result<(), CliError> {
         self.timeout(stage)?;
         self.identity(stage)?;
@@ -158,7 +164,13 @@ impl Admission<'_> {
         self.idle(stage)?;
         if self.args.require_empty_composer || self.verify_composer || pasted_text.is_some() {
             let target = format!("{}:0.0", self.record.tmux_session);
-            let observed = match self.observe_composer(&target, pasted_text, stage, settle_paste) {
+            let observed = match self.observe_composer(
+                &target,
+                pasted_text,
+                stage,
+                settle_paste,
+                mailbox_wake,
+            ) {
                 Ok(observed) => observed,
                 Err(error) => {
                     if repair_draft
@@ -220,6 +232,7 @@ impl Admission<'_> {
         pasted_text: Option<&str>,
         stage: &str,
         settle_paste: bool,
+        mailbox_wake: bool,
     ) -> Result<String, CliError> {
         #[cfg(test)]
         let retry_window = TEST_RETRY_WINDOW.get();
@@ -326,8 +339,13 @@ impl Admission<'_> {
             if !retryable {
                 return Err(self.unobserved_composer(reason, stage));
             }
-            let retry_until = *retry_until
-                .get_or_insert_with(|| (Instant::now() + retry_window).min(self.deadline));
+            let retry_until = *retry_until.get_or_insert_with(|| {
+                if mailbox_wake {
+                    self.deadline
+                } else {
+                    (Instant::now() + retry_window).min(self.deadline)
+                }
+            });
             if Instant::now() >= retry_until {
                 return Err(self.unobserved_composer(reason, stage));
             }
