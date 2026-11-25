@@ -40,7 +40,7 @@ fn malformed_composer_and_expired_budget_report_distinct_stages() {
     TEST_RETRY_WINDOW.set(Duration::ZERO);
     for (stage, pasted) in [("admission", None), ("submit", Some("read mailbox"))] {
         let error = admission
-            .observe_composer("fixture:0.0", pasted, stage, false)
+            .observe_composer("fixture:0.0", pasted, stage, false, false)
             .unwrap_err();
         assert_eq!(error.code(), "send-composer-unobservable");
         let details = error.details().unwrap();
@@ -55,7 +55,7 @@ fn malformed_composer_and_expired_budget_report_distinct_stages() {
         ..admission
     };
     let error = expired
-        .observe_composer("fixture:0.0", Some("read mailbox"), "submit", false)
+        .observe_composer("fixture:0.0", Some("read mailbox"), "submit", false, false)
         .unwrap_err();
     assert_eq!(error.code(), "send-guard-observation-timeout");
     assert_eq!(error.details().unwrap()["stage"], "submit");
