@@ -164,7 +164,7 @@ pub(super) fn deliver(
             }
         })?;
     let dir = runtime::module_dir(&context.state_dir, &record)?;
-    let op = uuid::Uuid::new_v4().to_string();
+    let op = uuid::Uuid::now_v7().to_string();
     let listener = bridge::Listener::open(dir, &bootstrap, &ready.binding, op.clone()).map_err(|error| {
         if error.kind() == std::io::ErrorKind::WouldBlock {
             CliError::runtime("send-session-not-idle", "another native notice is in progress",
