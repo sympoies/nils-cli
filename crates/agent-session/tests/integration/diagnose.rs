@@ -290,3 +290,110 @@ fn diagnose_survives_an_unreadable_coordination_registry() {
         "coordination-invalid"
     );
 }
+
+#[test]
+fn diagnose_lists_current_failed_closes_without_creating_journals_or_locks() {
+    use super::cli::write_resumable_session_record_with_agent_bin;
+
+    let (_temporary, root) = state_fixture();
+    let state = root.join("state");
+    let tmux = root.join("tmux");
+    fs::write(
+        &tmux,
+        "#!/bin/sh\n[ \"$1\" = list-sessions ] || exit 2\n\
+         printf '%s\\t%s\\n' '$1' current '$2' replaced '$3' no-journal '$4' cleared\n",
+    )
+    .expect("write synthetic tmux listing");
+    fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).expect("tmux fixture mode");
+
+    let mut segments = Vec::new();
+    for id in ["current", "replaced", "no-journal", "cleared", "stopped"] {
+        let session = write_resumable_session_record_with_agent_bin(
+            &state,
+            id,
+            "codex",
+            id,
+            &root,
+            &[],
+            None,
+        );
+        let record_path = session.join("session.json");
+        let mut record: Value =
+            serde_json::from_slice(&fs::read(&record_path).expect("read fixture record"))
+                .expect("parse fixture record");
+        record["runtime"]["launch_id"] = json!("current-launch");
+        record["runtime"]["generation"] = json!(2);
+        fs::write(&record_path, record.to_string()).expect("persist the current runtime");
+        if id == "no-journal" {
+            continue;
+        }
+        let journal = state.join("lifecycle").join(id);
+        fs::create_dir_all(&journal).expect("create existing journal");
+        for directory in [state.join("lifecycle"), journal.clone()] {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+                .expect("journal directory mode");
+        }
+        let mut row = json!({
+            "schema_version": "agent-session.lifecycle.v1",
+            "timestamp": "2000-01-01T00:00:01Z",
+            "operation": "delete",
+            "session_id": id,
+            "session_incarnation": "current-launch",
+            "session_generation": 2,
+            "result": {
+                "ok": false,
+                "code": "session-termination-failed",
+                "reason": "process-still-running"
+            }
+        });
+        if id == "replaced" {
+            row["session_incarnation"] = json!("previous-launch");
+            row["session_generation"] = json!(1);
+        }
+        let segment = journal.join(if id == "current" {
+            "previous.jsonl"
+        } else {
+            "current.jsonl"
+        });
+        let mut contents = format!("{row}\n");
+        if id == "cleared" {
+            row["operation"] = json!("stop");
+            row["result"] = json!({"ok": true});
+            contents.push_str(&format!("{row}\n"));
+        }
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&segment)
+            .expect("create existing journal segment");
+        file.write_all(contents.as_bytes()).expect("seed journal");
+        segments.push((segment, contents));
+    }
+
+    let options = CmdOptions::new().with_env("AGENT_SESSION_TMUX_BIN", tmux.to_str().unwrap());
+    let output = run_resolved(
+        "agent-session",
+        &[
+            "--state-dir",
+            state.to_str().unwrap(),
+            "diagnose",
+            "--format",
+            "json",
+        ],
+        &options,
+    );
+    assert_eq!(output.code, 0, "{}", output.stderr_text());
+    assert!(!state.join("lifecycle/no-journal").exists());
+    for (segment, contents) in segments {
+        let journal = segment.parent().expect("journal directory");
+        assert_eq!(fs::read_dir(journal).unwrap().count(), 1);
+        assert_eq!(fs::read_to_string(segment).unwrap(), contents);
+    }
+    let data = &output.stdout_json()["data"];
+    assert_eq!(data["admission"]["active_sessions"], 4);
+    assert_eq!(
+        data["failed_closes"],
+        json!([{"session_id": "current", "reason": "process-still-running"}])
+    );
+}

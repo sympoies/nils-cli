@@ -17,6 +17,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::cli::DiagnoseArgs;
+use crate::lifecycle::failed_close::FailedClose;
 use crate::stable_executable;
 use crate::{CliContext, CliError, render_error, render_single_success};
 
@@ -56,6 +57,7 @@ pub(crate) struct Bundle {
     runtime: Runtime,
     observation: Observation,
     admission: crate::admission::Snapshot,
+    failed_closes: Vec<FailedClose>,
 }
 
 #[derive(Serialize)]
@@ -144,8 +146,10 @@ pub(crate) fn build(context: &CliContext, args: &DiagnoseArgs) -> Result<Bundle,
         }
         other => other,
     };
+    let (admission, failed_closes) = crate::admission::snapshot(context, None)?;
     Ok(Bundle {
-        admission: crate::admission::snapshot(context, None)?,
+        admission,
+        failed_closes,
         schema_version: BUNDLE_VERSION,
         binary_version: nils_build_info::long_version(env!("CARGO_PKG_VERSION")),
         health,
@@ -231,6 +235,12 @@ fn text(bundle: &Bundle) -> String {
         "admission: {}\n",
         serde_json::to_string(&bundle.admission).expect("snapshot serializes")
     ));
+    for failure in &bundle.failed_closes {
+        out.push_str(&format!(
+            "failed close: session {} ({})\n",
+            failure.session_id, failure.reason
+        ));
+    }
     out.push_str(&format!(
         "executable: {}\n",
         bundle.runtime.executable_state
@@ -342,6 +352,10 @@ mod tests {
     fn the_text_projection_names_the_recovery_for_each_code() {
         let bundle = Bundle {
             admission: crate::admission::Snapshot::default(),
+            failed_closes: vec![FailedClose {
+                session_id: "worker".to_owned(),
+                reason: "process-still-running",
+            }],
             schema_version: BUNDLE_VERSION,
             binary_version: "1.2.3".to_string(),
             health: Health::Degraded,
@@ -370,6 +384,10 @@ mod tests {
 
         let rendered = text(&bundle);
         assert!(rendered.contains("health: degraded"), "{rendered}");
+        assert!(
+            rendered.contains("failed close: session worker (process-still-running)"),
+            "{rendered}"
+        );
         assert!(rendered.contains("executable: live"), "{rendered}");
         assert!(
             rendered.contains("launch executable: versioned-keg (new sessions pin a path"),
@@ -389,6 +407,7 @@ mod tests {
     fn an_empty_plane_renders_an_explicit_empty_projection() {
         let bundle = Bundle {
             admission: crate::admission::Snapshot::default(),
+            failed_closes: Vec::new(),
             schema_version: BUNDLE_VERSION,
             binary_version: "1.2.3".to_string(),
             health: Health::Healthy,
