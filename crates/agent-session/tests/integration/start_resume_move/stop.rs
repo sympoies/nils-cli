@@ -86,7 +86,7 @@ fn managed_stop_retains_the_source_for_signed_export(agent: &str, replace_before
         json!({
             "type": "session_meta",
             "payload": {"id": THREAD, "cwd": root, "source": "cli",
-                "timestamp": "2026-01-01T00:00:00Z", "history_mode": "legacy"}
+                "timestamp": "2026-01-01T00:00:00Z"}
         })
     } else {
         json!({
