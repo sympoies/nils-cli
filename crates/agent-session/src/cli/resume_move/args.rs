@@ -93,7 +93,7 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
     },
-    /// Verify or record a terminal abort before destination writer admission.
+    /// Record or verify a terminal abort and issue a no-writer receipt.
     Abort {
         /// Exact move UUID.
         #[arg(long)]
@@ -416,7 +416,7 @@ pub(crate) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
         provider_home,
         history,
         claude_target,
-        _writer,
+        unlaunched,
     } = moved
     else {
         let destination::Admission::Existing {
@@ -451,13 +451,18 @@ pub(crate) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
         }
         Provider::Claude => {
             let target = claude_target.ok_or_else(unknown)?;
-            let config = target.prepare_account(&account).map_err(|_| unknown())?;
-            claude::install_transcript(
+            let Ok(config) = target.prepare_account(&account) else {
+                return Err(unlaunched.settle_failure(context, &verifier, &target));
+            };
+            let Ok(transcript) = claude::prepare_transcript(
                 &target,
                 &provider_home.join(&history.relative_path),
                 &history,
-            )
-            .map_err(|_| unknown())?;
+            ) else {
+                return Err(unlaunched.settle_failure(context, &verifier, &target));
+            };
+            // Even a publication error may leave the final transcript on disk.
+            transcript.publish().map_err(|_| unknown())?;
             args.initial_provider_config_dir = Some(config);
             Some(InitialClaudeAccount {
                 account,
@@ -479,6 +484,7 @@ pub(crate) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
         resume_args: launch_args.clone(),
         extra: Default::default(),
     };
+    let _writer = unlaunched.begin_launch(context)?;
     let view = lifecycle::attempt_created(context, &session_id, "start", || {
         crate::start_session_inner_unjournaled(
             context,
