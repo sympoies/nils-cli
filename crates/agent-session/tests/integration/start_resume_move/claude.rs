@@ -1,11 +1,12 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::Command;
 
 use agent_session::cli::resume_move::{
     History, HistoryRole, STOP_PROOF_SCHEMA, SignedRecord, StopProof, Verifier, sha256,
 };
+
+use super::support::write_private;
 use nils_test_support::cmd::{CmdOptions, run_resolved, run_with};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -30,25 +31,8 @@ fn staged_claude_move_creates_one_native_session_after_verified_admission() {
     fs::set_permissions(&account_root, fs::Permissions::from_mode(0o700)).unwrap();
     write_private(&account_root.join(".credentials.json"), b"{}");
 
-    let a_key = root.join("host-a");
-    let b_key = root.join("host-b");
-    for key in [&a_key, &b_key] {
-        assert!(
-            Command::new(ssh_keygen)
-                .args(["-q", "-t", "ed25519", "-N", "", "-f"])
-                .arg(key)
-                .status()
-                .unwrap()
-                .success()
-        );
-    }
-    let allowlist = root.join("allowed-signers");
-    let signers = format!(
-        "host-a {}host-b {}",
-        fs::read_to_string(a_key.with_extension("pub")).unwrap(),
-        fs::read_to_string(b_key.with_extension("pub")).unwrap()
-    );
-    write_private(&allowlist, signers.as_bytes());
+    let signers = super::support::Signers::new(&root, ssh_keygen);
+    let (b_key, allowlist) = (&signers.b_key, &signers.allowlist);
     let broker = root.join("broker");
     let list = json!({
         "schema_version":"agent-session.account-broker.v2",
@@ -143,7 +127,7 @@ fn staged_claude_move_creates_one_native_session_after_verified_admission() {
     let data = &prepared["data"];
     let staged = Path::new(data["provider_home"].as_str().unwrap()).join(&relative_path);
     let ticket: SignedRecord = serde_json::from_value(data["ticket"].clone()).unwrap();
-    let verifier = Verifier::new(ssh_keygen, &allowlist).unwrap();
+    let verifier = Verifier::new(ssh_keygen, allowlist).unwrap();
     let verified = verifier.verify_ticket(&ticket, "host-b").unwrap();
     let proof = StopProof {
         schema_version: STOP_PROOF_SCHEMA.into(),
@@ -162,26 +146,7 @@ fn staged_claude_move_creates_one_native_session_after_verified_admission() {
             sha256: sha256(transcript.as_bytes()),
         },
     };
-    let signed_path = root.join("proof.json");
-    let payload_path = root.join("payload");
-    let payload = serde_json::to_string(&proof).unwrap();
-    write_private(&payload_path, payload.as_bytes());
-    assert!(
-        Command::new(ssh_keygen)
-            .args(["-Y", "sign", "-n", STOP_PROOF_SCHEMA, "-f"])
-            .arg(&a_key)
-            .arg(&payload_path)
-            .output()
-            .unwrap()
-            .status
-            .success()
-    );
-    let signature = fs::read_to_string(payload_path.with_extension("sig")).unwrap();
-    write_private(
-        &signed_path,
-        &serde_json::to_vec(&SignedRecord { payload, signature }).unwrap(),
-    );
-
+    let signed_path = signers.sign_proof(&root, &proof);
     let stage = || {
         run(&[
             "resume-move",
@@ -257,6 +222,14 @@ fn staged_claude_move_creates_one_native_session_after_verified_admission() {
         record["claude_account_binding"]["selected_account"],
         "fixture-account"
     );
+    let launch: Vec<String> = super::super::cli::tmux_calls(&tmux_log)
+        .into_iter()
+        .flatten()
+        .collect();
+    assert!(
+        launch.contains(&format!("CLAUDE_CONFIG_DIR={}", account_root.display())),
+        "launch must export the materialized destination account directory"
+    );
     let mut projects = fs::read_dir(account_root.join("projects")).unwrap();
     let installed = projects
         .next()
@@ -290,9 +263,4 @@ fn staged_claude_move_creates_one_native_session_after_verified_admission() {
     assert_eq!(stopped.code, 0, "{}", stopped.stderr_text());
     let gone = run_with(&tmux, &["has-session", "-t", tmux_session], &options);
     assert_eq!(gone.code, 1, "{}", gone.stderr_text());
-}
-
-fn write_private(path: &Path, bytes: &[u8]) {
-    fs::write(path, bytes).unwrap();
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
 }

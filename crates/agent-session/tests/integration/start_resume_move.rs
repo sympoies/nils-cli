@@ -207,3 +207,7 @@ esac
 
 #[path = "start_resume_move/claude.rs"]
 mod claude;
+#[path = "start_resume_move/codex.rs"]
+mod codex;
+#[path = "start_resume_move/support.rs"]
+mod support;

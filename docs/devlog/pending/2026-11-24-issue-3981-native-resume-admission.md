@@ -13,8 +13,10 @@
 
 ### Evidence
 
-- 43 focused resume tests passed, including a native Claude fixture for staged
+- Focused resume tests passed, including a native Claude fixture for staged
   history, wrong account, read-only preflight, one writer, and exact replay.
+- A native Codex fixture launches the staged move in its per-move provider home,
+  and both fixtures check the exported provider config directory.
 
 ### Links
 
