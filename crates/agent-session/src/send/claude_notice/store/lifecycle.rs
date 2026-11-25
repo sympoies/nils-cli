@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 mod archive;
 pub(super) mod checkpoint;
+mod reconcile;
 mod sealed;
 
 pub(super) const CHECKPOINT_INITIALIZED: &str = "notice checkpoint initialized after deadline";
@@ -398,8 +399,13 @@ pub(super) fn operation_used(
         .is_some())
 }
 
-pub(super) fn compact(ledger: &mut Ledger, scan: &Scan, deadline: Instant) -> io::Result<()> {
-    archive::compact(ledger, scan, deadline)
+pub(super) fn compact(
+    ledger: &mut Ledger,
+    scan: &mut Scan,
+    retirement_context: Option<&CliContext>,
+    deadline: Instant,
+) -> io::Result<()> {
+    archive::compact(ledger, scan, retirement_context, deadline)
 }
 
 #[cfg(test)]

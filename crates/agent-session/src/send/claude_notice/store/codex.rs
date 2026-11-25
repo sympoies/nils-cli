@@ -46,7 +46,7 @@ impl super::Claim {
             .as_ref()
             .filter(|provider| provider.provider == "codex")
             .ok_or_else(unavailable)?;
-        let op = uuid::Uuid::new_v4().to_string();
+        let op = uuid::Uuid::now_v7().to_string();
         let client_message_id = crate::serve::prompt_receipts::client_message_id(record, &op)
             .ok_or_else(unavailable)?;
         let binding = Binding {
