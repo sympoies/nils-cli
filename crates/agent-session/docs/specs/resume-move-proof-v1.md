@@ -185,3 +185,43 @@ missing proof cannot authorize source recovery.
 Use `resume-move status --move-id UUID` on B after an interrupted start. An
 admitted writer without a recorded result stays unresolved. An unresolved
 move cannot authorize source recovery.
+
+## Unresolved destination outcome
+
+Admission persists `writer_admitted` before the destination materializes
+credentials, installs a Claude transcript, or launches the session. A failure
+after that point, or an interrupted start, leaves the move in
+`writer_admitted`. This is intentional: the destination cannot prove that no
+writer started, so it never reports a no-writer abort.
+
+Observable behavior while a move is in this state:
+
+- `resume-move status --move-id UUID` on B reports `writer_admitted` with no
+  recorded session. `created` means the start finished and names the session.
+- `start` for the same move refuses with `resume-move-outcome-unknown` and
+  never launches a second writer.
+- `resume-move abort` refuses with `resume-move-destination-writer-present`,
+  so no no-writer receipt exists.
+- On A, `resume-move recover` needs that receipt, so A stays fenced and an
+  ordinary resume of the conversation on A refuses with
+  `resume-move-source-fenced`. Expiry does not release the fence.
+
+What to inspect on B:
+
+1. Run `resume-move status` and note the state and any recorded session.
+2. List the managed sessions on B and look for one for the move: the ID passed
+   with `--id`, otherwise `move-` followed by the move UUID. Check whether its
+   provider pane is running.
+3. Check whether the staged provider home still holds the verified history.
+
+What to do:
+
+- If a managed session for the move exists on B and is running, the
+  conversation continues there. Leave A fenced. A is the stale copy.
+- If no session or pane exists, B has probably not started a writer, but the
+  tooling cannot prove it. Do not edit or delete the move store, the fence
+  ledger, or the lock files by hand. Keep A fenced and report the move ID.
+- Release of A is supported only through a signed no-writer receipt. There is
+  no force option. Automatic settlement of a move whose post-admission failure
+  provably started no writer is tracked as follow-up #4042. Until it lands, an
+  unresolved move keeps A fenced.
