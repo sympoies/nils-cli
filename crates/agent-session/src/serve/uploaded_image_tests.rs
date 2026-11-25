@@ -22,10 +22,19 @@ impl Fixture {
     }
 
     fn for_provider(provider: &str) -> Self {
-        let temp = tempfile::Builder::new()
-            .prefix("history image $` ")
-            .tempdir()
-            .unwrap();
+        Self::for_provider_in(provider, None)
+    }
+
+    /// Place the fixture under `parent` instead of the process temp root, for a
+    /// test whose workload scales with the length of the fixture paths.
+    fn for_provider_in(provider: &str, parent: Option<&Path>) -> Self {
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("history image $` ");
+        let temp = match parent {
+            Some(parent) => builder.tempdir_in(parent),
+            None => builder.tempdir(),
+        }
+        .unwrap();
         let state_dir = temp.path().join("state");
         let cwd = temp.path().to_path_buf();
         let root = temp.path().join("history");

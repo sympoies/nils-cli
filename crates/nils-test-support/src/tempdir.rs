@@ -82,13 +82,17 @@ impl ScopedTempDir {
 }
 
 /// Allocate a cleanup-checked short path for a Unix-domain socket fixture,
-/// independent of the process temporary root's length.
+/// independent of the process temporary root's length. The directory is created
+/// `0700` whatever the umask, because it lives in the shared `/tmp`.
 #[cfg(unix)]
 pub fn short_socket_path(file_name: impl AsRef<Path>) -> (ScopedTempDir, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+
     let dir = ScopedTempDir {
         inner: Some(
             tempfile::Builder::new()
                 .prefix("cx-")
+                .permissions(fs::Permissions::from_mode(0o700))
                 .tempdir_in("/tmp")
                 .expect("create short Unix socket tempdir"),
         ),

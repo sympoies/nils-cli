@@ -584,7 +584,10 @@ async fn busy_manual_cancellation_rejects_only_the_turn_and_keeps_proxy_alive() 
     assert_eq!(receipt["result"]["cause"]["retryable"], true);
     assert_eq!(receipt["result"]["cause"]["binding_state"], "bound");
     assert_eq!(receipt["result"]["cause"]["binding_revision"], 7);
-    assert!(!receipt.to_string().contains(&record.cwd));
+    // The directory name alone is as revealing as the full path.
+    let receipt_text = receipt.to_string();
+    assert!(!receipt_text.contains(&record.cwd));
+    assert!(!receipt_text.contains("private-cwd-sentinel"));
     drop(lock);
     tui.send(Message::Text(
         json!({ "id": 2, "method": "thread/read", "params": {} })
