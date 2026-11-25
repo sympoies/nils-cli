@@ -81,7 +81,22 @@ fn full_unfinished_ledger_seals_expired_claims_without_replay() {
 
 #[test]
 fn reconciliation_retires_stopped_and_replaced_launches_without_losing_proof() {
-    for replacement in [false, true] {
+    #[derive(Debug)]
+    enum Retirement {
+        RuntimeRemoved,
+        SessionRemoved,
+        Replaced,
+        #[cfg(target_os = "linux")]
+        ProcessGroupExited,
+    }
+
+    for retirement in [
+        Retirement::RuntimeRemoved,
+        Retirement::SessionRemoved,
+        Retirement::Replaced,
+        #[cfg(target_os = "linux")]
+        Retirement::ProcessGroupExited,
+    ] {
         let root = tempfile::tempdir().unwrap();
         let context = context(root.path());
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -144,21 +159,46 @@ fn reconciliation_retires_stopped_and_replaced_launches_without_losing_proof() {
         assert!(!before.terminals.contains_key(&stranded.claim.op));
         drop(ledger);
 
-        if replacement {
-            let runtime = session.runtime.as_mut().unwrap();
-            runtime.generation += 1;
-            runtime.launch_id = "runtime-two".into();
-        } else {
-            session.runtime = None;
+        match retirement {
+            Retirement::RuntimeRemoved => session.runtime = None,
+            Retirement::Replaced => {
+                let runtime = session.runtime.as_mut().unwrap();
+                runtime.generation += 1;
+                runtime.launch_id = "runtime-two".into();
+            }
+            Retirement::SessionRemoved => {
+                fs::remove_file(crate::session_dir(&context, &session.id).join("session.json"))
+                    .unwrap();
+            }
+            #[cfg(target_os = "linux")]
+            Retirement::ProcessGroupExited => persist_exited_group(&mut session),
         }
-        crate::write_session_record(&context, &session).unwrap();
+        if matches!(retirement, Retirement::SessionRemoved) {
+            let error = crate::load_session_record(&context, &session.id).unwrap_err();
+            assert_eq!(error.code(), "session-not-found");
+        } else {
+            crate::write_session_record(&context, &session).unwrap();
+            #[cfg(target_os = "linux")]
+            if matches!(retirement, Retirement::ProcessGroupExited) {
+                let record = crate::load_session_record(&context, &session.id).unwrap();
+                assert_eq!(
+                    crate::coordination_runtime_evidence(&context, &record)
+                        .unwrap()
+                        .status,
+                    crate::CoordinationRuntimeStatus::Stopped
+                );
+            }
+        }
         reconcile(&context).unwrap();
 
         let mut ledger = Ledger::open(&context.state_dir, false, deadline)
             .unwrap()
             .unwrap();
         let mut live = ledger.scan(deadline).unwrap();
-        assert!(!live.claims.contains_key(&stranded.claim.op));
+        assert!(
+            !live.claims.contains_key(&stranded.claim.op),
+            "{retirement:?}"
+        );
         assert_eq!(live.terminals[&submitted.claim.op].state, State::Submitted);
         lifecycle::merge_archived(&ledger, &mut live, deadline).unwrap();
         let terminal = &live.terminals[&stranded.claim.op];
@@ -171,4 +211,33 @@ fn reconciliation_retires_stopped_and_replaced_launches_without_losing_proof() {
                 .is_some()
         );
     }
+}
+
+#[cfg(target_os = "linux")]
+fn persist_exited_group(session: &mut crate::SessionRecord) {
+    use std::os::unix::process::CommandExt;
+
+    let mut child = std::process::Command::new("/bin/sh")
+        .args(["-c", "exit 0"])
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    assert!(child.wait().unwrap().success());
+
+    let pid_namespace =
+        crate::linux_process_pid_namespace(std::process::id() as libc::pid_t).unwrap();
+    session.extra.insert(
+        crate::DELETE_TMUX_IDENTITY_KEY.into(),
+        json!({
+            "launch_id": session.runtime.as_ref().unwrap().launch_id,
+            "session_id": "$1",
+            "pane_id": "%1",
+            "pane_pid": pid,
+            "process_group_id": pid,
+            "process_session_members": [],
+            "control_group_members": [],
+            "pid_namespace": pid_namespace
+        }),
+    );
 }
