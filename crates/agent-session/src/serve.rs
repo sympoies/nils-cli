@@ -7053,7 +7053,7 @@ async fn drain_coordination_notifications(state: Arc<ServeState>) {
 async fn reconcile_coordination_notifications(state: Arc<ServeState>) {
     let context = state.context.clone();
     let candidates = match tokio::task::spawn_blocking(move || {
-        crate::coordination::unresolved_notification_attempts(&context)
+        terminal_notification::unresolved_attempts(&context)
     })
     .await
     {
