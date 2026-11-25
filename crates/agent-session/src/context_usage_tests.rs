@@ -250,7 +250,7 @@ fn shared_views_and_board_expose_only_context_facts() {
             Some("stopped".into()),
             None,
         )],
-        "machine",
+        &context,
     ))
     .unwrap();
     assert_eq!(list[0]["context_usage"], actual["context_usage"]);

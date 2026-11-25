@@ -29,6 +29,9 @@ struct Target {
     /// Idempotency key from the original send or notice.
     #[arg(long)]
     idempotency_key: String,
+    /// Read the originally pasted text from stdin to check a wrapped attempt.
+    #[arg(long)]
+    text_stdin: bool,
     #[arg(long, value_hint = ValueHint::FilePath)]
     tmux_bin: Option<PathBuf>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
@@ -56,6 +59,7 @@ struct ResultSummary<'a> {
     runtime_id: &'a str,
     #[serde(flatten)]
     outcome: Outcome,
+    unsubmitted_attempt: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     recovery_enter_sent: bool,
 }
@@ -69,6 +73,15 @@ enum Outcome {
 }
 
 impl Outcome {
+    fn holds_unsubmitted_attempt(&self) -> bool {
+        matches!(
+            self,
+            Self::NotSubmitted {
+                composer: "exact" | "wrapped_match" | "occupied"
+            }
+        )
+    }
+
     fn as_str(&self) -> &'static str {
         match self {
             Self::Submitted => "submitted",
@@ -86,13 +99,17 @@ pub(crate) fn run(context: &CliContext, args: AttemptArgs) -> i32 {
         Action::Recover(target) => (target, true),
     };
     let result = (|| {
+        let original = read_send_text(&None, target.text_stdin)?;
+        let original = original
+            .as_deref()
+            .map(|text| text.trim_end_matches(['\r', '\n']));
         let record = load_session_record(context, &target.session)?;
         let tmux = resolve_tmux_bin(target.tmux_bin.as_deref());
         let outcome = if recover {
-            recover_retained(context, &record, &target, &tmux)?;
+            recover_retained(context, &record, &target, &tmux, original)?;
             Outcome::Unknown
         } else {
-            status(context, &record, &target, &tmux)?
+            status(context, &record, &target, &tmux, original)?
         };
         Ok((record, outcome))
     })();
@@ -103,6 +120,7 @@ pub(crate) fn run(context: &CliContext, args: AttemptArgs) -> i32 {
             &ResultSummary {
                 id: &record.id,
                 runtime_id: &target.expect_runtime,
+                unsubmitted_attempt: outcome.holds_unsubmitted_attempt(),
                 outcome,
                 recovery_enter_sent: recover,
             },
@@ -137,50 +155,31 @@ fn status(
     record: &SessionRecord,
     target: &Target,
     tmux: &Path,
+    original: Option<&str>,
 ) -> Result<Outcome, CliError> {
     let Some(claim) = bound_claim(context, record, target)? else {
         return Ok(Outcome::Unknown);
     };
-    let deadline = Instant::now() + Duration::from_secs(3);
-    let guards = send_guard::GuardArgs::default();
-    let admission = send_guard::Admission {
-        stopped_idle: &Default::default(),
-        context,
-        record,
-        args: &guards,
-        tmux_bin: tmux,
-        verify_composer: false,
-        deadline,
-    };
     let outcome = match &claim.evidence {
         Evidence::Submitted => Outcome::Submitted,
         Evidence::Unknown => Outcome::Unknown,
-        Evidence::NotSubmitted { composer } => Outcome::NotSubmitted {
-            composer: match composer {
-                Composer::Absent => "absent",
-                Composer::Unknown => "unknown",
-                Composer::Pasted {
-                    input_sha256,
-                    fence,
-                    record_updated_at,
-                } => match observe_input(&admission) {
-                    Some(input) if input.is_empty() => "absent",
-                    Some(input)
-                        if key::input_digest(&input) == *input_sha256
-                            && record.updated_at == *record_updated_at
-                            && fence_matches(tmux, record, fence.as_deref()) =>
-                    {
-                        "exact"
-                    }
-                    _ => "unknown",
-                },
-            },
-        },
+        Evidence::NotSubmitted { composer } => {
+            let composer = composer_status(context, record, tmux, composer, original);
+            let composer = if composer == "occupied"
+                && key::latest(context, record).as_ref() != Some(&claim)
+            {
+                "unknown"
+            } else {
+                composer
+            };
+            Outcome::NotSubmitted { composer }
+        }
         Evidence::NativePending {
             identity_sha256,
             client_id,
             input_sha256,
         } => {
+            let deadline = Instant::now() + Duration::from_secs(3);
             if native_match(record, identity_sha256)
                 && codex_app_server::guarded::Client::connect(record, deadline)
                     .ok()
@@ -204,9 +203,7 @@ fn status(
     let unchanged = load_session_record(context, &record.id)
         .ok()
         .and_then(|current| {
-            if matches!(outcome, Outcome::NotSubmitted { composer: "exact" })
-                && current.updated_at != record.updated_at
-            {
+            if outcome.holds_unsubmitted_attempt() && current.updated_at != record.updated_at {
                 return None;
             }
             bound_claim(context, &current, target).ok().flatten()
@@ -216,11 +213,99 @@ fn status(
     Ok(if unchanged { outcome } else { Outcome::Unknown })
 }
 
+/// A passive, keyless projection for a patrol. Occupancy after a retained
+/// pre-Enter claim never extends the authority of the recovery operation.
+pub(crate) fn unsubmitted_attempt(context: &CliContext, id: &str, tmux: &Path) -> bool {
+    let observe = || {
+        let record = load_session_record(context, id).ok()?;
+        let claim = key::latest(context, &record)?;
+        let Evidence::NotSubmitted { composer } = &claim.evidence else {
+            return None;
+        };
+        let status = Outcome::NotSubmitted {
+            composer: composer_status(context, &record, tmux, composer, None),
+        };
+        if !status.holds_unsubmitted_attempt() {
+            return None;
+        }
+        let current = load_session_record(context, id).ok()?;
+        (current.updated_at == record.updated_at
+            && key::latest(context, &current).as_ref() == Some(&claim))
+        .then_some(())
+    };
+    observe().is_some()
+}
+
+fn composer_status(
+    context: &CliContext,
+    record: &SessionRecord,
+    tmux: &Path,
+    composer: &Composer,
+    original: Option<&str>,
+) -> &'static str {
+    let (input_sha256, fence, record_updated_at) = match composer {
+        Composer::Pasted {
+            input_sha256,
+            fence,
+            record_updated_at,
+        } => (input_sha256, fence, record_updated_at),
+        Composer::Absent => return "absent",
+        Composer::Unknown => return "unknown",
+    };
+    let admission = send_guard::Admission {
+        stopped_idle: &Default::default(),
+        context,
+        record,
+        args: &send_guard::GuardArgs::default(),
+        tmux_bin: tmux,
+        verify_composer: false,
+        deadline: Instant::now() + Duration::from_secs(3),
+    };
+    match observe_retained(&admission, input_sha256, original) {
+        Some(Retained::Absent) => "absent",
+        Some(Retained::Occupied) => "occupied",
+        Some(retained)
+            if record.updated_at == *record_updated_at
+                && fence_matches(tmux, record, fence.as_deref()) =>
+        {
+            retained.label()
+        }
+        Some(_) if original.is_none() => "occupied",
+        _ => "unknown",
+    }
+}
+
 fn native_match(record: &SessionRecord, expected: &str) -> bool {
     crate::serve::prompt_receipts::native_identity(record).as_deref() == Some(expected)
 }
 
-fn observe_input(admission: &send_guard::Admission<'_>) -> Option<String> {
+enum Retained<'a> {
+    Absent,
+    Occupied,
+    Exact(String),
+    WrappedMatch(&'a str),
+}
+
+impl Retained<'_> {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Absent => "absent",
+            Self::Occupied => "occupied",
+            Self::Exact(_) => "exact",
+            Self::WrappedMatch(_) => "wrapped_match",
+        }
+    }
+}
+
+fn observe_retained<'a>(
+    admission: &send_guard::Admission<'_>,
+    digest: &str,
+    original: Option<&'a str>,
+) -> Option<Retained<'a>> {
+    let original = match original {
+        Some(text) if key::input_digest(text) != digest => return None,
+        text => text,
+    };
     admission.identity("cleanup").ok()?;
     let target = format!("{}:0.0", admission.record.tmux_session);
     let pane = send_guard::capture_styled(
@@ -231,9 +316,26 @@ fn observe_input(admission: &send_guard::Admission<'_>) -> Option<String> {
             .saturating_duration_since(Instant::now())
             .min(crate::PANE_OBSERVATION_COMMAND_TIMEOUT),
     )?;
-    let input = send_submit::exact_composer_input(&admission.record.agent, &pane)?;
+    let agent = &admission.record.agent;
+    let retained = match send_submit::exact_composer_input(agent, &pane) {
+        Some(input) if input.is_empty() => Retained::Absent,
+        Some(input) if key::input_digest(&input) == digest => Retained::Exact(input),
+        Some(_) if original.is_none() => Retained::Occupied,
+        None if original.is_none() && send_submit::wrapped_composer_occupied(agent, &pane) => {
+            Retained::Occupied
+        }
+        None => {
+            let text = original?;
+            let (input, _) = send_submit::wrapped_composer_layout(agent, &pane, text)?;
+            if input != text {
+                return None;
+            }
+            Retained::WrappedMatch(text)
+        }
+        _ => return None,
+    };
     admission.identity("cleanup").ok()?;
-    Some(input)
+    Some(retained)
 }
 
 const FENCE_FORMAT: &str = "#{session_attached}|#{session_last_attached}|#{session_id}|#{pane_id}|#{pane_pid}|#{pane_in_mode}|#{pane_dead}";
@@ -290,6 +392,7 @@ fn recover_retained(
     observed: &SessionRecord,
     target: &Target,
     tmux: &Path,
+    original: Option<&str>,
 ) -> Result<(), CliError> {
     let refused = || {
         CliError::runtime(
@@ -298,7 +401,8 @@ fn recover_retained(
             None,
         )
     };
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // Recovery uses the same terminal cursor proof as guarded send.
+    let deadline = Instant::now() + super::guarded_hold_budget(observed, true);
     let lock =
         crate::acquire_session_record_lock_timed(context, &observed.id, Duration::from_secs(2))?;
     let mut manual_input = ManualInputSection::new(lock);
@@ -337,9 +441,11 @@ fn recover_retained(
     crate::restart::ensure_not_fenced(context, &record)?;
     codex_app_server::ensure_manual_input_capability(context, &record)?;
     admission.check(None, "admission")?;
-    let text = observe_input(&admission)
-        .filter(|text| key::input_digest(text) == *input_sha256)
-        .ok_or_else(refused)?;
+    let text = match observe_retained(&admission, input_sha256, original) {
+        Some(Retained::Exact(text)) => std::borrow::Cow::Owned(text),
+        Some(Retained::WrappedMatch(text)) => std::borrow::Cow::Borrowed(text),
+        _ => return Err(refused()),
+    };
     let keys = &[SpecialKey::Enter];
     crate::auth_incident::recovery::guard_input(context, &record, Some(&text), keys)?;
     if record.agent == "codex" {
@@ -354,7 +460,17 @@ fn recover_retained(
         None => activity::pending::probe_lock(context, &record.id)?.ok_or_else(refused)?,
     };
     let _ingress = activity::pending::hold(context, &record.id, ingress);
-    admission.check(Some(&text), "recovery")?;
+    let recovery_guards = send_guard::GuardArgs {
+        // Claim creation bound the paste to an empty composer. Enable its
+        // existing wrapped cursor proof, with no opaque-placeholder recovery.
+        require_empty_composer: true,
+        ..guards.clone()
+    };
+    send_guard::Admission {
+        args: &recovery_guards,
+        ..admission
+    }
+    .check(Some(&text), "recovery")?;
     // The old proof must be durably unavailable before Enter can reach tmux.
     claim.consume_recovery(context, &record)?;
     let mut command = ProcessCommand::new(tmux);

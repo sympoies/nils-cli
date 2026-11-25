@@ -193,7 +193,7 @@ fn submit(
                     None,
                 ));
             }
-            enter()
+            enter().map(|()| false)
         },
     );
     let mut known = known.into_inner();

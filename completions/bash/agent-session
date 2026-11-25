@@ -775,7 +775,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__attempt__recover)
-            opts="-h --expect-runtime --idempotency-key --tmux-bin --format --state-dir --host --help"
+            opts="-h --expect-runtime --idempotency-key --text-stdin --tmux-bin --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -827,7 +827,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__attempt__status)
-            opts="-h --expect-runtime --idempotency-key --tmux-bin --format --state-dir --host --help"
+            opts="-h --expect-runtime --idempotency-key --text-stdin --tmux-bin --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

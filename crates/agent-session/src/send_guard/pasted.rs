@@ -30,7 +30,8 @@ impl Admission<'_> {
         pasted: Option<&str>,
         stage: &str,
     ) -> Option<String> {
-        if self.record.agent == "claude"
+        if stage != "recovery"
+            && self.record.agent == "claude"
             && self.args.require_empty_composer
             && let Some(text) = pasted
             && let Some(label) = send_submit::claude_paste_placeholder(pane)
@@ -65,7 +66,11 @@ impl Admission<'_> {
         }
         let text = pasted?;
         let agent = self.record.agent.as_str();
-        let (input, end) = send_submit::wrapped_composer_layout(agent, pane, text)?;
+        let send_submit::WrappedLayout {
+            input,
+            end,
+            checkpoints,
+        } = send_submit::wrapped_layout(agent, pane, text, stage == "recovery")?;
         if !send_submit::composer_holds(agent, &input, text) {
             // The wrapped composer is readable, but does not contain only our
             // paste. Preserve the mismatch as an immediate refusal instead of
@@ -81,11 +86,23 @@ impl Admission<'_> {
         // and one more must reach it. This rejects both extra and missing separators.
         // A matched final row contains a nonempty paste remainder, so its
         // endpoint is past column 2 and the preceding cell is defined.
-        let navigation = [
-            (&["C-a"][..], 1, None),
+        let mut navigation = vec![(&["C-a"][..], 1, None)];
+        let mut bytes = 0;
+        let mut advanced = 0;
+        for (offset, endpoint) in checkpoints {
+            let advance = text.get(bytes..offset)?.chars().count();
+            if advanced + advance >= steps.checked_sub(1)? {
+                // The final two positions are already proved below.
+                break;
+            }
+            navigation.push((&["Right"][..], advance, Some(endpoint)));
+            bytes = offset;
+            advanced += advance;
+        }
+        navigation.extend([
             (
                 &["Right"][..],
-                steps.checked_sub(1)?,
+                steps.checked_sub(advanced + 1)?,
                 Some((end.0 - last_cells, end.1)),
             ),
             (&["Right"][..], 1, Some(end)),
@@ -94,7 +111,7 @@ impl Admission<'_> {
             // The changed position also rejects a stale cursor observation.
             (&["Right", "Left"][..], 1, Some((end.0 - last_cells, end.1))),
             (&["Right"][..], 1, Some(end)),
-        ];
+        ]);
         for (keys, count, endpoint) in navigation {
             self.identity(stage).ok()?;
             let mut command = Command::new(self.tmux_bin);

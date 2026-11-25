@@ -11348,12 +11348,12 @@ fn render_single_success<T: Serialize>(
     }
 }
 
-fn render_list_success(format: OutputFormat, results: &[SessionView], machine: &str) -> i32 {
+fn render_list_success(format: OutputFormat, results: &[SessionView], ctx: &CliContext) -> i32 {
     match format {
         OutputFormat::Json => {
             let envelope = Envelope::success(
                 schema_version_for(SCHEMA, LIST_COMMAND, 1),
-                board::list_records(results, machine),
+                board::list_records(results, ctx),
             );
             print_json(&envelope)
         }

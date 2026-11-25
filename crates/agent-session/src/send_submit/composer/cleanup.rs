@@ -140,6 +140,42 @@ pub(crate) fn matched_layout(
     pane: &str,
     pasted: &str,
 ) -> Option<(String, (usize, usize))> {
+    let layout = wrapped_layout(agent, pane, pasted, false)?;
+    Some((layout.input, layout.end))
+}
+
+pub(crate) fn wrapped_paste_is_prefix(agent: &str, pane: &str, pasted: &str) -> bool {
+    matches!(
+        match_layout(agent, pane, pasted, false),
+        Some(Match::Prefix)
+    )
+}
+
+pub(crate) struct WrappedLayout {
+    pub(crate) input: String,
+    pub(crate) end: (usize, usize),
+    /// Byte offsets just after the first visible character of continuation rows.
+    pub(crate) checkpoints: Vec<(usize, (usize, usize))>,
+}
+
+pub(crate) fn wrapped_layout(
+    agent: &str,
+    pane: &str,
+    pasted: &str,
+    check_wrap_spaces: bool,
+) -> Option<WrappedLayout> {
+    match match_layout(agent, pane, pasted, check_wrap_spaces)? {
+        Match::Complete(layout) => Some(layout),
+        Match::Prefix => None,
+    }
+}
+
+enum Match {
+    Complete(WrappedLayout),
+    Prefix,
+}
+
+fn match_layout(agent: &str, pane: &str, pasted: &str, check_wrap_spaces: bool) -> Option<Match> {
     cursor_cells(pasted)?;
     let glyph = match agent {
         "claude" => '❯',
@@ -172,6 +208,8 @@ pub(crate) fn matched_layout(
         .strip_prefix([' ', '\u{a0}', '\u{2007}', '\u{202f}'])?;
     let mut offsets = vec![0];
     let mut result = None;
+    let mut prefix = None;
+    let mut checkpoints = Vec::new();
     for (index, row) in region.iter().enumerate() {
         let row = if index == 0 {
             first
@@ -183,6 +221,7 @@ pub(crate) fn matched_layout(
             return None;
         }
         let mut next = Vec::new();
+        let mut row_offset = None;
         for position in offsets {
             let rest = &pasted[position..];
             if index + 1 == region.len() {
@@ -205,8 +244,12 @@ pub(crate) fn matched_layout(
                         return None;
                     }
                     result = Some(candidate);
+                    row_offset = Some(position);
+                } else if rest.starts_with(visible) {
+                    prefix = Some(&pasted[..position + visible.len()]);
                 }
             } else if let Some(after) = rest.strip_prefix(visible) {
+                row_offset = Some(position);
                 let base = position + visible.len();
                 let spaces = after.bytes().take_while(|b| *b == b' ').count();
                 // Word wrapping can omit the separator space entirely.
@@ -218,11 +261,28 @@ pub(crate) fn matched_layout(
                 }
             }
         }
+        if check_wrap_spaces
+            && index > 0
+            && let Some(offset) = row_offset
+        {
+            let (column, character) = visible.char_indices().find(|(_, ch)| *ch != ' ')?;
+            let through = column + character.len_utf8();
+            // Only construct a checkpoint inside the originally pasted text.
+            if offset + through <= pasted.len() {
+                checkpoints.push((
+                    offset + through,
+                    (2 + cursor_cells(&visible[..through])?, start + index),
+                ));
+            }
+        }
         next.sort_unstable();
         next.dedup();
         offsets = next;
     }
-    let (input, end) = result?;
+    let input = result
+        .as_ref()
+        .map(|(input, _)| input.as_str())
+        .or(prefix)?;
     let flattened = format!(
         "{}\n{glyph} {}\n{}",
         lines[..start].join("\n"),
@@ -231,8 +291,15 @@ pub(crate) fn matched_layout(
     );
     // Preserve the ordinary dialog and placeholder checks after matching.
     exact_composer_input(agent, &flattened)
-        .filter(|observed| composer_holds(agent, observed, &input))
-        .map(|input| (input, end))
+        .filter(|observed| composer_holds(agent, observed, input))
+        .map(|input| match result {
+            Some((_, end)) => Match::Complete(WrappedLayout {
+                input,
+                end,
+                checkpoints,
+            }),
+            None => Match::Prefix,
+        })
 }
 
 #[cfg(test)]

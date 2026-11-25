@@ -30,7 +30,7 @@ pub(crate) const BOARD_SCHEMA: &str = "agent-session.board.v1";
 pub(crate) const RECORD_SCHEMA: &str = "agent-session.board-record.v1";
 /// Additive capabilities of the v1 envelopes. A reader feature-detects from
 /// this list, never from the presence of a record field.
-pub(crate) const EXTENSIONS: [&str; 7] = [
+pub(crate) const EXTENSIONS: [&str; 8] = [
     "lineage.v1",
     "work.v1",
     "context_usage.v1",
@@ -38,9 +38,10 @@ pub(crate) const EXTENSIONS: [&str; 7] = [
     "terminal_activity.v1",
     "runtime_exit.v1",
     "boot_recovery.v1",
+    "unsubmitted_attempt.v1",
 ];
 /// What the daemon snapshot names: the extensions plus the programs route.
-const DAEMON_EXTENSIONS: [&str; 8] = [
+const DAEMON_EXTENSIONS: [&str; 9] = [
     "lineage.v1",
     "work.v1",
     "programs.v1",
@@ -49,6 +50,7 @@ const DAEMON_EXTENSIONS: [&str; 8] = [
     "terminal_activity.v1",
     "runtime_exit.v1",
     "boot_recovery.v1",
+    "unsubmitted_attempt.v1",
 ];
 /// `AGENT_SESSION_BOARD=1` enables the daemon board routes, like `--board`.
 pub(crate) const BOARD_ENV: &str = "AGENT_SESSION_BOARD";
@@ -80,13 +82,25 @@ pub(crate) fn machine_identity(explicit: Option<String>, context: &CliContext) -
 pub(crate) struct ListRecord<'a> {
     #[serde(flatten)]
     view: &'a SessionView,
-    machine: &'a str,
+    machine: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    unsubmitted_attempt: bool,
 }
 
-pub(crate) fn list_records<'a>(views: &'a [SessionView], machine: &'a str) -> Vec<ListRecord<'a>> {
+pub(crate) fn list_records<'a>(
+    views: &'a [SessionView],
+    context: &CliContext,
+) -> Vec<ListRecord<'a>> {
+    let machine = machine_identity(None, context);
+    let tmux = crate::resolve_tmux_bin(None);
     views
         .iter()
-        .map(|view| ListRecord { view, machine })
+        .map(|view| ListRecord {
+            view,
+            machine: machine.clone(),
+            unsubmitted_attempt: view.status == "running"
+                && crate::send::attempt::unsubmitted_attempt(context, &view.id, &tmux),
+        })
         .collect()
 }
 
@@ -131,6 +145,11 @@ fn snapshot_with(
                 project_record(&view, machine, home.as_deref(), federation_configured)?;
             if let Some(id) = view["id"].as_str() {
                 crate::send_guard::response::project_events(context, id, &mut projected);
+                if projected["state"] == "live"
+                    && crate::send::attempt::unsubmitted_attempt(context, id, tmux_bin)
+                {
+                    projected["unsubmitted_attempt"] = json!(true);
+                }
             }
             Some(projected)
         });

@@ -442,7 +442,7 @@ fn confirm_prompt_submission(
             activity::controller_state_for_record(context, record)
                 .is_none_or(|turn| turn.phase != activity::TurnPhase::NeedsInput)
         },
-        press_enter,
+        || press_enter().map(|()| false),
     )
 }
 
@@ -754,14 +754,20 @@ fn guarded(
             } else {
                 send_submit::probe(text)
             };
+            let mut first_enter = true;
             let mut press_enter = || {
                 manual_input.arm(context, &record)?;
                 if owned_placeholder.is_some() {
                     admission.bind_placeholder(&mut owned_placeholder)?;
                 }
-                admission.check(Some(text), "submit")?;
+                if first_enter {
+                    admission.check_first_submit(text)?;
+                    first_enter = false;
+                } else {
+                    admission.check(Some(text), "submit")?;
+                }
                 delivery.dispatch();
-                admission.send_key(SpecialKey::Enter)
+                admission.send_key(SpecialKey::Enter).map(|()| true)
             };
             if let Some(probe) = probe {
                 let mut observations = 0;

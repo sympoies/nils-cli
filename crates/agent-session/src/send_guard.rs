@@ -116,12 +116,17 @@ impl Admission<'_> {
             pasted_text,
             stage,
             self.args.expected_idle_ready_boundary.is_none(),
+            false,
         )
+    }
+
+    pub(crate) fn check_first_submit(&self, text: &str) -> Result<(), CliError> {
+        self.check_with_draft_repair(Some(text), "submit", false, true)
     }
 
     /// Scheduler notices observe an empty composer without stashing or clearing a draft.
     pub(crate) fn check_preserving_draft(&self, stage: &str) -> Result<(), CliError> {
-        self.check_with_draft_repair(None, stage, false)
+        self.check_with_draft_repair(None, stage, false, false)
     }
 
     fn check_with_draft_repair(
@@ -129,6 +134,7 @@ impl Admission<'_> {
         pasted_text: Option<&str>,
         stage: &str,
         repair_draft: bool,
+        settle_paste: bool,
     ) -> Result<(), CliError> {
         self.timeout(stage)?;
         self.identity(stage)?;
@@ -152,7 +158,7 @@ impl Admission<'_> {
         self.idle(stage)?;
         if self.args.require_empty_composer || self.verify_composer || pasted_text.is_some() {
             let target = format!("{}:0.0", self.record.tmux_session);
-            let observed = match self.observe_composer(&target, pasted_text, stage) {
+            let observed = match self.observe_composer(&target, pasted_text, stage, settle_paste) {
                 Ok(observed) => observed,
                 Err(error) => {
                     if repair_draft
@@ -205,13 +211,15 @@ impl Admission<'_> {
     }
 
     /// A provider redraw can briefly make a post-paste pane capture unusable.
-    /// Retry only that observation, within the existing send deadline; never
-    /// repeat the paste or submit key, and never retry a readable mismatch.
+    /// Retry an unusable capture briefly. An empty or visibly incomplete paste
+    /// can still be arriving after empty admission, so let it settle within the
+    /// send deadline. A readable conflicting draft still refuses immediately.
     fn observe_composer(
         &self,
         target: &str,
         pasted_text: Option<&str>,
         stage: &str,
+        settle_paste: bool,
     ) -> Result<String, CliError> {
         #[cfg(test)]
         let retry_window = TEST_RETRY_WINDOW.get();
@@ -237,6 +245,7 @@ impl Admission<'_> {
             }
             let timeout = observation.timeout(stage)?;
             let join_wrapped = self.args.notice_envelope && pasted_text.is_some();
+            let mut paste_landing = false;
             let input = if join_wrapped {
                 capture_notice_pane(self.tmux_bin, target, timeout).and_then(|(pane, cursor)| {
                     reason = send_submit::exact_composer_observation(&self.record.agent, &pane)
@@ -280,9 +289,38 @@ impl Admission<'_> {
                         return Err(self.unobserved_composer(reason, stage));
                     }
                 }
-                pane.and_then(|pane| observation.pasted_composer_input(&pane, pasted_text, stage))
+                pane.and_then(|pane| {
+                    // The short retry bounds getting a fresh pane, not the
+                    // cursor proof after a complete wrapped layout appears.
+                    let input = self.pasted_composer_input(&pane, pasted_text, stage);
+                    if settle_paste
+                        && self.args.require_empty_composer
+                        && let Some(text) = pasted_text
+                    {
+                        paste_landing = match input.as_deref() {
+                            Some(prefix) => {
+                                prefix.len() < text.len()
+                                    && text.starts_with(prefix)
+                                    && !send_submit::composer_holds(
+                                        &self.record.agent,
+                                        prefix,
+                                        text,
+                                    )
+                            }
+                            None => send_submit::wrapped_paste_is_prefix(
+                                &self.record.agent,
+                                &pane,
+                                text,
+                            ),
+                        };
+                    }
+                    input
+                })
             };
-            if let Some(input) = input {
+            if paste_landing {
+                retry_until = Some(self.deadline);
+                self.idle(stage)?;
+            } else if let Some(input) = input {
                 return Ok(input);
             }
             if !retryable {

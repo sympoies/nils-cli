@@ -231,6 +231,56 @@ pub(crate) fn direct_composer_input(agent: &str, pane: &str) -> Option<String> {
     direct_composer_observation(agent, pane).ok()
 }
 
+/// Observe occupancy of a wrapped region without reconstructing its bytes.
+pub(crate) fn wrapped_composer_occupied(agent: &str, pane: &str) -> bool {
+    let Some((plain, dim)) = styled_text(pane) else {
+        return false;
+    };
+    let lines: Vec<_> = plain.lines().collect();
+    let Some((region, footer)) = (match agent {
+        "claude" => claude_composer(&lines),
+        "codex" => codex_composer(&lines),
+        _ => None,
+    }) else {
+        return false;
+    };
+    if region.len() < 2 || footer_has_dialog(footer) {
+        return false;
+    }
+    let Some(start) = lines.iter().position(|line| std::ptr::eq(*line, region[0])) else {
+        return false;
+    };
+    let mut offset = lines[..start]
+        .iter()
+        .map(|line| line.len() + 1)
+        .sum::<usize>();
+    let mut occupied = false;
+    for (index, row) in region.iter().enumerate() {
+        let text = if index == 0 {
+            row.trim_start()
+                .strip_prefix(if agent == "claude" { '❯' } else { '›' })
+        } else {
+            row.strip_prefix("  ")
+        };
+        let Some(text) = text else {
+            return false;
+        };
+        let content = offset + row.len() - text.len();
+        occupied |= text
+            .char_indices()
+            .any(|(index, ch)| !ch.is_whitespace() && !dim[content + index]);
+        offset += row.len() + 1;
+    }
+    occupied
+}
+
+fn footer_has_dialog(footer: &[&str]) -> bool {
+    footer.iter().any(|line| {
+        let lower = line.to_lowercase();
+        DIALOG_HINTS.iter().any(|hint| lower.contains(hint))
+    })
+}
+
 /// The same classification, naming the first observation step that failed.
 fn observe_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Result<String, Unobserved> {
     let (plain, dim) = styled_text(pane).ok_or(Unobserved::PaneUnparsable)?;
@@ -244,10 +294,7 @@ fn observe_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Result<Str
     if region.len() != 1 {
         return Err(Unobserved::RegionNotSingleRow);
     }
-    if footer.iter().any(|line| {
-        let lower = line.to_lowercase();
-        DIALOG_HINTS.iter().any(|hint| lower.contains(hint))
-    }) {
+    if footer_has_dialog(footer) {
         return Err(Unobserved::FooterDialogHint);
     }
     let glyph = if agent == "claude" { '❯' } else { '›' };

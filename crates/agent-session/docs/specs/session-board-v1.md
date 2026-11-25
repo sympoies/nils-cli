@@ -175,6 +175,7 @@ the extension. A session with lineage and work looks like this:
 | Progress | `turn_state` | object or null | `SessionView.turn_state` (the [turn-state contract](../turn-state-contract.md)), projected to the allowlisted fields below. `null` when the session has no turn state. |
 | Progress | `turn_state.phase` | string | `TurnState.phase`: `starting`, `working`, `waiting`, `needs_input`, `unresponsive`, or `unknown`. |
 | Progress | `pane_response` | optional object | Latest `agent-session.pane-response.v1` event: `event: pane_unresponsive`, `operation: submit` or `clear`, `session_id`, `session_incarnation`, `started_at`, `observed_at`, and positive `bound_seconds`. Metadata only; retained after status clears. See [composer response observation](stale-drafts-v1.md#unresponsive-pane-observation). |
+| Progress | `unsubmitted_attempt` | optional true | The latest retained guarded paste ended before Enter and the live composer is observably occupied. JSON list rows expose the same signal. See [attempt read-back](send-v1.md#read-back-a-guarded-attempt). |
 | Progress | `turn_state.phase_changed_at` | string | `TurnState.phase_changed_at`. |
 | Progress | `turn_state.diagnostic` | optional object | Bounded reasons `completion_evidence_pending`, `completion_evidence_missing`, `codex_progress_quiet`, `codex_startup_idle_unverified`, or `codex_runtime_stopped`. The startup condition carries only its reason. Quiet reasons include `quiet_threshold_seconds: 300`, parseable `quiet_since`, and `quiet_signal` (`current_turn.last_progress_at`, `current_turn.started_at`, or `semantic_event.observed_at`). Completion reasons may include the allowlisted `completion_candidate_reason` enum. Unknown members are excluded. |
 | Progress | `turn_state.current_turn` | object or null | `TurnState.current_turn`, projected to `last_progress_at` and `attention`. |
@@ -293,6 +294,7 @@ naming the additive capabilities the producer supports:
 | `context_usage.v1` | Optional record `context_usage`; [raw context facts](session-context-usage-v1.md). |
 | `launch_env.v1` | Record `launch_env`, the public non-secret launch switches. |
 | `boot_recovery.v1` | Record `boot_recovery`, the last boot recovery receipt. |
+| `unsubmitted_attempt.v1` | Record `unsubmitted_attempt`, the text-free composer occupancy signal. |
 | `runtime_exit.v1` | Record `runtime_exit`, with bounded exit reason and explicit recovery action. |
 | `terminal_activity.v1` | Record `last_terminal_activity_at`, the latest observed terminal activity timestamp. |
 | `programs.v1` | The daemon route `GET /board/programs/v1` and the aggregator view `programs` member. Named by the daemon snapshot only. |
@@ -318,7 +320,7 @@ strings, so a deployed reader that requires the exact v1 strings keeps working.
   "schema_version": "agent-session.board.v1",
   "record_schema": "agent-session.board-record.v1",
   "machine": "host-a",
-  "extensions": ["lineage.v1", "work.v1", "programs.v1", "context_usage.v1", "launch_env.v1", "terminal_activity.v1", "runtime_exit.v1", "boot_recovery.v1"],
+  "extensions": ["lineage.v1", "work.v1", "programs.v1", "context_usage.v1", "launch_env.v1", "terminal_activity.v1", "runtime_exit.v1", "boot_recovery.v1", "unsubmitted_attempt.v1"],
   "generated_at": "2030-01-01T00:05:00Z",
   "ledger_cursor": "opaque",
   "records": [],
