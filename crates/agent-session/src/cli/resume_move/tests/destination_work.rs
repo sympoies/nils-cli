@@ -144,6 +144,8 @@ impl Staged {
 
     pub(super) fn request(&self) -> destination::AdmissionRequest<'_> {
         destination::AdmissionRequest {
+            provider: Provider::Codex,
+            session_id: None,
             move_id: &self.binding.move_id,
             account: &self.binding.account,
             provider_session_id: &self.binding.provider_session_id,

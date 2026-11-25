@@ -15,3 +15,5 @@ mod git;
 mod guards;
 #[path = "integration/http.rs"]
 mod http;
+#[path = "integration/short_socket.rs"]
+mod short_socket;

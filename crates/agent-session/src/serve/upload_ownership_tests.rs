@@ -120,7 +120,9 @@ async fn upload_ownership_accepts_exact_size_cap() {
 
 #[tokio::test]
 async fn upload_ownership_resolves_once_per_history_read() {
-    let fixture = Fixture::new();
+    // 3,000 absolute paths must stay within the projected row limit, which a
+    // long process temp root would exceed; the workload and limit stay fixed.
+    let fixture = Fixture::for_provider_in("codex", Some(Path::new("/tmp")));
     let owned = fixture.upload("own", "owned.txt", b"owned").await;
     let foreign = fixture.upload("other", "foreign.txt", b"foreign").await;
     let paths = (0..3000)
