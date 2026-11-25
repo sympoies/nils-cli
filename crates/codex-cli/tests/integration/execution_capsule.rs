@@ -592,9 +592,10 @@ fn workspace_capsule_preserves_governance_and_writes_private_artifacts() {
     assert_eq!(argv[21], "/dev/fd/0");
     assert_eq!(argv[22], "--");
     let prompt = &argv[23];
+    let script = fs::canonicalize(capsule.join("run.sh")).expect("canonical script");
     assert!(prompt.contains("Apply the prepared change and verify it."));
-    assert!(prompt.contains(capsule.join("run.sh").to_str().unwrap()));
-    assert!(prompt.contains(workspace.to_str().unwrap()));
+    assert!(prompt.contains(script.to_str().unwrap()));
+    assert!(prompt.contains(canonical_workspace.to_str().unwrap()));
     assert!(prompt.contains("active home and project instructions"));
     assert!(prompt.contains("Do not bypass them"));
     assert!(prompt.contains("command_execution events"));
@@ -605,7 +606,6 @@ fn workspace_capsule_preserves_governance_and_writes_private_artifacts() {
             .iter()
             .any(|arg| arg == "--dangerously-bypass-approvals-and-sandbox")
     );
-
     for artifact in [
         "events.jsonl",
         "final.json",
