@@ -506,6 +506,29 @@ fn unkeyed_wake_capture_loss_is_visible_until_composer_is_empty() {
     assert!(script.contains(marker));
     fs::write(&tmux_model, script.replace(marker, "if command == 'list-windows': print('modeled-guarded\\t0'); sys.exit(0)\nif command == 'has-session':")).unwrap();
     assert_eq!(list_row(&fixture, text)["unsubmitted_attempt"], true);
+    let board = run_resolved(
+        "agent-session",
+        &[
+            "--state-dir",
+            fixture.root().join("state").to_str().unwrap(),
+            "board",
+            "--format",
+            "json",
+        ],
+        &CmdOptions::new()
+            .with_cwd(fixture.root())
+            .with_env_remove_prefix("AGENT_SESSION_")
+            .with_env(
+                "AGENT_SESSION_TMUX_BIN",
+                fixture.root().join("tmux").to_str().unwrap(),
+            ),
+    );
+    assert_eq!(board.code, 0, "{}", board.stdout_text());
+    assert!(!board.stdout_text().contains(text));
+    assert_eq!(
+        board.stdout_json()["data"]["board"]["records"][0]["unsubmitted_attempt"],
+        true
+    );
     let record = fs::read_to_string(
         fixture
             .root()

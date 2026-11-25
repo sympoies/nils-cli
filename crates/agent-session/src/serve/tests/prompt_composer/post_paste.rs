@@ -289,6 +289,18 @@ fn stranded_structured_prompt_is_visible_without_text_until_composer_is_empty() 
         .find(|row| row["session_id"] == ID)
         .unwrap();
     assert_eq!(row["unsubmitted_attempt"], true);
+    let mut views = Vec::new();
+    crate::visit_session_views(&context, Some(&tmux), false, &mut |view| {
+        views.push(view.unwrap());
+        Ok(())
+    })
+    .unwrap();
+    let list = serde_json::to_value(crate::board::list_records_with_tmux(
+        &views, &context, &tmux,
+    ))
+    .unwrap();
+    assert_eq!(list[0]["unsubmitted_attempt"], true);
+    assert!(!list.to_string().contains(text));
     fs::write(tmp.path().join("entered"), "").unwrap();
     assert!(!crate::send::attempt::unsubmitted_attempt(
         &context, ID, &tmux
