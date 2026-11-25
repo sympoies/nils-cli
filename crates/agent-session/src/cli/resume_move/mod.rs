@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod args;
+pub(crate) mod destination;
 mod source;
 pub(crate) mod source_fence;
 mod ssh;
@@ -16,7 +17,7 @@ mod ssh;
 mod tests;
 
 pub use args::MoveArgs;
-pub(crate) use args::run;
+pub(crate) use args::{MOVE_AVAILABLE, move_preflight, run, start};
 pub use ssh::Verifier;
 
 pub const TICKET_SCHEMA: &str = "agent-session.resume-move-ticket.v1";

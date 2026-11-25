@@ -551,6 +551,55 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(prepare)
+_arguments "${_arguments_options[@]}" : \
+'--move-id=[Unique UUID for this move]:MOVE_ID:_default' \
+'--plan-file=[File containing the read-only source plan]:PLAN_FILE:_files' \
+'--cwd=[Local destination checkout or working directory]:CWD:_files -/' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'--check[Validate the destination without writing a reservation]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(stage)
+_arguments "${_arguments_options[@]}" : \
+'--move-id=[Exact move UUID]:MOVE_ID:_default' \
+'--proof-file=[File containing the signed source stop proof]:PROOF_FILE:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+'--move-id=[Exact move UUID]:MOVE_ID:_default' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(abort)
+_arguments "${_arguments_options[@]}" : \
+'--move-id=[Exact move UUID]:MOVE_ID:_default' \
+'--proof-file=[Signed source proof when staging has not recorded it]:PROOF_FILE:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
 (recover)
 _arguments "${_arguments_options[@]}" : \
 '--move-id=[Move UUID used to fence the source]:MOVE_ID:_default' \
@@ -2246,9 +2295,18 @@ _agent-session__subcmd__resume-move_commands() {
     local commands; commands=(
 'plan:Inspect the exact portable source history without stopping the source' \
 'export:Export a stopped source only when the complete move protocol is available' \
+'prepare:Inspect or reserve the local destination for an exact source plan' \
+'stage:Verify a source proof and the exact privately staged provider history' \
+'status:Read the durable destination outcome for an exact move' \
+'abort:Verify or record a terminal abort before destination writer admission' \
 'recover:Release a source move fence using a verified destination receipt' \
     )
     _describe -t commands 'agent-session resume-move commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__resume-move__subcmd__abort_commands] )) ||
+_agent-session__subcmd__resume-move__subcmd__abort_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session resume-move abort commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__resume-move__subcmd__export_commands] )) ||
 _agent-session__subcmd__resume-move__subcmd__export_commands() {
@@ -2260,10 +2318,25 @@ _agent-session__subcmd__resume-move__subcmd__plan_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session resume-move plan commands' commands "$@"
 }
+(( $+functions[_agent-session__subcmd__resume-move__subcmd__prepare_commands] )) ||
+_agent-session__subcmd__resume-move__subcmd__prepare_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session resume-move prepare commands' commands "$@"
+}
 (( $+functions[_agent-session__subcmd__resume-move__subcmd__recover_commands] )) ||
 _agent-session__subcmd__resume-move__subcmd__recover_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session resume-move recover commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__resume-move__subcmd__stage_commands] )) ||
+_agent-session__subcmd__resume-move__subcmd__stage_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session resume-move stage commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__resume-move__subcmd__status_commands] )) ||
+_agent-session__subcmd__resume-move__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session resume-move status commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__rules_commands] )) ||
 _agent-session__subcmd__rules_commands() {
