@@ -56,7 +56,7 @@ pub(crate) fn snapshot(
 ) -> Result<Snapshot, CliError> {
     Ok(Snapshot {
         max_active_sessions: limit(context)?,
-        active_sessions: occupancy(context, tmux_bin, None)?,
+        active_sessions: occupancy(context, tmux_bin, None)?.0,
     })
 }
 
@@ -64,18 +64,19 @@ fn occupancy(
     context: &CliContext,
     tmux_bin: Option<&Path>,
     exclude_id: Option<&str>,
-) -> Result<usize, CliError> {
+) -> Result<(usize, usize), CliError> {
     let root = context.state_dir.join("sessions");
     let entries = match fs::read_dir(&root) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((0, 0)),
         Err(_) => return Err(state_error()),
     };
     let tmux = tmux_bin
         .map(Path::to_path_buf)
         .unwrap_or_else(|| resolve_tmux_bin(None));
-    let liveness_started = std::time::Instant::now();
+    let mut candidates = Vec::new();
     let mut active = 0;
+    let mut unknown = 0;
     for entry in entries {
         let entry = entry.map_err(|_| state_error())?;
         let kind = entry.file_type().map_err(|_| state_error())?;
@@ -144,22 +145,56 @@ fn occupancy(
         {
             continue;
         }
-        // Occupancy holds the admission lock, so all liveness probes share a
-        // budget shorter than the coordination lock wait. A probe skipped or
-        // cut short by that budget is unknown and therefore still occupies a
-        // slot, preserving conservative admission behavior.
-        let remaining = OCCUPANCY_LIVENESS_BUDGET.saturating_sub(liveness_started.elapsed());
-        if remaining.is_zero()
-            || live_status_with_timeout(
-                &tmux,
-                &record.tmux_session,
-                remaining.min(PANE_INPUT_COMMAND_TIMEOUT),
-            ) != "stopped"
-        {
-            active += 1;
+        candidates.push(record.tmux_session);
+    }
+    // Take the snapshot after examining lifecycle locks. Otherwise an in-flight
+    // launch could finish between an early listing and its lock observation.
+    if !candidates.is_empty() {
+        match list_tmux_sessions(&tmux) {
+            Some(sessions) => {
+                active += candidates
+                    .iter()
+                    .filter(|name| sessions.contains(*name))
+                    .count();
+            }
+            None => {
+                unknown = candidates.len();
+                active += unknown;
+            }
         }
     }
-    Ok(active)
+    Ok((active, unknown))
+}
+
+fn list_tmux_sessions(tmux: &Path) -> Option<std::collections::BTreeSet<String>> {
+    let mut command = ProcessCommand::new(tmux);
+    command
+        .env("LC_ALL", "C")
+        .args(["list-sessions", "-F", "#{session_id}\t#{session_name}"]);
+    let output =
+        run_output_with_timeout_and_strict_cap(command, OCCUPANCY_LIVENESS_BUDGET, 1024 * 1024)
+            .ok()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+        return (tmux_output_reports_absent(&output) && !stderr.contains("can't find session:"))
+            .then(std::collections::BTreeSet::new);
+    }
+    let text = std::str::from_utf8(&output.stdout).ok()?;
+    let mut sessions = std::collections::BTreeSet::new();
+    for line in text.lines() {
+        let (id, name) = line.split_once('\t')?;
+        if !id.starts_with('$')
+            || id.len() < 2
+            || !id[1..].bytes().all(|b| b.is_ascii_digit())
+            || name.is_empty()
+            || name.contains('\t')
+        {
+            return None;
+        }
+        sessions.insert(id.to_string());
+        sessions.insert(name.to_string());
+    }
+    Some(sessions)
 }
 
 fn state_error() -> CliError {
@@ -184,21 +219,21 @@ pub(super) fn reserve(
         return Ok(None);
     };
     let lock = coordination::lock_private_store(context, "session-admission.lock")?;
-    let active = occupancy(context, tmux_bin, exclude_id)?;
+    let (active, unknown) = occupancy(context, tmux_bin, exclude_id)?;
     if active as u64 >= max {
-        return Err(capacity_error(max, active as u64));
+        return Err(capacity_error(max, active as u64, unknown as u64));
     }
     Ok(Some(lock))
 }
 
-fn capacity_error(max: u64, active: u64) -> CliError {
+fn capacity_error(max: u64, active: u64, unknown: u64) -> CliError {
     CliError::runtime(
         "session-capacity-exceeded",
         format!(
             "session capacity reached ({active}/{max}); stop or delete an active session before creating another"
         ),
         Some(json!({
-            "max_active_sessions":max, "active_sessions":active,
+            "max_active_sessions":max, "active_sessions":active, "unknown_sessions":unknown,
             "retryable":true, "next_action":"wait-for-capacity",
             "recovery":{"kind":"wait", "condition":"active_sessions_below_limit", "safe_to_retry":true}
         })),
@@ -214,11 +249,15 @@ pub(crate) fn forward_refusal(error: &Value) -> Option<CliError> {
     let details = &error["details"];
     let max = details["max_active_sessions"].as_u64()?;
     let active = details["active_sessions"].as_u64()?;
-    if active < max || details["retryable"] != true || details["recovery"]["safe_to_retry"] != true
+    let unknown = details["unknown_sessions"].as_u64()?;
+    if active < max
+        || unknown > active
+        || details["retryable"] != true
+        || details["recovery"]["safe_to_retry"] != true
     {
         return None;
     }
-    Some(capacity_error(max, active))
+    Some(capacity_error(max, active, unknown))
 }
 
 pub(super) fn create_record_with_lineage(
@@ -423,7 +462,7 @@ mod tests {
         let server = LoopbackServer::new().unwrap();
         server.add_route("POST", "/api/coordination/sessions/v1", HttpResponse::new(409, json!({"ok":false,"error":{
             "code":"session-capacity-exceeded", "message":"untrusted-sentinel",
-            "details":{"max_active_sessions":1,"active_sessions":1,"retryable":true,"recovery":{"safe_to_retry":true},"private_payload":"untrusted-sentinel"}
+            "details":{"max_active_sessions":1,"active_sessions":1,"unknown_sessions":1,"retryable":true,"recovery":{"safe_to_retry":true},"private_payload":"untrusted-sentinel"}
         }}).to_string()));
         let config = coordination::remote::Config {
             machine: "example-host".into(),
@@ -449,6 +488,7 @@ mod tests {
         let details = error.details().unwrap();
         assert_eq!(details["max_active_sessions"], 1);
         assert_eq!(details["active_sessions"], 1);
+        assert_eq!(details["unknown_sessions"], 1);
         assert_eq!(details["retryable"], true);
         assert_eq!(details["next_action"], "wait-for-capacity");
         assert_eq!(details["recovery"]["safe_to_retry"], true);

@@ -132,3 +132,31 @@ pins the local signer and the participating peers. A stopped source export
 consumes a private destination ticket and names the expected host and
 incarnation explicitly. Source recovery consumes a private no-writer
 receipt for the retained move ID.
+
+## Destination reservations
+
+The read-only `resume-move prepare --check` command takes the source plan file,
+a move UUID, and the proposed local cwd. It checks the mapped checkout, account
+roster, provider capability, and existing conversation writer evidence. A
+different path requires matching Git repository identity, HEAD, and relative
+cwd. The reservation pins the canonical local directory and its filesystem
+identity. The destination rechecks it before admission.
+
+A reserved destination returns a newly signed ticket and its private staging
+home. The transfer copies only the one history file. `resume-move stage`
+checks the ticket and stopped source proof against the local snapshot.
+Immediately before native start, the destination rechecks the exact proof,
+checkout and bytes under the same control lock used to abort. Provider
+argument overrides are refused for a move. Codex recreates local indexes in
+the destination provider home.
+
+Before admission the destination checks provider capability and runtime
+readiness, such as the private socket directory. A deterministic failure
+refuses with `resume-unsupported` and leaves the move staged, so abort still
+issues a no-writer receipt. The destination persists writer admission before
+taking a session writer lock.
+Any ambiguous result beyond that point remains fenced. An earlier abort
+records a terminal tombstone before signing the no-writer receipt. The same
+move cannot be admitted after that tombstone. A lost proof transfer can supply
+the original proof file to `resume-move abort` for exact receipt binding. A
+missing proof cannot authorize source recovery.

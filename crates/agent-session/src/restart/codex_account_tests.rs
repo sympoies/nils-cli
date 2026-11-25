@@ -1,5 +1,6 @@
 //! Restart admission against a native idle thread, without a model turn.
 use super::*;
+
 use futures_util::{SinkExt, StreamExt};
 use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::assert_eq;
@@ -200,6 +201,10 @@ async fn assert_restart_repairs(phase: crate::activity::TurnPhase) {
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::tempdir().unwrap();
+    let _short_roots = short_roots::ShortRootsGuard::new(
+        tmp.path().to_path_buf(),
+        tmp.path().join("state/agent-home"),
+    );
     let (context, record, tmux, _socket_dir) = fixture(tmp.path());
     if phase == crate::activity::TurnPhase::Waiting {
         crate::auth_incident::observe(
@@ -254,6 +259,10 @@ async fn native_idle_restart_retries_failed_selected_account_without_queue() {
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::tempdir().unwrap();
+    let _short_roots = short_roots::ShortRootsGuard::new(
+        tmp.path().to_path_buf(),
+        tmp.path().join("state/agent-home"),
+    );
     let (context, mut record, tmux, _socket_dir) = fixture(tmp.path());
     record.extra.remove("codex_account_next");
     crate::write_session_record(&context, &record).unwrap();
@@ -274,6 +283,10 @@ async fn failed_startup_without_identity_stops_without_typing_or_resuming() {
     );
     for status in ["idle", "empty", "active", "multiple", "paginated"] {
         let tmp = tempfile::tempdir().unwrap();
+        let _short_roots = short_roots::ShortRootsGuard::new(
+            tmp.path().to_path_buf(),
+            tmp.path().join("state/agent-home"),
+        );
         let (context, mut record, tmux, _socket_dir) = fixture(tmp.path());
         record.provider_resume = None;
         fs::remove_file(crate::codex_app_server::thread_attached_path(&record).unwrap()).unwrap();
@@ -311,6 +324,10 @@ async fn fresh_restart_readiness_observes_new_identity_and_bound_account() {
         r#"["/configured/broker"]"#,
     );
     let tmp = tempfile::tempdir().unwrap();
+    let _short_roots = short_roots::ShortRootsGuard::new(
+        tmp.path().to_path_buf(),
+        tmp.path().join("state/agent-home"),
+    );
     let (context, mut record, tmux, _socket_dir) = fixture(tmp.path());
     let resume = record.provider_resume.take();
     fs::remove_file(crate::codex_app_server::thread_attached_path(&record).unwrap()).unwrap();
@@ -375,6 +392,10 @@ async fn restart_repair_keeps_native_idle_and_intent_guards() {
         "pending_binding",
     ] {
         let tmp = tempfile::tempdir().unwrap();
+        let _short_roots = short_roots::ShortRootsGuard::new(
+            tmp.path().to_path_buf(),
+            tmp.path().join("state/agent-home"),
+        );
         let (context, mut record, tmux, _socket_dir) = fixture(tmp.path());
         match case {
             "pending_binding" => {

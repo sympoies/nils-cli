@@ -14,7 +14,7 @@ use crate::{CliContext, CliError, SessionRecord, claude_account, codex_account};
 
 use super::{HistoryRole, Provider, Refusal, canonical_uuid, host_identity, sha256};
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Plan {
     pub(super) source_host: String,
@@ -32,7 +32,7 @@ pub(crate) struct Plan {
     pub(super) history: HistoryPlacement,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct GitCheckout {
     pub(super) repository_sha256: String,
@@ -40,7 +40,7 @@ pub(super) struct GitCheckout {
     pub(super) relative_cwd: String,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct HistoryPlacement {
     pub(super) role: HistoryRole,
@@ -245,7 +245,7 @@ fn describe_history(
     })
 }
 
-fn git_checkout(cwd: &Path) -> Option<GitCheckout> {
+pub(super) fn git_checkout(cwd: &Path) -> Option<GitCheckout> {
     use nils_common::git;
     let root = fs::canonicalize(git::repo_root_in(cwd).ok()??).ok()?;
     let relative_cwd = cwd.strip_prefix(root).ok()?.to_str()?.to_owned();

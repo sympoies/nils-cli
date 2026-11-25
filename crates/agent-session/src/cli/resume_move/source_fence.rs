@@ -142,6 +142,9 @@ pub(super) fn export(
     let signed = verifier
         .sign_stop_proof(&proof, request.signing_key)
         .map_err(cli_refusal)?;
+    verifier
+        .verify_stop_proof(&signed, &binding.source_host)
+        .map_err(cli_refusal)?;
     fences.insert(
         binding.move_id.clone(),
         Fence {

@@ -708,7 +708,7 @@ fn console_capacity_refusal_reconciles_after_restart() {
         409,
         &json!({"ok":false,"error":{
             "code":"session-capacity-exceeded", "message":"full", "details":{
-                "max_active_sessions":2,"active_sessions":2,"retryable":true,
+                "max_active_sessions":2,"active_sessions":2,"unknown_sessions":1,"retryable":true,
                 "recovery":{"safe_to_retry":true}
             }
         }}),
@@ -727,6 +727,7 @@ fn console_capacity_refusal_reconciles_after_restart() {
         assert_eq!(result["failure"]["code"], "session-capacity-exceeded");
         assert_eq!(result["failure"]["details"]["max_active_sessions"], 2);
         assert_eq!(result["failure"]["details"]["active_sessions"], 2);
+        assert_eq!(result["failure"]["details"]["unknown_sessions"], 1);
         assert_eq!(result["failure"]["details"]["retryable"], true);
         assert_eq!(
             result["failure"]["details"]["recovery"]["safe_to_retry"],

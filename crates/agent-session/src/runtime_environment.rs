@@ -123,8 +123,23 @@ pub(super) fn add_runtime_tmux_environment(
         };
         if let Some(env_key) = env_key {
             let mut assignment = OsString::from(format!("{env_key}="));
-            assignment.push(config_dir);
+            assignment.push(&config_dir);
             command.arg("-e").arg(assignment);
+            if agent == AgentKind::Codex
+                && record
+                    .provider_resume
+                    .as_ref()
+                    .is_some_and(|resume| resume.capture_method == "cross-host-stop-proof-v1")
+            {
+                // Keep the Codex 0.162.1 SQLite projection under the verified
+                // destination home even when tmux retained a different default.
+                let mut sqlite_home = OsString::from("CODEX_SQLITE_HOME=");
+                sqlite_home.push(config_dir);
+                command
+                    .env_remove("CODEX_SQLITE_HOME")
+                    .arg("-e")
+                    .arg(sqlite_home);
+            }
         }
     }
     if AgentKind::from_name(&record.agent) == Some(AgentKind::Claude) {
