@@ -196,6 +196,43 @@ fn staged_claude_move_creates_one_native_session_after_verified_admission() {
         }
         run(&args)
     };
+    // An unusable destination account root refuses before admission, so the
+    // move stays staged and no writer or session record is created.
+    let failing_broker = root.join("failing-broker");
+    fs::write(&failing_broker, "#!/bin/sh\nexit 70\n").unwrap();
+    fs::set_permissions(&failing_broker, fs::Permissions::from_mode(0o700)).unwrap();
+    let broken = run_resolved(
+        "agent-session",
+        &[
+            "--state-dir",
+            state.to_str().unwrap(),
+            "start",
+            "--agent",
+            "claude",
+            "--resume",
+            THREAD,
+            "--move-id",
+            MOVE_ID,
+            "--account",
+            "fixture-account",
+            "--cwd",
+            cwd.to_str().unwrap(),
+            "--id",
+            "moved",
+            "--no-parent",
+            "--format",
+            "json",
+        ],
+        &options.clone().with_env(
+            "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER",
+            &json!([failing_broker]).to_string(),
+        ),
+    );
+    assert_ne!(broken.code, 0);
+    assert_eq!(broken.stdout_json()["error"]["code"], "resume-unsupported");
+    let status = run(&["resume-move", "status", "--move-id", MOVE_ID]);
+    assert_eq!(status.stdout_json()["data"]["state"], "staged");
+    assert!(!state.join("sessions").exists());
     let mismatch = start("different-account", true);
     assert_eq!(
         mismatch.stdout_json()["error"]["code"],
