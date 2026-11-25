@@ -171,4 +171,6 @@ are optional: omit the whole section rather than leaving a placeholder in it.
 - [2026-11-25-agent-session-guarded-long-paste](pending/2026-11-25-agent-session-guarded-long-paste.md)
 - [2026-11-25-forge-review-loop-dry-run-fixture](pending/2026-11-25-forge-review-loop-dry-run-fixture.md)
 - [2026-11-25-issue-4021-queue-validation-retry-proof](pending/2026-11-25-issue-4021-queue-validation-retry-proof.md)
+- [2026-11-25-issue-4026-session-test-teardown](pending/2026-11-25-issue-4026-session-test-teardown.md)
+- [2026-11-25-issue-4037-admission-liveness](pending/2026-11-25-issue-4037-admission-liveness.md)
 - [2026-11-25-native-notice-ledger-capacity](pending/2026-11-25-native-notice-ledger-capacity.md)
