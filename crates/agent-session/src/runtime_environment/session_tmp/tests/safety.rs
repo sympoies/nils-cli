@@ -146,7 +146,7 @@ fn sweep_keeps_future_stop_and_recent_orphan_until_retention() {
 #[test]
 fn short_root_removal_failure_retains_backing_and_is_retryable() {
     let fixture = Fixture::new();
-    let record = fixture.persist("partial");
+    let record = fixture.persist_stopped("partial");
     let link = prepare_launch(&fixture.state_dir(), &record)
         .unwrap()
         .unwrap();
