@@ -44,6 +44,9 @@ or integrating a specific subsystem.
   unknown-effect receipts.
 - [Cross-host resume proof v1](specs/resume-move-proof-v1.md): signed tickets,
   stop proofs, portable provider history, and no-writer receipts.
+- [Console resume-move start v1](specs/console-resume-move-v1.md): relay
+  wire contract for prepared moves, destination admission, typed refusals,
+  and read-only reconciliation. Runtime support follows separately.
 - [Session notices v1](specs/session-notices-v1.md): display-only envelope,
   fixture corpus, guarded notice delivery and writer rollout gate.
 - [History row classes v1 design](specs/history-row-classes-v1.md): proposed
