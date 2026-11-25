@@ -21,6 +21,8 @@ session ID when available, executable version and path, target session,
 incarnation and generation, and success or a typed error with its failing proof
 step. Read `result.proof_step` to distinguish incarnation fences, fresh
 heartbeats, runtime stopped proof, capability checks and operation quiescence.
+For a close that found surviving processes on the observed runtime,
+`result.reason` records the fixed `process-still-running` discriminator.
 The journal omits error details and replaces dynamic error messages with a fixed
 summary because provider errors may contain private input. Static audited
 refusal messages are preserved. It never records prompts, terminal output,

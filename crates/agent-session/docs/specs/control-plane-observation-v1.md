@@ -156,6 +156,11 @@ filtering or an incorrect address. A logging failure cannot change the refusal.
   minor or major generation from this binary, each with a bounded
   `recovery_action`. A broker that published no release is compatibility state,
   not drift. A patch-level difference is not drift.
+- `failed_closes`: session ID and reason for each occupied admission slot whose
+  latest close attempt for the current runtime incarnation and generation
+  recorded `process-still-running`. Diagnose reads the retained journal
+  segments without creating or locking a journal. A missing or unreadable
+  journal provides no entry.
 - `observation.spool_status`: `untrusted` when the spool fails its root trust
   checks, including when an ancestor is a symlink. The diagnostic skips the
   spool and omits paths. This field is absent for a trusted path, even before
