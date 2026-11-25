@@ -314,6 +314,52 @@ fn admission_unlimited_and_read_only_occupancy() {
     );
 }
 #[test]
+fn admission_many_stopped_records_do_not_exhaust_probe_budget() {
+    let f = Fixture::new(Some(1));
+    for id in ["old-one", "old-two", "old-three", "old-four", "old-five"] {
+        let dir = write_resumable_session_record_with_agent_bin(
+            &f.dir.path().join("state"),
+            id,
+            "codex",
+            &format!("hs-codex-{id}"),
+            f.dir.path(),
+            &[],
+            Some(&f.provider),
+        );
+        let path = dir.join("session.json");
+        let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        record
+            .as_object_mut()
+            .unwrap()
+            .remove("tmux_runtime_never_launched");
+        fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
+    }
+    let real = f.dir.path().join("tmux-real");
+    fs::rename(&f.tmux, &real).unwrap();
+    fs::write(
+        &f.tmux,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = has-session ]; then
+  sleep 0.4
+  echo "can't find session: stopped" >&2
+  exit 1
+fi
+exec {} "$@"
+"#,
+            shell_words::quote(&real.to_string_lossy())
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&f.tmux, fs::Permissions::from_mode(0o700)).unwrap();
+    let output = f.start("replacement").output().unwrap();
+    assert!(
+        output.status.success(),
+        "stopped records must not occupy capacity: {output:?}"
+    );
+}
+
+#[test]
 fn admission_stopped_sessions_release_capacity() {
     let f = Fixture::new(Some(1));
     let first = f.start("first").output().unwrap();
