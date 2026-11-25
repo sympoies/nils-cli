@@ -255,3 +255,72 @@ fn mismatched_image_label_counts_are_never_submitted() {
         assert_eq!(enters(&journal), 0, "{prompt:?} / {composer:?}");
     }
 }
+
+#[test]
+fn stranded_structured_prompt_is_visible_without_text_until_composer_is_empty() {
+    let tmp = tempfile::tempdir().unwrap();
+    let text = "synthetic structured prompt";
+    let (tmux, _) = pasted_pane_tmux(tmp.path(), "other draft", "true");
+    let (context, delivered) = deliver(tmp.path(), &tmux, text);
+    assert!(delivered.is_err());
+    let script = fs::read_to_string(&tmux).unwrap().replace(
+        "case \"$1\" in",
+        &format!("case \"$1\" in\n  show-environment) printf 'AGENT_SESSION_ID=structured\\nAGENT_SESSION_STATE_DIR={}\\nAGENT_SESSION_RUNTIME_ID=launch-structured\\n'; exit 0 ;;", context.state_dir.display()),
+    );
+    fs::write(&tmux, script).unwrap();
+    assert!(crate::send::attempt::unsubmitted_attempt(
+        &context, ID, &tmux
+    ));
+    let evidence =
+        fs::read_to_string(tmp.path().join("sessions/structured/stranded-input.json")).unwrap();
+    assert!(!evidence.contains(text));
+    let script = fs::read_to_string(&tmux).unwrap().replace(
+        "case \"$1\" in",
+        "case \"$1\" in\n  list-windows) printf 'hs-claude-structured\\t1\\n'; exit 0 ;;",
+    );
+    fs::write(&tmux, script).unwrap();
+    let board = crate::board::snapshot(&context, &tmux, "test", false).unwrap();
+    let encoded = board.to_string();
+    assert!(!encoded.contains(text));
+    let row = board["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["session_id"] == ID)
+        .unwrap();
+    assert_eq!(row["unsubmitted_attempt"], true);
+    fs::write(tmp.path().join("entered"), "").unwrap();
+    assert!(!crate::send::attempt::unsubmitted_attempt(
+        &context, ID, &tmux
+    ));
+    let evidence: Value = serde_json::from_slice(
+        &fs::read(tmp.path().join("sessions/structured/stranded-input.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(evidence["outcome"], "cleared");
+}
+
+#[test]
+fn stranded_structured_prompt_does_not_cross_runtime_replacement() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tmux, _) = pasted_pane_tmux(tmp.path(), "other draft", "true");
+    let (context, delivered) = deliver(tmp.path(), &tmux, "synthetic structured prompt");
+    assert!(delivered.is_err());
+    let mut record = load_session_record(&context, ID).unwrap();
+    record.runtime.as_mut().unwrap().launch_id = "replacement-runtime".into();
+    crate::write_session_record(&context, &record).unwrap();
+    assert!(!crate::send::attempt::unsubmitted_attempt(
+        &context, ID, &tmux
+    ));
+}
+
+#[test]
+fn submitted_structured_prompt_does_not_project_a_stranded_signal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tmux, _) = pasted_pane_tmux(tmp.path(), "synthetic prompt", "true");
+    let (context, delivered) = deliver(tmp.path(), &tmux, "synthetic prompt");
+    assert!(delivered.is_ok());
+    assert!(!crate::send::attempt::unsubmitted_attempt(
+        &context, ID, &tmux
+    ));
+}

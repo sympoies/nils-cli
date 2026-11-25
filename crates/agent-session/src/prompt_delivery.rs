@@ -19,6 +19,7 @@ pub(crate) fn paste_prompt_file(
         pane_ready_deadline,
         None,
         None,
+        None,
     )
 }
 
@@ -32,6 +33,7 @@ fn paste_prompt_file_observing(
     pane_ready_deadline: Duration,
     before_enter: Option<&mut ComposerRendering<'_>>,
     response_context: Option<(&CliContext, &str)>,
+    evidence_out: Option<&mut Option<send::stranded::Record>>,
 ) -> Result<PromptDeliveryObservation, CliError> {
     let buffer_name = format!("{}-prompt", record.id);
     let target = format!("{}:0.0", record.tmux_session);
@@ -61,7 +63,20 @@ fn paste_prompt_file_observing(
         })
         .transpose()?
         .flatten();
+    let mut evidence = response_context
+        .filter(|_| record.agent == "claude")
+        .map(|(context, text)| send::stranded::begin(context, record, text))
+        .transpose()?;
     paste::load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file, record)?;
+    if let (Some(evidence), Some((context, _))) = (evidence.as_mut(), response_context) {
+        if let Err(mut error) = evidence.pasted(context, record) {
+            *error.details_mut() = Some(serde_json::json!({
+                "pasted": true, "cleared": false, "remaining_input": "unobservable"
+            }));
+            post_paste::record_failure(context, record, &error);
+            return Err(error);
+        }
+    }
 
     // The initial prompt is submitted; `send` deliberately leaves this to
     // an explicit `--key enter`. Tmux confirms that it wrote the paste bytes,
@@ -89,7 +104,7 @@ fn paste_prompt_file_observing(
         if let Some((context, text)) = response_context
             && record.agent == "claude"
         {
-            send_guard::placeholder::submit_after_empty(
+            let report = send_guard::placeholder::submit_after_empty(
                 context,
                 record,
                 represented_text.as_deref().unwrap_or(text),
@@ -114,6 +129,13 @@ fn paste_prompt_file_observing(
                     )
                 },
             )?;
+            if matches!(
+                report.outcome,
+                send_submit::SubmitOutcome::Submitted | send_submit::SubmitOutcome::Queued
+            ) && let Some(evidence) = evidence.as_mut()
+            {
+                evidence.submitted(context, record)?;
+            }
             return Ok(());
         }
         let mut enter = ProcessCommand::new(tmux_bin);
@@ -134,6 +156,9 @@ fn paste_prompt_file_observing(
         post_paste::record_failure(context, record, error);
     }
     submitted?;
+    if let Some(output) = evidence_out {
+        *output = evidence;
+    }
     Ok(PromptDeliveryObservation {
         schema_version: "agent-session.prompt-delivery-observation.v1",
         composer,
@@ -208,6 +233,7 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
         acknowledgement_text = rendered.clone();
         Some(rendered)
     };
+    let mut stranded_evidence = None;
     let delivered = paste_prompt_file_observing(
         tmux_bin,
         &record,
@@ -217,6 +243,7 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
             .is_some()
             .then_some(&mut observe as &mut ComposerRendering<'_>),
         Some((context, text)),
+        Some(&mut stranded_evidence),
     );
     let _ = fs::remove_file(&staged);
     delivered?;
@@ -229,6 +256,7 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
         turn_baseline,
         prompt_tail,
         queue_before,
+        stranded_evidence,
     })
 }
 
@@ -239,6 +267,7 @@ pub(crate) struct ClaudePromptDelivery {
     pub(crate) turn_baseline: activity::PromptTurnBaseline,
     pub(crate) prompt_tail: Option<crate::provider_prompt::ProviderPromptTail>,
     pub(crate) queue_before: Option<String>,
+    pub(crate) stranded_evidence: Option<send::stranded::Record>,
 }
 
 /// Only a single existing image path may be rewritten to an observed image

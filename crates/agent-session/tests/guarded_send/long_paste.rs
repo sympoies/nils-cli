@@ -1,7 +1,7 @@
 //! Drive the actual guarded CLI against delayed, wrapped synthetic composers.
 use super::{CmdOutput, Fixture, fs};
 use nils_test_support::cmd::{CmdOptions, run_resolved};
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 
 const KEY: &str = "long-paste-attempt";
 const GUARDS: &[&str] = &[
@@ -489,4 +489,53 @@ fn capture_loss_after_paste_is_visible_to_patrol_without_text() {
         "attempt-recovery-unproven",
     );
     assert_eq!(enter_count(&fixture), 0);
+}
+
+#[test]
+fn unkeyed_wake_capture_loss_is_visible_until_composer_is_empty() {
+    let text = "synthetic mailbox wake";
+    let fixture = Fixture::new("claude");
+    fs::write(fixture.root().join("fail-capture-after-paste"), "").unwrap();
+    let output = fixture.send_text(Some(text), &["--require-idle", "--require-empty-composer"]);
+    assert_eq!(output.code, 1);
+    assert_eq!(output.stdout_json()["error"]["details"]["pasted"], true);
+    assert_eq!(enter_count(&fixture), 0);
+    let tmux_model = fixture.root().join("tmux-model");
+    let script = fs::read_to_string(&tmux_model).unwrap();
+    let marker = "if command == 'has-session':";
+    assert!(script.contains(marker));
+    fs::write(&tmux_model, script.replace(marker, "if command == 'list-windows': print('modeled-guarded\\t0'); sys.exit(0)\nif command == 'has-session':")).unwrap();
+    assert_eq!(list_row(&fixture, text)["unsubmitted_attempt"], true);
+    let record = fs::read_to_string(
+        fixture
+            .root()
+            .join("state/sessions/guarded/stranded-input.json"),
+    )
+    .unwrap();
+    assert!(!record.contains(text));
+    fs::remove_file(fixture.root().join("capture-fails")).unwrap();
+    fs::write(fixture.root().join("composer"), "").unwrap();
+    assert_ne!(list_row(&fixture, text)["unsubmitted_attempt"], true);
+    fs::write(fixture.root().join("composer"), "new owner draft").unwrap();
+    assert_ne!(list_row(&fixture, text)["unsubmitted_attempt"], true);
+}
+
+#[test]
+fn submitted_unkeyed_send_supersedes_older_keyed_stranded_signal() {
+    let text = "synthetic mailbox wake";
+    let fixture = Fixture::new("claude");
+    fs::write(fixture.root().join("fail-capture-after-paste"), "").unwrap();
+    assert_eq!(fixture.send_text(Some(text), GUARDS).code, 1);
+    fs::remove_file(fixture.root().join("capture-fails")).unwrap();
+    fs::remove_file(fixture.root().join("fail-capture-after-paste")).unwrap();
+    fs::write(fixture.root().join("composer"), "").unwrap();
+    let sent = fixture.send_text(Some(text), &["--require-idle", "--require-empty-composer"]);
+    assert_eq!(sent.code, 0, "{}", sent.stdout_text());
+    fs::write(fixture.root().join("composer"), "new owner draft").unwrap();
+    let tmux_model = fixture.root().join("tmux-model");
+    let script = fs::read_to_string(&tmux_model).unwrap();
+    let marker = "if command == 'has-session':";
+    assert!(script.contains(marker));
+    fs::write(&tmux_model, script.replace(marker, "if command == 'list-windows': print('modeled-guarded\\t0'); sys.exit(0)\nif command == 'has-session':")).unwrap();
+    assert_ne!(list_row(&fixture, text)["unsubmitted_attempt"], true);
 }

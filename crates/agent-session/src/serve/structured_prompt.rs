@@ -241,6 +241,7 @@ pub(super) async fn submit_claude_structured_prompt(
     .await
     {
         Ok(claude_prompt_ack::ClaudePromptAck::Turn) => {
+            confirm_claude_stranded(state, record, delivery.stranded_evidence).await;
             return envelope_ok(json!({
                 "machine": state.machine,
                 "submitted": true,
@@ -250,6 +251,7 @@ pub(super) async fn submit_claude_structured_prompt(
         // A prompt sent mid-turn starts no turn until the running one ends, but
         // Claude Code shows it queued; that is a delivery, not an unknown outcome.
         Ok(claude_prompt_ack::ClaudePromptAck::Queued) => {
+            confirm_claude_stranded(state, record, delivery.stranded_evidence).await;
             return envelope_ok(json!({
                 "machine": state.machine,
                 "submitted": true,
@@ -260,6 +262,7 @@ pub(super) async fn submit_claude_structured_prompt(
         Ok(claude_prompt_ack::ClaudePromptAck::Unknown) => {
             let exited = recorded_runtime_stopped(state, record).await;
             if exited {
+                confirm_claude_stranded(state, record, delivery.stranded_evidence).await;
                 return envelope_ok(json!({
                     "machine": state.machine,
                     "submitted": true,
@@ -274,6 +277,21 @@ pub(super) async fn submit_claude_structured_prompt(
         "structured-prompt-outcome-unknown",
         "structured prompt submission outcome is unknown",
     )
+}
+
+async fn confirm_claude_stranded(
+    state: &ServeState,
+    record: &SessionRecord,
+    evidence: Option<crate::send::stranded::Record>,
+) {
+    if let Some(evidence) = evidence {
+        let context = state.context.clone();
+        let id = record.id.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            crate::send::stranded::confirm(&context, &id, &evidence)
+        })
+        .await;
+    }
 }
 
 async fn recorded_runtime_stopped(state: &ServeState, record: &SessionRecord) -> bool {
