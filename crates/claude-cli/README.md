@@ -327,12 +327,15 @@ credential files.
 Output:
 
 ```text
-5h:<remaining>% W:<remaining>% <weekly_reset_time>[ <account_details>][<stale_suffix>]
+[<account> ][5h:<remaining>% ]W:<remaining>% <weekly_reset_time>[ <reset_notice>][<stale_suffix>]
 ```
 
-The segment displays `Ultra` for a Max 20x login. When the usage response
-reports a pending granted reset, the segment displays `1 reset available`.
-An unavailable status can display `reset availability unknown`.
+The account is the matching saved profile name, the projected account name,
+or the email local part of the matching active login. If no account can be
+identified, the prefix is omitted. The segment never shows the full email or
+subscription plan. When the usage response reports a pending granted reset,
+the segment displays `1 reset available`. An unavailable status can display
+`reset availability unknown`.
 
 Without `--refresh`, stale or missing cache starts a coalesced detached refresh
 after any eligible cached line is printed. The prompt path does not wait for
