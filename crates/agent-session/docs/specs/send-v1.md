@@ -336,7 +336,7 @@ outcomes.
 
 `not_submitted` includes `composer: "exact" | "wrapped_match" | "occupied" | "absent" | "unknown"`.
 The JSON field `unsubmitted_attempt` is true for `exact`, `wrapped_match` or
-`occupied`. `exact` is a byte-for-byte single-row read. `wrapped_match` means
+`occupied`, or for `unknown` when the latest retained attempt records a paste. `exact` is a byte-for-byte single-row read. `wrapped_match` means
 the wrapped layout agrees with the input supplied using `--text-stdin` and
 that input matches the stored digest. Both require the original detached
 terminal binding and record.
@@ -344,7 +344,7 @@ terminal binding and record.
 `occupied` is a text-free signal for the latest retained pre-Enter attempt
 when the same runtime's composer is observably nonempty. Callers can also
 read `unsubmitted_attempt: true` from live board and JSON list rows without
-the key. The signal reports occupancy. Recovery requires the exact input
+the key. The signal also flags a possibly stranded paste when the composer cannot be observed. Recovery requires the exact input
 proof and detached pane fence.
 
 `absent` means the attempt did not paste or the composer is observably empty.
