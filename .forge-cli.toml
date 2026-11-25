@@ -1,11 +1,14 @@
 # forge-cli repository policy; read from the provider base branch.
 #
-# `supervisors` lists the digests of the sessions allowed to take over a review
-# handoff whose coordinator has retired (`forge-cli pr review-handoff recover
-# --reason coordinator-retired`). The digest is the session digest forge-cli
-# computes for that session. Update the entry whenever the delivery steward
-# session is replaced, until a role-based policy replaces this per-session
-# allow-list (#3853).
+# `supervisors` lists the selectors allowed to take over a review handoff
+# whose coordinator has retired (`forge-cli pr review-handoff recover
+# --reason coordinator-retired`). The policy is mixed:
+#   - `role:steward` authorizes any session launched with an attested steward
+#     role (see crates/forge-cli/docs/runbooks/retired-coordinator-recovery.md).
+#   - The `sha256:` entry is a temporary per-session bridge for the current
+#     steward, which was launched without role attestation.
+# Launch stewards with `--role steward --attest-role`, and remove the bridge
+# digest once the steward runs attested. See #3853 for the role-based policy.
 [review_handoff]
-supervisors = ["sha256:9a82d237d134657b8fea97eb37e9f8fd42f3000767623f4e1890fe9f6d9d9e4a"]
+supervisors = ["role:steward", "sha256:41c62d6e75c90f78970202cb1542940e5139689f9c54427eb3293dd37e8c5c59"]
 stale_after = "2h"
