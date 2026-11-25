@@ -89,7 +89,7 @@ fn paste_prompt_file_observing(
         if let Some((context, text)) = response_context
             && record.agent == "claude"
         {
-            send_guard::placeholder::submit_after_empty(
+            let report = send_guard::placeholder::submit_after_empty(
                 context,
                 record,
                 represented_text.as_deref().unwrap_or(text),
@@ -114,6 +114,15 @@ fn paste_prompt_file_observing(
                     )
                 },
             )?;
+            if report.outcome == send_submit::SubmitOutcome::Stuck {
+                return Err(CliError::runtime(
+                    "send-submit-stuck",
+                    "prompt submission was not confirmed",
+                    Some(json!({"id":record.id,"outcome":report.outcome,
+                        "enter_presses":report.enter_presses,"atomic":false,
+                        "pasted":true,"cleared":false,"remaining_input":"unobservable"})),
+                ));
+            }
             return Ok(());
         }
         let mut enter = ProcessCommand::new(tmux_bin);

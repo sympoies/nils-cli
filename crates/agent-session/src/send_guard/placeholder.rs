@@ -208,24 +208,20 @@ fn submit(
             return Ok(report);
         }
         Ok(report) => {
-            // Unverified nonopaque sends can still be acknowledged by the
-            // provider after the lock releases; a visibly stuck input cannot.
+            // Nonopaque sends retain their receipt contract. The HTTP owner
+            // separately requires provider acknowledgement after lock release.
             if known.is_none() {
                 known = observe(
                     record,
                     tmux,
                     Instant::now() + crate::PANE_OBSERVATION_COMMAND_TIMEOUT,
                 );
-                if known.is_none() && report.outcome != send_submit::SubmitOutcome::Stuck {
+                if known.is_none() {
                     return Ok(report);
                 }
             }
             CliError::runtime(
-                if report.outcome == send_submit::SubmitOutcome::Stuck {
-                    "send-submit-stuck"
-                } else {
-                    "send-submit-unconfirmed"
-                },
+                "send-submit-unconfirmed",
                 "prompt submission was not confirmed",
                 Some(
                     json!({"id":record.id,"outcome":report.outcome,"enter_presses":report.enter_presses,"atomic":false}),
