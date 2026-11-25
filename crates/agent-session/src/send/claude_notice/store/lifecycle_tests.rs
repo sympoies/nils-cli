@@ -9,6 +9,8 @@ use std::os::unix::fs::PermissionsExt;
 
 #[path = "bounded_tests.rs"]
 mod bounded_tests;
+#[path = "lifecycle_reconcile_tests.rs"]
+mod reconcile_tests;
 
 const POINTER_SCHEMA: &str = "agent-session.claude-notice-store-current.v1";
 const MANIFEST_SCHEMA: &str = "agent-session.claude-notice-store-manifest.v1";

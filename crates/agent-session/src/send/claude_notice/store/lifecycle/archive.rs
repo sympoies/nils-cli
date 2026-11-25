@@ -52,7 +52,12 @@ pub(super) fn sync_files(files: &[&File], deadline: Instant) -> io::Result<()> {
     check_time(deadline)
 }
 
-pub(super) fn compact(ledger: &mut Ledger, scan: &Scan, deadline: Instant) -> io::Result<()> {
+pub(super) fn compact(
+    ledger: &mut Ledger,
+    scan: &mut Scan,
+    retirement_context: Option<&CliContext>,
+    deadline: Instant,
+) -> io::Result<()> {
     check_time(deadline)?;
     let now = jiff::Timestamp::now();
     let before = ledger
@@ -63,8 +68,25 @@ pub(super) fn compact(ledger: &mut Ledger, scan: &Scan, deadline: Instant) -> io
         .map(|(_, m)| m.first_seen.clone())
         .unwrap_or_default();
     let mut first_seen = before.clone();
+    reconcile::settle(
+        ledger,
+        scan,
+        retirement_context,
+        &mut first_seen,
+        now,
+        deadline,
+    )?;
     let mut eligible = HashSet::new();
     for terminal in scan.terminals.values() {
+        if retirement_context.is_some() {
+            if matches!(
+                terminal.reason,
+                Some(Reason::ClaimExpired | Reason::RuntimeRetired)
+            ) {
+                eligible.insert(terminal.op.clone());
+            }
+            continue;
+        }
         if terminal.state == State::Unknown {
             // A recorded terminal cannot change. The sealed segment retains
             // its uncertainty while the index keeps its operation and key used.
@@ -89,7 +111,7 @@ pub(super) fn compact(ledger: &mut Ledger, scan: &Scan, deadline: Instant) -> io
             eligible.insert(terminal.op.clone());
         }
     }
-    first_seen.retain(|op, _| scan.terminals.contains_key(op) && !eligible.contains(op));
+    first_seen.retain(|op, _| scan.claims.contains_key(op) && !eligible.contains(op));
     if eligible.is_empty() && first_seen == before {
         return Ok(());
     }

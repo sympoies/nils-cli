@@ -95,6 +95,8 @@ pub(crate) enum Reason {
     Storage,
     AmbiguousHistory,
     HistoryUnavailable,
+    ClaimExpired,
+    RuntimeRetired,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -237,6 +239,35 @@ impl Claim {
 }
 
 impl Terminal {
+    fn outcome(
+        claim: &Claim,
+        claim_sha256: &str,
+        proof: Option<&Proof>,
+        reason: Reason,
+        elapsed: Duration,
+    ) -> Self {
+        Self {
+            schema_version: SCHEMA.into(),
+            op: claim.op.clone(),
+            claim_sha256: claim_sha256.to_owned(),
+            state: if proof.is_some() {
+                State::Submitted
+            } else if matches!(reason, Reason::Drop) {
+                State::Dropped
+            } else {
+                State::Unknown
+            },
+            native_uuid: proof.map(|proof| proof.row.native_uuid.clone()),
+            row_offset: proof.map(|proof| proof.row_offset),
+            row_payload_sha256: proof.map(|proof| proof.row_payload_sha256.clone()),
+            envelope_sha256: proof.map(|_| claim.envelope_sha256.clone()),
+            timestamp: proof.and_then(|proof| proof.row.timestamp.clone()),
+            confirmation_elapsed_ms: proof.map(|_| elapsed.as_millis() as u64),
+            reason: proof.is_none().then_some(reason),
+            codex: proof.and_then(|proof| proof.codex.clone()),
+        }
+    }
+
     fn confirmed(&self, claim: &Claim) -> Option<Confirmed> {
         if self.state != State::Submitted
             || self.reason.is_some()
@@ -299,6 +330,20 @@ struct Scan {
     terminals: HashMap<String, Terminal>,
 }
 
+fn encode_line<T: Serialize>(kind: &str, record: &T) -> io::Result<Vec<u8>> {
+    let mut value = serde_json::to_value(record)?;
+    value
+        .as_object_mut()
+        .ok_or_else(invalid)?
+        .insert("kind".into(), kind.into());
+    let mut line = serde_json::to_vec(&value)?;
+    line.push(b'\n');
+    if line.len() > MAX_RECORD {
+        return Err(invalid());
+    }
+    Ok(line)
+}
+
 impl Ledger {
     fn open(state: &Path, write: bool, deadline: Instant) -> io::Result<Option<Self>> {
         lifecycle::open(state, write, deadline)
@@ -319,29 +364,26 @@ impl Ledger {
         record: &T,
         deadline: Instant,
     ) -> io::Result<String> {
+        let line = encode_line(kind, record)?;
+        self.append_lines(&line, deadline)?;
+        Ok(sha256(&line[..line.len() - 1]))
+    }
+
+    fn append_lines(&mut self, lines: &[u8], deadline: Instant) -> io::Result<()> {
         if Instant::now() >= deadline {
             return Err(io::ErrorKind::TimedOut.into());
         }
-        let mut value = serde_json::to_value(record)?;
-        value
-            .as_object_mut()
-            .ok_or_else(invalid)?
-            .insert("kind".into(), kind.into());
-        let payload = serde_json::to_vec(&value)?;
-        if payload.len() + 1 > MAX_RECORD
-            || self.file.metadata()?.len() + payload.len() as u64 + 1
-                > lifecycle::segment_limit(self) as u64
+        if self.file.metadata()?.len() + lines.len() as u64 > lifecycle::segment_limit(self) as u64
         {
             return Err(invalid());
         }
-        self.file.write_all(&payload)?;
-        self.file.write_all(b"\n")?;
+        self.file.write_all(lines)?;
         self.file.sync_all()?;
         File::open(&self.parent)?.sync_all()?;
         if Instant::now() >= deadline {
             return Err(io::ErrorKind::TimedOut.into());
         }
-        Ok(sha256(&payload))
+        Ok(())
     }
 }
 
@@ -371,7 +413,7 @@ pub(crate) fn consume(
         return Err(runtime::unavailable());
     }
     if scan.claims.len() >= MAX_CLAIMS {
-        lifecycle::compact(&mut ledger, &scan, deadline).map_err(error)?;
+        lifecycle::compact(&mut ledger, &mut scan, None, deadline).map_err(error)?;
         scan = ledger.scan(deadline).map_err(error)?;
         if scan.claims.len() >= MAX_CLAIMS {
             return Err(super::refusal::unavailable("claim-ledger-full"));
@@ -385,6 +427,23 @@ pub(crate) fn consume(
     claim_key()?;
     let hash = ledger.append("claim", &claim, deadline).map_err(error)?;
     Ok(Token { claim, hash })
+}
+
+/// Service maintenance uses the same locked rotation as capacity admission.
+pub(crate) fn reconcile(context: &CliContext) -> io::Result<()> {
+    if !context
+        .state_dir
+        .join("history/claude-notices")
+        .try_exists()?
+    {
+        return Ok(());
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let Some(mut ledger) = Ledger::open(&context.state_dir, true, deadline)? else {
+        return Ok(());
+    };
+    let mut scan = ledger.scan(deadline)?;
+    lifecycle::compact(&mut ledger, &mut scan, Some(context), deadline)
 }
 
 pub(crate) fn finish(
@@ -406,26 +465,7 @@ pub(crate) fn finish(
     if *hash != token.hash || scan.terminals.contains_key(&token.claim.op) {
         return Err(runtime::unavailable());
     }
-    let terminal = Terminal {
-        schema_version: SCHEMA.into(),
-        op: token.claim.op.clone(),
-        claim_sha256: token.hash.clone(),
-        state: if proof.is_some() {
-            State::Submitted
-        } else if matches!(reason, Reason::Drop) {
-            State::Dropped
-        } else {
-            State::Unknown
-        },
-        native_uuid: proof.map(|p| p.row.native_uuid.clone()),
-        row_offset: proof.map(|p| p.row_offset),
-        row_payload_sha256: proof.map(|p| p.row_payload_sha256.clone()),
-        envelope_sha256: proof.map(|_| token.claim.envelope_sha256.clone()),
-        timestamp: proof.and_then(|p| p.row.timestamp.clone()),
-        confirmation_elapsed_ms: proof.map(|_| elapsed.as_millis() as u64),
-        reason: proof.is_none().then_some(reason),
-        codex: proof.and_then(|proof| proof.codex.clone()),
-    };
+    let terminal = Terminal::outcome(&token.claim, &token.hash, proof, reason, elapsed);
     if !terminal.valid(&token.claim) {
         return Err(runtime::unavailable());
     }
