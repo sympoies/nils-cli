@@ -66,12 +66,12 @@ pub(crate) fn refresh_blocking(cache_file: &Path) -> bool {
     };
     let Ok(body) = client::fetch_usage(&token.value) else {
         if let Some(body) = client::cached_usage(&token.value) {
-            let _ = cache::write_oauth_cache_file(cache_file, &body, &token.value, token.plan);
+            let _ = cache::write_oauth_cache_file(cache_file, &body, &token.value);
         }
         write_last_attempt(cache_file);
         return false;
     };
-    let wrote = cache::write_oauth_cache_file(cache_file, &body, &token.value, token.plan).is_ok();
+    let wrote = cache::write_oauth_cache_file(cache_file, &body, &token.value).is_ok();
     write_last_attempt(cache_file);
     wrote
 }
