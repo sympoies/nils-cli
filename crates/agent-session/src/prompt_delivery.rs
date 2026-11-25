@@ -68,14 +68,14 @@ fn paste_prompt_file_observing(
         .map(|(context, text)| send::stranded::begin(context, record, text))
         .transpose()?;
     paste::load_and_paste_buffer(tmux_bin, &buffer_name, &target, prompt_file, record)?;
-    if let (Some(evidence), Some((context, _))) = (evidence.as_mut(), response_context) {
-        if let Err(mut error) = evidence.pasted(context, record) {
-            *error.details_mut() = Some(serde_json::json!({
-                "pasted": true, "cleared": false, "remaining_input": "unobservable"
-            }));
-            post_paste::record_failure(context, record, &error);
-            return Err(error);
-        }
+    if let (Some(evidence), Some((context, _))) = (evidence.as_mut(), response_context)
+        && let Err(mut error) = evidence.pasted(context, record)
+    {
+        *error.details_mut() = Some(serde_json::json!({
+            "pasted": true, "cleared": false, "remaining_input": "unobservable"
+        }));
+        post_paste::record_failure(context, record, &error);
+        return Err(error);
     }
 
     // The initial prompt is submitted; `send` deliberately leaves this to

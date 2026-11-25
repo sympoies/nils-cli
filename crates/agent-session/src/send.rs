@@ -714,11 +714,10 @@ fn guarded(
                         stopped: admission.stopped_idle.borrow().is_some(),
                     },
                 )?;
-                if args.guards.require_empty_composer {
-                    if let Some(previous) = stranded::load(context, &record).filter(|e| e.active())
-                    {
-                        previous.clear_if_current(context, &record)?;
-                    }
+                if args.guards.require_empty_composer
+                    && let Some(previous) = stranded::load(context, &record).filter(|e| e.active())
+                {
+                    previous.clear_if_current(context, &record)?;
                 }
                 if args.guards.idempotency_key.is_none() && args.keys == [SpecialKey::Enter] {
                     stranded = Some(stranded::begin(context, &record, text)?);
