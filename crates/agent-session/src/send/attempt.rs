@@ -401,7 +401,8 @@ fn recover_retained(
             None,
         )
     };
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // Recovery uses the same terminal cursor proof as guarded send.
+    let deadline = Instant::now() + super::guarded_hold_budget(observed, true);
     let lock =
         crate::acquire_session_record_lock_timed(context, &observed.id, Duration::from_secs(2))?;
     let mut manual_input = ManualInputSection::new(lock);

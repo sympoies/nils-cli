@@ -266,6 +266,20 @@ fn long_paste_keyed_recovery_reports_and_submits_only_the_original_input() {
 }
 
 #[test]
+fn long_paste_recovery_uses_the_guarded_terminal_budget() {
+    let text = long_text(60);
+    let fixture = retain_attempt("codex", &text);
+    // Each capture stays within its command timeout. Together the repeated
+    // captures needed to prove every wrap take more than five seconds.
+    fs::write(fixture.root().join("slow-cleanup-capture"), "400").unwrap();
+
+    let output = attempt(&fixture, "recover", &text);
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(output.stdout_json()["data"]["recovery_enter_sent"], true);
+    assert_submitted_once(&fixture, &text);
+}
+
+#[test]
 fn long_paste_recovery_refuses_shifted_invisible_wrap_spaces() {
     let text = long_text(60);
     let fixture = retain_attempt("codex", &text);
