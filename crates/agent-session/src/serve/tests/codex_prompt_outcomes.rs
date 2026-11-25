@@ -1,5 +1,6 @@
 //! The service accepts only a lost acknowledgement when the exact runtime stopped.
 use super::*;
+use crate::codex_app_server::tests::control_fixture;
 use pretty_assertions::assert_eq;
 
 #[derive(Clone, Copy)]
@@ -139,22 +140,21 @@ async fn serve_codex_peer(
 }
 
 async fn fixture(
+    root: &Path,
     id: &str,
     outcome: PeerOutcome,
 ) -> (
-    tempfile::TempDir,
     nils_test_support::tempdir::ScopedTempDir,
     Arc<ServeState>,
     String,
     tokio::task::JoinHandle<Result<(), String>>,
     tokio::task::JoinHandle<()>,
 ) {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let launch = seed_codex_app_server_session(tmp.path(), id);
+    let launch = seed_codex_app_server_session(root, id);
     let (socket_dir, socket_path) = nils_test_support::short_socket_path(format!("{id}.sock"));
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
-        state_dir: tmp.path().to_path_buf(),
+        state_dir: root.to_path_buf(),
         host: None,
     };
     let mut record = load_session_record(&context, id).unwrap();
@@ -174,9 +174,9 @@ async fn fixture(
     crate::write_session_record(&context, &record).unwrap();
     codex_app_server::replace_thread_binding(&record, "thread-codex-outcomes").unwrap();
 
-    let stopped_marker = tmp.path().join("stopped");
+    let stopped_marker = root.join("stopped");
     let peer = tokio::spawn(serve_codex_peer(listener, outcome, stopped_marker.clone()));
-    let tmux = empty_composer_tmux(tmp.path());
+    let tmux = empty_composer_tmux(root);
     let script = fs::read_to_string(&tmux).unwrap().replace(
         "has-session) exit 0 ;;",
         &format!(
@@ -185,7 +185,7 @@ async fn fixture(
         ),
     );
     fs::write(&tmux, script).unwrap();
-    let st = state(tmp.path(), Some(TOKEN), tmux);
+    let st = state(root, Some(TOKEN), tmux);
     crate::activity::activate_runtime(&st.context, &record).unwrap();
     let (handle, commands, ready) = codex_app_server::starting_control_channel();
     let control = tokio::spawn(codex_app_server::run_control(
@@ -202,7 +202,7 @@ async fn fixture(
             handle,
         },
     );
-    (tmp, socket_dir, st, launch, control, peer)
+    (socket_dir, st, launch, control, peer)
 }
 
 async fn submit(st: Arc<ServeState>, id: &str, launch: &str) -> (StatusCode, Value) {
@@ -221,9 +221,9 @@ async fn submit(st: Arc<ServeState>, id: &str, launch: &str) -> (StatusCode, Val
     .await
 }
 
-async fn assert_prompt_admitted_with_usage(id: &str, api_key: bool) {
-    let (_tmp, _socket_dir, st, launch, control, peer) =
-        fixture(id, PeerOutcome::AcceptPrompt { api_key }).await;
+async fn assert_prompt_admitted_with_usage(root: &Path, id: &str, api_key: bool) {
+    let (_socket_dir, st, launch, control, peer) =
+        fixture(root, id, PeerOutcome::AcceptPrompt { api_key }).await;
     let handle = st.codex_controls.lock().unwrap()[id].handle.clone();
     let usage = handle.usage().await;
     if api_key {
@@ -250,26 +250,33 @@ async fn assert_prompt_admitted_with_usage(id: &str, api_key: bool) {
     peer.await.unwrap();
 }
 
-#[tokio::test]
-async fn already_attached_api_key_control_admits_keyed_prompt_without_usage() {
-    assert_prompt_admitted_with_usage("api-key-control", true).await;
+#[test]
+fn already_attached_api_key_control_admits_keyed_prompt_without_usage() {
+    control_fixture::run(async |root| {
+        assert_prompt_admitted_with_usage(root, "api-key-control", true).await
+    });
 }
 
-#[tokio::test]
-async fn chatgpt_control_reads_usage_and_admits_keyed_prompt() {
-    assert_prompt_admitted_with_usage("chatgpt-control", false).await;
+#[test]
+fn chatgpt_control_reads_usage_and_admits_keyed_prompt() {
+    control_fixture::run(async |root| {
+        assert_prompt_admitted_with_usage(root, "chatgpt-control", false).await
+    });
 }
 
-#[tokio::test]
-async fn first_keyed_api_key_prompt_survives_delayed_thread_start() {
+#[test]
+fn first_keyed_api_key_prompt_survives_delayed_thread_start() {
+    control_fixture::run(exercise_first_keyed_api_key_prompt_survives_delayed_thread_start);
+}
+
+async fn exercise_first_keyed_api_key_prompt_survives_delayed_thread_start(root: &Path) {
     let id = "delayed-api-key-start";
-    let tmp = tempfile::TempDir::new().unwrap();
-    let launch = seed_codex_app_server_session(tmp.path(), id);
+    let launch = seed_codex_app_server_session(root, id);
     let (_socket_dir, upstream) = nils_test_support::short_socket_path("delayed-start.sock");
     let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
     let proxy_path = upstream.with_extension("proxy");
-    let (tmux, terminal_enter) = empty_composer_tmux_marking_enter(tmp.path());
-    let st = state(tmp.path(), Some(TOKEN), tmux);
+    let (tmux, terminal_enter) = empty_composer_tmux_marking_enter(root);
+    let st = state(root, Some(TOKEN), tmux);
     let mut record = load_session_record(&st.context, id).unwrap();
     let runtime = record.runtime.as_mut().unwrap();
     runtime.extra.insert(
@@ -432,42 +439,49 @@ async fn first_keyed_api_key_prompt_survives_delayed_thread_start() {
     assert_eq!(control_result, Ok(()));
 }
 
-#[tokio::test]
-async fn provider_rejection_with_stopped_runtime_remains_unknown() {
-    let (tmp, _socket_dir, st, launch, control, peer) =
-        fixture("provider-rejected-exit", PeerOutcome::RejectPrompt).await;
-    let (status, body) = submit(st, "provider-rejected-exit", &launch).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
-    assert_eq!(body["error"]["code"], "structured-prompt-outcome-unknown");
-    assert_eq!(body["error"]["details"]["receipt"]["outcome"], "unknown");
-    peer.await.unwrap();
-    control.abort();
-    let _ = control.await;
-    drop(tmp);
+#[test]
+fn provider_rejection_with_stopped_runtime_remains_unknown() {
+    control_fixture::run(async |root| {
+        let (_socket_dir, st, launch, control, peer) =
+            fixture(root, "provider-rejected-exit", PeerOutcome::RejectPrompt).await;
+        let (status, body) = submit(st, "provider-rejected-exit", &launch).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert_eq!(body["error"]["code"], "structured-prompt-outcome-unknown");
+        assert_eq!(body["error"]["details"]["receipt"]["outcome"], "unknown");
+        peer.await.unwrap();
+        control.abort();
+        let _ = control.await;
+    });
 }
 
-#[tokio::test]
-async fn lost_acknowledgement_with_stopped_runtime_is_submitted() {
-    let (tmp, _socket_dir, st, launch, control, peer) =
-        fixture("lost-ack-exit", PeerOutcome::DropAcknowledgement).await;
-    let (status, body) = submit(st, "lost-ack-exit", &launch).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["data"]["receipt"]["outcome"], "submitted");
-    peer.await.unwrap();
-    control.abort();
-    let _ = control.await;
-    drop(tmp);
+#[test]
+fn lost_acknowledgement_with_stopped_runtime_is_submitted() {
+    control_fixture::run(async |root| {
+        let (_socket_dir, st, launch, control, peer) =
+            fixture(root, "lost-ack-exit", PeerOutcome::DropAcknowledgement).await;
+        let (status, body) = submit(st, "lost-ack-exit", &launch).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["receipt"]["outcome"], "submitted");
+        peer.await.unwrap();
+        control.abort();
+        let _ = control.await;
+    });
 }
 
-#[tokio::test]
-async fn closed_websocket_with_stopped_runtime_remains_unknown() {
-    let (tmp, _socket_dir, st, launch, control, peer) =
-        fixture("closed-websocket-exit", PeerOutcome::CloseBeforePrompt).await;
-    peer.await.unwrap();
-    let (status, body) = submit(st, "closed-websocket-exit", &launch).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
-    assert_eq!(body["error"]["code"], "structured-prompt-outcome-unknown");
-    control.abort();
-    let _ = control.await;
-    drop(tmp);
+#[test]
+fn closed_websocket_with_stopped_runtime_remains_unknown() {
+    control_fixture::run(async |root| {
+        let (_socket_dir, st, launch, control, peer) = fixture(
+            root,
+            "closed-websocket-exit",
+            PeerOutcome::CloseBeforePrompt,
+        )
+        .await;
+        peer.await.unwrap();
+        let (status, body) = submit(st, "closed-websocket-exit", &launch).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert_eq!(body["error"]["code"], "structured-prompt-outcome-unknown");
+        control.abort();
+        let _ = control.await;
+    });
 }

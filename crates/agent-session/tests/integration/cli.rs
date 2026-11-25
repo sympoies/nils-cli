@@ -926,7 +926,7 @@ exit 1
     }
     let path = std::env::join_paths(paths).expect("join PATH");
     let root = tmp.path();
-    let mut command = isolated_serve_command(root, root, &root.join("state"), addr);
+    let mut command = serve_command::usage_serve_command(root, addr);
     assert_direct_serve_roots(root, &command);
     command
         .env("AGENT_SESSION_USAGE_TIMEOUT_MS", "45000")
@@ -999,7 +999,7 @@ JSON
     }
     let path = std::env::join_paths(paths).expect("join PATH");
     let root = tmp.path();
-    let mut command = isolated_serve_command(root, root, &root.join("state"), addr);
+    let mut command = serve_command::usage_serve_command(root, addr);
     assert_direct_serve_roots(root, &command);
     command
         .env("AGENT_SESSION_USAGE_TIMEOUT_MS", "45000")

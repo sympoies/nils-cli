@@ -10,7 +10,7 @@ crates/agent-hook/tests/setup.rs	test	3017
 crates/agent-out/src/lib.rs	impl	2211
 crates/agent-session/src/activity.rs	impl	5033
 crates/agent-session/src/codex_app_server.rs	impl	4715
-crates/agent-session/src/codex_app_server/tests/mod.rs	test	7976
+crates/agent-session/src/codex_app_server/tests/mod.rs	test	7934
 crates/agent-session/src/lib.rs	impl	11413
 crates/agent-session/src/lib.rs	test	6115
 crates/agent-session/src/provider_history.rs	impl	2222

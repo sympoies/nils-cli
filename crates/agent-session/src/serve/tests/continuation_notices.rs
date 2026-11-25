@@ -1,6 +1,7 @@
 //! Scheduler producer boundaries; synthetic receivers only.
 use super::prompt_receipts_tests::guard_tmux;
 use super::*;
+use crate::codex_app_server::tests::control_fixture;
 use pretty_assertions::assert_eq;
 #[path = "continuation_claude.rs"]
 mod claude;
@@ -275,176 +276,186 @@ fn codex_tmux(root: &Path, id: &str) -> PathBuf {
     tmux
 }
 
-#[tokio::test]
-async fn capacity_notice_native_receiver_admits_only_its_interrupted_non_idle_turn() {
+#[test]
+fn capacity_notice_native_receiver_admits_only_its_interrupted_non_idle_turn() {
     for related in [true, false] {
-        let lock = GlobalStateLock::new();
-        let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
-        let tmp = tempfile::tempdir_in("/tmp").unwrap();
-        let _home = EnvGuard::set(
-            &lock,
-            "CODEX_HOME",
-            tmp.path().join("codex-home").to_str().unwrap(),
-        );
-        let id = "capacity-wire";
-        let launch = seed_codex_app_server_session(tmp.path(), id);
-        let st = state(tmp.path(), Some(TOKEN), codex_tmux(tmp.path(), id));
-        let record = bind_codex(&st.context, id, tmp.path());
-        activity::activate_runtime(&st.context, &record).unwrap();
-        let failure = activity::ingest_codex_app_server_failure_with_kind(
-            &st.context,
-            id,
-            &launch,
-            "thread-capacity",
-            "turn-capacity",
-            codex_app_server::StructuredFailureKind::ProviderCapacity,
-        )
-        .unwrap();
-        let predecessor = failure
-            .turn_state
-            .last_turn
-            .unwrap()
-            .provider_turn_id
-            .unwrap();
-        let revision = activity::state_for_view(&st.context, &record)
-            .unwrap()
-            .revision;
-        auto_resume::set_enabled(&st.context, id, true, "2020-01-01T00:00:00Z").unwrap();
-        auto_resume::arm_provider_capacity(
-            &st.context,
-            id,
-            &launch,
-            &crate::codex_account::binding_snapshot(&record),
-            predecessor,
-            revision,
-            "2020-01-01T00:00:01Z",
-        )
-        .unwrap();
-        let listener =
-            tokio::net::UnixListener::bind(tmp.path().join(format!("{id}.sock"))).unwrap();
-        let path = transcript(tmp.path());
-        let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
-        let peer = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
-            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
-            while let Some(Ok(ClientMessage::Text(text))) = socket.next().await {
-                let request: Value = serde_json::from_str(&text).unwrap();
-                let Some(request_id) = request.get("id") else {
-                    continue;
-                };
-                let result = match request["method"].as_str().unwrap() {
-                    "initialize" | "thread/resume" => json!({}),
-                    "thread/loaded/list" => json!({"data":["thread-capacity"],"nextCursor":null}),
-                    "thread/read" => {
-                        json!({"thread":{"id":"thread-capacity","status":{"type":"active"}}})
-                    }
-                    "account/rateLimits/read" => {
-                        for notification in [
-                            json!({"method":"turn/started","params":{"threadId":"thread-capacity","turn":{"id":if related {"turn-capacity"} else {"unrelated-turn"},"status":"inProgress"}}}),
-                            json!({"method":"error","params":{"threadId":"thread-capacity","turnId":if related {"turn-capacity"} else {"unrelated-turn"},
-                                "willRetry":false,"error":{"codexErrorInfo":"serverOverloaded"}}}),
-                        ] {
-                            socket
-                                .send(ClientMessage::Text(notification.to_string().into()))
-                                .await
-                                .unwrap();
-                        }
-                        json!({"rateLimits":{}})
-                    }
-                    "turn/start" => {
-                        let params = &request["params"];
-                        let text = params["input"][0]["text"].as_str().unwrap();
-                        let notice = crate::notice::parse_notice(text)
-                            .expect("native receiver must get an envelope");
-                        assert_eq!(notice.body, auto_resume::CAPACITY_CONTINUATION_MESSAGE);
-                        append_notice(
-                            &path,
-                            text,
-                            params["clientUserMessageId"]
-                                .as_str()
-                                .expect("notice client id"),
-                        );
-                        sent.send(request.clone()).unwrap();
-                        json!({"turn":{"id":"continued-turn"}})
-                    }
-                    method => panic!("unexpected scheduler RPC: {method}"),
-                };
-                if socket
-                    .send(ClientMessage::Text(
-                        json!({"id":request_id,"result":result}).to_string().into(),
-                    ))
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
-        let (handle, commands, ready) = codex_app_server::starting_control_channel();
-        let control = tokio::spawn(codex_app_server::run_control(
-            st.context.clone(),
-            record.clone(),
-            commands,
-            ready,
-        ));
-        handle.wait_ready(Duration::from_secs(5)).await.unwrap();
-        st.codex_controls.lock().unwrap().insert(
-            id.into(),
-            CodexControlEntry {
-                launch_id: launch.clone(),
-                handle,
-            },
-        );
-        let target = || CodexAutoResumeTarget {
-            id: id.into(),
-            launch_id: launch.clone(),
-            binding: crate::codex_account::binding_snapshot(&record),
-        };
-        process_codex_capacity_auto_resume_id(st.clone(), target()).await;
-        let view = auto_resume::view_for_record(&st.context, &record);
-        assert_eq!(
-            view.state,
-            if related {
-                "resumed"
-            } else {
-                "terminal_failure"
-            }
-        );
-        if related {
-            let sent = received.try_recv().unwrap();
-            let history = provider_history::stable_history_id("codex", None, "thread-capacity");
-            let catalog = HistoryCatalog::new(
-                vec![HistorySource {
-                    provider: "codex".into(),
-                    agent_profile: None,
-                    root: tmp.path().join("codex-home/sessions"),
-                }],
-                provider_history::archive_root(tmp.path()),
-                provider_history::star_root(tmp.path()),
+        control_fixture::run_short(async |root| {
+            exercise_capacity_notice_native_receiver_admits_only_its_interrupted_non_idle_turn(
+                root, related,
             )
-            .with_session_state_dir(tmp.path().to_owned());
-            let page = catalog
-                .messages_with_parts(&history, None, 10, HistoryMessageDirection::Forward, true)
-                .unwrap();
-            assert_eq!(page.messages.len(), 1);
-            assert_eq!(page.messages[0].role, "notice");
-            assert_eq!(
-                page.messages[0].text,
-                sent["params"]["input"][0]["text"].as_str().unwrap()
-            );
-            assert!(!page.messages[0].human_prompt);
-        }
-        assert!(received.try_recv().is_err());
-        process_codex_capacity_auto_resume_id(st.clone(), target()).await;
-        assert!(
-            received.try_recv().is_err(),
-            "the generation cannot dispatch twice"
-        );
-        control.abort();
-        let _ = control.await;
-        peer.abort();
-        let _ = peer.await;
+            .await
+        });
     }
+}
+
+async fn exercise_capacity_notice_native_receiver_admits_only_its_interrupted_non_idle_turn(
+    root: &Path,
+    related: bool,
+) {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let _home = EnvGuard::set(
+        &lock,
+        "CODEX_HOME",
+        root.join("codex-home").to_str().unwrap(),
+    );
+    let id = "capacity-wire";
+    let launch = seed_codex_app_server_session(root, id);
+    let st = state(root, Some(TOKEN), codex_tmux(root, id));
+    let record = bind_codex(&st.context, id, root);
+    activity::activate_runtime(&st.context, &record).unwrap();
+    let failure = activity::ingest_codex_app_server_failure_with_kind(
+        &st.context,
+        id,
+        &launch,
+        "thread-capacity",
+        "turn-capacity",
+        codex_app_server::StructuredFailureKind::ProviderCapacity,
+    )
+    .unwrap();
+    let predecessor = failure
+        .turn_state
+        .last_turn
+        .unwrap()
+        .provider_turn_id
+        .unwrap();
+    let revision = activity::state_for_view(&st.context, &record)
+        .unwrap()
+        .revision;
+    auto_resume::set_enabled(&st.context, id, true, "2020-01-01T00:00:00Z").unwrap();
+    auto_resume::arm_provider_capacity(
+        &st.context,
+        id,
+        &launch,
+        &crate::codex_account::binding_snapshot(&record),
+        predecessor,
+        revision,
+        "2020-01-01T00:00:01Z",
+    )
+    .unwrap();
+    let listener = tokio::net::UnixListener::bind(root.join(format!("{id}.sock"))).unwrap();
+    let path = transcript(root);
+    let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let peer = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        while let Some(Ok(ClientMessage::Text(text))) = socket.next().await {
+            let request: Value = serde_json::from_str(&text).unwrap();
+            let Some(request_id) = request.get("id") else {
+                continue;
+            };
+            let result = match request["method"].as_str().unwrap() {
+                "initialize" | "thread/resume" => json!({}),
+                "thread/loaded/list" => json!({"data":["thread-capacity"],"nextCursor":null}),
+                "thread/read" => {
+                    json!({"thread":{"id":"thread-capacity","status":{"type":"active"}}})
+                }
+                "account/rateLimits/read" => {
+                    for notification in [
+                        json!({"method":"turn/started","params":{"threadId":"thread-capacity","turn":{"id":if related {"turn-capacity"} else {"unrelated-turn"},"status":"inProgress"}}}),
+                        json!({"method":"error","params":{"threadId":"thread-capacity","turnId":if related {"turn-capacity"} else {"unrelated-turn"},
+                                "willRetry":false,"error":{"codexErrorInfo":"serverOverloaded"}}}),
+                    ] {
+                        socket
+                            .send(ClientMessage::Text(notification.to_string().into()))
+                            .await
+                            .unwrap();
+                    }
+                    json!({"rateLimits":{}})
+                }
+                "turn/start" => {
+                    let params = &request["params"];
+                    let text = params["input"][0]["text"].as_str().unwrap();
+                    let notice = crate::notice::parse_notice(text)
+                        .expect("native receiver must get an envelope");
+                    assert_eq!(notice.body, auto_resume::CAPACITY_CONTINUATION_MESSAGE);
+                    append_notice(
+                        &path,
+                        text,
+                        params["clientUserMessageId"]
+                            .as_str()
+                            .expect("notice client id"),
+                    );
+                    sent.send(request.clone()).unwrap();
+                    json!({"turn":{"id":"continued-turn"}})
+                }
+                method => panic!("unexpected scheduler RPC: {method}"),
+            };
+            if socket
+                .send(ClientMessage::Text(
+                    json!({"id":request_id,"result":result}).to_string().into(),
+                ))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    let (handle, commands, ready) = codex_app_server::starting_control_channel();
+    let control = tokio::spawn(codex_app_server::run_control(
+        st.context.clone(),
+        record.clone(),
+        commands,
+        ready,
+    ));
+    handle.wait_ready(Duration::from_secs(5)).await.unwrap();
+    st.codex_controls.lock().unwrap().insert(
+        id.into(),
+        CodexControlEntry {
+            launch_id: launch.clone(),
+            handle,
+        },
+    );
+    let target = || CodexAutoResumeTarget {
+        id: id.into(),
+        launch_id: launch.clone(),
+        binding: crate::codex_account::binding_snapshot(&record),
+    };
+    process_codex_capacity_auto_resume_id(st.clone(), target()).await;
+    let view = auto_resume::view_for_record(&st.context, &record);
+    assert_eq!(
+        view.state,
+        if related {
+            "resumed"
+        } else {
+            "terminal_failure"
+        }
+    );
+    if related {
+        let sent = received.try_recv().unwrap();
+        let history = provider_history::stable_history_id("codex", None, "thread-capacity");
+        let catalog = HistoryCatalog::new(
+            vec![HistorySource {
+                provider: "codex".into(),
+                agent_profile: None,
+                root: root.join("codex-home/sessions"),
+            }],
+            provider_history::archive_root(root),
+            provider_history::star_root(root),
+        )
+        .with_session_state_dir(root.to_owned());
+        let page = catalog
+            .messages_with_parts(&history, None, 10, HistoryMessageDirection::Forward, true)
+            .unwrap();
+        assert_eq!(page.messages.len(), 1);
+        assert_eq!(page.messages[0].role, "notice");
+        assert_eq!(
+            page.messages[0].text,
+            sent["params"]["input"][0]["text"].as_str().unwrap()
+        );
+        assert!(!page.messages[0].human_prompt);
+    }
+    assert!(received.try_recv().is_err());
+    process_codex_capacity_auto_resume_id(st.clone(), target()).await;
+    assert!(
+        received.try_recv().is_err(),
+        "the generation cannot dispatch twice"
+    );
+    control.abort();
+    let _ = control.await;
+    peer.abort();
+    let _ = peer.await;
 }
 
 #[tokio::test]
@@ -546,23 +557,28 @@ async fn capacity_notice_does_not_repair_an_observed_stale_draft() {
     assert_eq!(writes.load(Ordering::SeqCst), 0);
 }
 
-#[tokio::test]
-async fn capacity_notice_refuses_a_draft_appearing_during_control_handoff() {
+#[test]
+fn capacity_notice_refuses_a_draft_appearing_during_control_handoff() {
+    control_fixture::run_short(
+        exercise_capacity_notice_refuses_a_draft_appearing_during_control_handoff,
+    );
+}
+
+async fn exercise_capacity_notice_refuses_a_draft_appearing_during_control_handoff(root: &Path) {
     let lock = GlobalStateLock::new();
     let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
-    let tmp = tempfile::tempdir_in("/tmp").unwrap();
     let _home = EnvGuard::set(
         &lock,
         "CODEX_HOME",
-        tmp.path().join("codex-home").to_str().unwrap(),
+        root.join("codex-home").to_str().unwrap(),
     );
     let id = "capacity-draft-handoff";
-    let launch = seed_codex_app_server_session(tmp.path(), id);
-    let st = state(tmp.path(), Some(TOKEN), codex_tmux(tmp.path(), id));
-    let record = bind_codex(&st.context, id, tmp.path());
+    let launch = seed_codex_app_server_session(root, id);
+    let st = state(root, Some(TOKEN), codex_tmux(root, id));
+    let record = bind_codex(&st.context, id, root);
     activity::activate_runtime(&st.context, &record).unwrap();
-    let listener = tokio::net::UnixListener::bind(tmp.path().join(format!("{id}.sock"))).unwrap();
-    let path = transcript(tmp.path());
+    let listener = tokio::net::UnixListener::bind(root.join(format!("{id}.sock"))).unwrap();
+    let path = transcript(root);
     let writes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = writes.clone();
     let (blocked, waiting) = tokio::sync::oneshot::channel();
@@ -685,7 +701,7 @@ async fn capacity_notice_refuses_a_draft_appearing_during_control_handoff() {
     let attempt = tokio::spawn(process_codex_capacity_auto_resume_id(st.clone(), target));
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let captures = fs::read_to_string(tmp.path().join("transport-calls"))
+        let captures = fs::read_to_string(root.join("transport-calls"))
             .unwrap_or_default()
             .lines()
             .filter_map(|line| serde_json::from_str::<Value>(line).ok())
@@ -701,7 +717,7 @@ async fn capacity_notice_refuses_a_draft_appearing_during_control_handoff() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     let draft = "  owner draft after admission  ";
-    let draft_path = tmp.path().join("composer");
+    let draft_path = root.join("composer");
     let context = st.context.clone();
     let output = draft_path.clone();
     tokio::task::spawn_blocking(move || {

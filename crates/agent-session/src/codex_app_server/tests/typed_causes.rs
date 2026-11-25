@@ -76,20 +76,19 @@ async fn prompt_peer(
 }
 
 async fn start_prompt_control(
+    root: &Path,
     id: &str,
     peer: PromptPeer,
 ) -> (
-    tempfile::TempDir,
     CliContext,
     SessionRecord,
     ControlHandle,
     tokio::task::JoinHandle<Result<(), String>>,
     tokio::task::JoinHandle<()>,
 ) {
-    let tmp = tempfile::TempDir::new().unwrap();
     let (_socket_dir, socket_path) = nils_test_support::short_socket_path(format!("{id}.sock"));
     let context = CliContext {
-        state_dir: tmp.path().join("state"),
+        state_dir: root.join("state"),
         host: None,
     };
     let record = record_with_runtime(id, &socket_path);
@@ -107,22 +106,25 @@ async fn start_prompt_control(
     ));
     handle.wait_ready(Duration::from_secs(5)).await.unwrap();
     ready_rx.await.unwrap();
-    (tmp, context, record, handle, control, peer_task)
+    (context, record, handle, control, peer_task)
 }
 
-#[tokio::test]
-async fn prompt_readiness_refusal_is_marked_as_not_dispatched() {
+#[test]
+fn prompt_readiness_refusal_is_marked_as_not_dispatched() {
     let env_lock = GlobalStateLock::new();
     let _broker = EnvGuard::set(
         &env_lock,
         "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
         r#"["/configured/broker"]"#,
     );
-    let tmp = tempfile::TempDir::new().unwrap();
+    control_fixture::run(assert_prompt_readiness_refusal);
+}
+
+async fn assert_prompt_readiness_refusal(root: &Path) {
     let (_socket_dir, socket_path) = nils_test_support::short_socket_path("prompt-readiness.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let context = CliContext {
-        state_dir: tmp.path().join("state"),
+        state_dir: root.join("state"),
         host: None,
     };
     let record = record_with_runtime("prompt-readiness", &socket_path);
@@ -191,10 +193,14 @@ async fn prompt_readiness_refusal_is_marked_as_not_dispatched() {
     let _ = control.await;
 }
 
-#[tokio::test]
-async fn websocket_provider_rejection_is_not_confirmed() {
-    let (_tmp, _context, _record, handle, control, peer) =
-        start_prompt_control("provider-rejection", PromptPeer::Reject).await;
+#[test]
+fn websocket_provider_rejection_is_not_confirmed() {
+    control_fixture::run(exercise_websocket_provider_rejection_is_not_confirmed);
+}
+
+async fn exercise_websocket_provider_rejection_is_not_confirmed(root: &Path) {
+    let (_context, _record, handle, control, peer) =
+        start_prompt_control(root, "provider-rejection", PromptPeer::Reject).await;
     let error = handle
         .submit_prompt("rejected prompt", None, None)
         .await
@@ -209,10 +215,14 @@ async fn websocket_provider_rejection_is_not_confirmed() {
     let _ = control.await;
 }
 
-#[tokio::test]
-async fn websocket_disconnect_before_submit_is_not_dispatched() {
-    let (_tmp, _context, _record, handle, control, peer) =
-        start_prompt_control("write-failure", PromptPeer::CloseBeforePrompt).await;
+#[test]
+fn websocket_disconnect_before_submit_is_not_dispatched() {
+    control_fixture::run(exercise_websocket_disconnect_before_submit_is_not_dispatched);
+}
+
+async fn exercise_websocket_disconnect_before_submit_is_not_dispatched(root: &Path) {
+    let (_context, _record, handle, control, peer) =
+        start_prompt_control(root, "write-failure", PromptPeer::CloseBeforePrompt).await;
     peer.await.unwrap();
     let error = handle
         .submit_prompt("not written", None, None)
@@ -227,10 +237,18 @@ async fn websocket_disconnect_before_submit_is_not_dispatched() {
     let _ = control.await;
 }
 
-#[tokio::test]
-async fn websocket_lost_acknowledgement_is_unknown() {
-    let (_tmp, _context, _record, handle, control, peer) =
-        start_prompt_control("lost-acknowledgement", PromptPeer::DropAcknowledgement).await;
+#[test]
+fn websocket_lost_acknowledgement_is_unknown() {
+    control_fixture::run(exercise_websocket_lost_acknowledgement_is_unknown);
+}
+
+async fn exercise_websocket_lost_acknowledgement_is_unknown(root: &Path) {
+    let (_context, _record, handle, control, peer) = start_prompt_control(
+        root,
+        "lost-acknowledgement",
+        PromptPeer::DropAcknowledgement,
+    )
+    .await;
     let error = handle
         .submit_prompt("sent without an acknowledgement", None, None)
         .await

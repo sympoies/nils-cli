@@ -1,5 +1,6 @@
 //! Synthetic HTTP/protocol coverage: no live provider or acceptance claim.
 use super::*;
+use crate::codex_app_server::tests::control_fixture;
 use pretty_assertions::{assert_eq, assert_ne};
 
 const ID: &str = "native-busy-reply";
@@ -76,225 +77,236 @@ where
         .unwrap();
 }
 
-#[tokio::test]
-async fn keyed_codex_reply_reaches_native_protocol_while_turn_is_working() {
+#[test]
+fn keyed_codex_reply_reaches_native_protocol_while_turn_is_working() {
     for acknowledgement in ["accepted", "unproven", "closed"] {
-        let acknowledge = acknowledgement == "accepted";
-        let tmp = tempfile::tempdir_in("/tmp").unwrap();
-        let launch = seed_codex_app_server_session(tmp.path(), ID);
-        let tmux = guard_tmux(tmp.path(), ID);
-        let script = fs::read_to_string(&tmux).unwrap().replace(
-            "print('────────────────────────────\\n❯ ' + text + '\\n────────────────────────────')",
-            "print('› ' + text + '\\n\\n  status')",
-        );
-        fs::write(&tmux, script).unwrap();
-        let st = state(tmp.path(), Some(TOKEN), tmux);
-        let record = load_session_record(&st.context, ID).unwrap();
-        activity::activate_runtime(&st.context, &record).unwrap();
-        // Provider hooks and the native control stream are separate inputs.
-        // Establish both the durable hook activity and the protocol's active turn.
-        activity::ingest_event(&st.context, ID, busy_event(&launch, "codex")).unwrap();
-        codex_app_server::replace_thread_binding(&record, THREAD).unwrap();
-        let listener =
-            tokio::net::UnixListener::bind(tmp.path().join(format!("{ID}.sock"))).unwrap();
-        let (seen, mut received) = tokio::sync::mpsc::unbounded_channel();
-        let peer = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
-            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
-            let initialize = read_json(&mut socket).await;
-            assert_eq!(initialize["method"], "initialize");
-            reply(&mut socket, &initialize, json!({})).await;
-            assert_eq!(read_json(&mut socket).await["method"], "initialized");
-            let loaded = read_json(&mut socket).await;
-            assert_eq!(loaded["method"], "thread/loaded/list");
-            reply(
-                &mut socket,
-                &loaded,
-                json!({"data": [THREAD], "nextCursor": null}),
+        control_fixture::run_short(async |root| {
+            exercise_keyed_codex_reply_reaches_native_protocol_while_turn_is_working(
+                root,
+                acknowledgement,
             )
-            .await;
-            let resume = read_json(&mut socket).await;
-            assert_eq!(resume["method"], "thread/resume");
-            assert_eq!(resume["params"]["threadId"], THREAD);
-            reply(&mut socket, &resume, json!({})).await;
-            let usage = read_json(&mut socket).await;
-            assert_eq!(usage["method"], "account/rateLimits/read");
+            .await
+        });
+    }
+}
+
+async fn exercise_keyed_codex_reply_reaches_native_protocol_while_turn_is_working(
+    root: &Path,
+    acknowledgement: &str,
+) {
+    let acknowledge = acknowledgement == "accepted";
+    let launch = seed_codex_app_server_session(root, ID);
+    let tmux = guard_tmux(root, ID);
+    let script = fs::read_to_string(&tmux).unwrap().replace(
+        "print('────────────────────────────\\n❯ ' + text + '\\n────────────────────────────')",
+        "print('› ' + text + '\\n\\n  status')",
+    );
+    fs::write(&tmux, script).unwrap();
+    let st = state(root, Some(TOKEN), tmux);
+    let record = load_session_record(&st.context, ID).unwrap();
+    activity::activate_runtime(&st.context, &record).unwrap();
+    // Provider hooks and the native control stream are separate inputs.
+    // Establish both the durable hook activity and the protocol's active turn.
+    activity::ingest_event(&st.context, ID, busy_event(&launch, "codex")).unwrap();
+    codex_app_server::replace_thread_binding(&record, THREAD).unwrap();
+    let listener = tokio::net::UnixListener::bind(root.join(format!("{ID}.sock"))).unwrap();
+    let (seen, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let peer = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let initialize = read_json(&mut socket).await;
+        assert_eq!(initialize["method"], "initialize");
+        reply(&mut socket, &initialize, json!({})).await;
+        assert_eq!(read_json(&mut socket).await["method"], "initialized");
+        let loaded = read_json(&mut socket).await;
+        assert_eq!(loaded["method"], "thread/loaded/list");
+        reply(
+            &mut socket,
+            &loaded,
+            json!({"data": [THREAD], "nextCursor": null}),
+        )
+        .await;
+        let resume = read_json(&mut socket).await;
+        assert_eq!(resume["method"], "thread/resume");
+        assert_eq!(resume["params"]["threadId"], THREAD);
+        reply(&mut socket, &resume, json!({})).await;
+        let usage = read_json(&mut socket).await;
+        assert_eq!(usage["method"], "account/rateLimits/read");
+        socket
+            .send(ClientMessage::Text(
+                json!({
+                    "method": "turn/started",
+                    "params": {"threadId": THREAD, "turn": {"id": TURN, "status": "inProgress"}}
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        reply(&mut socket, &usage, json!({"rateLimits": {}})).await;
+        let prompt = read_json(&mut socket).await;
+        assert_eq!(prompt["method"], "turn/start");
+        assert_eq!(prompt["params"]["threadId"], THREAD);
+        assert_eq!(prompt["params"]["input"][0]["text"], TEXT);
+        // Interleaved reminder input and a sibling input with identical
+        // text are notifications, not this request's native RPC response.
+        for (item, text) in [
+            (
+                "reminder-input",
+                "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: agent-session message inbox",
+            ),
+            ("sibling-input", TEXT),
+        ] {
             socket
                 .send(ClientMessage::Text(
                     json!({
-                        "method": "turn/started",
-                        "params": {"threadId": THREAD, "turn": {"id": TURN, "status": "inProgress"}}
+                        "method": "item/completed",
+                        "params": {"threadId": THREAD, "turnId": TURN,
+                            "item": {"id": item, "type": "userMessage",
+                                "content": [{"type": "text", "text": text}]}}
                     })
                     .to_string()
                     .into(),
                 ))
                 .await
                 .unwrap();
-            reply(&mut socket, &usage, json!({"rateLimits": {}})).await;
-            let prompt = read_json(&mut socket).await;
-            assert_eq!(prompt["method"], "turn/start");
-            assert_eq!(prompt["params"]["threadId"], THREAD);
-            assert_eq!(prompt["params"]["input"][0]["text"], TEXT);
-            // Interleaved reminder input and a sibling input with identical
-            // text are notifications, not this request's native RPC response.
-            for (item, text) in [
-                (
-                    "reminder-input",
-                    "<!-- agent-notice:v1 kind=mailbox.wake source=agent-session -->\n\nMailbox: agent-session message inbox",
-                ),
-                ("sibling-input", TEXT),
-            ] {
-                socket
-                    .send(ClientMessage::Text(
-                        json!({
-                            "method": "item/completed",
-                            "params": {"threadId": THREAD, "turnId": TURN,
-                                "item": {"id": item, "type": "userMessage",
-                                    "content": [{"type": "text", "text": text}]}}
-                        })
-                        .to_string()
-                        .into(),
-                    ))
-                    .await
-                    .unwrap();
-            }
-            seen.send(prompt).unwrap();
-            (socket, seen)
-        });
-        let (handle, commands, ready) = codex_app_server::starting_control_channel();
-        let control = tokio::spawn(codex_app_server::run_control(
-            st.context.clone(),
-            record,
-            commands,
-            ready,
-        ));
-        handle.wait_ready(Duration::from_secs(5)).await.unwrap();
-        st.codex_controls.lock().unwrap().insert(
-            ID.into(),
-            CodexControlEntry {
-                launch_id: launch.clone(),
-                handle,
-            },
-        );
-        assert_working(&st);
-        let uri = format!("/sessions/{ID}/prompt/v2");
-        let (status, refused) = call(
-            router(st.clone()),
-            post_json(&uri, Some(TOKEN), body("replaced-runtime", "stale-runtime")),
+        }
+        seen.send(prompt).unwrap();
+        (socket, seen)
+    });
+    let (handle, commands, ready) = codex_app_server::starting_control_channel();
+    let control = tokio::spawn(codex_app_server::run_control(
+        st.context.clone(),
+        record,
+        commands,
+        ready,
+    ));
+    handle.wait_ready(Duration::from_secs(5)).await.unwrap();
+    st.codex_controls.lock().unwrap().insert(
+        ID.into(),
+        CodexControlEntry {
+            launch_id: launch.clone(),
+            handle,
+        },
+    );
+    assert_working(&st);
+    let uri = format!("/sessions/{ID}/prompt/v2");
+    let (status, refused) = call(
+        router(st.clone()),
+        post_json(&uri, Some(TOKEN), body("replaced-runtime", "stale-runtime")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(refused["error"]["code"], "session-incarnation-conflict");
+    fs::write(root.join("composer"), "owner draft").unwrap();
+    let (status, refused) = call(
+        router(st.clone()),
+        post_json(&uri, Some(TOKEN), body(&launch, "draft-refusal")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(refused["error"]["code"], "composer-not-empty");
+    assert_eq!(
+        fs::read_to_string(root.join("composer")).unwrap(),
+        "owner draft"
+    );
+    assert!(received.try_recv().is_err());
+    fs::write(root.join("composer"), "").unwrap();
+    let request = tokio::spawn(call(
+        router(st.clone()),
+        post_json(
+            &format!("/sessions/{ID}/prompt/v2"),
+            Some(TOKEN),
+            body(&launch, "busy-reply"),
+        ),
+    ));
+    let native = tokio::time::timeout(Duration::from_secs(5), received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_working(&st);
+    let (mut socket, _seen) = peer.await.unwrap();
+    if acknowledge {
+        // Model native same-turn acceptance without a completed-turn
+        // event or an interrupt. A lost ACK must remain unknown.
+        reply(
+            &mut socket,
+            &native,
+            json!({"turn": {"id": TURN, "status": "inProgress"}}),
         )
         .await;
-        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
-        assert_eq!(refused["error"]["code"], "session-incarnation-conflict");
-        fs::write(tmp.path().join("composer"), "owner draft").unwrap();
-        let (status, refused) = call(
-            router(st.clone()),
-            post_json(&uri, Some(TOKEN), body(&launch, "draft-refusal")),
+    } else if acknowledgement == "unproven" {
+        reply(
+            &mut socket,
+            &native,
+            json!({"turn": {"status": "inProgress"}}),
         )
         .await;
-        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
-        assert_eq!(refused["error"]["code"], "composer-not-empty");
-        assert_eq!(
-            fs::read_to_string(tmp.path().join("composer")).unwrap(),
-            "owner draft"
-        );
-        assert!(received.try_recv().is_err());
-        fs::write(tmp.path().join("composer"), "").unwrap();
-        let request = tokio::spawn(call(
-            router(st.clone()),
-            post_json(
-                &format!("/sessions/{ID}/prompt/v2"),
-                Some(TOKEN),
-                body(&launch, "busy-reply"),
-            ),
-        ));
-        let native = tokio::time::timeout(Duration::from_secs(5), received.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_working(&st);
-        let (mut socket, _seen) = peer.await.unwrap();
-        if acknowledge {
-            // Model native same-turn acceptance without a completed-turn
-            // event or an interrupt. A lost ACK must remain unknown.
-            reply(
-                &mut socket,
-                &native,
-                json!({"turn": {"id": TURN, "status": "inProgress"}}),
-            )
-            .await;
-        } else if acknowledgement == "unproven" {
-            reply(
-                &mut socket,
-                &native,
-                json!({"turn": {"status": "inProgress"}}),
-            )
-            .await;
-        } else {
-            socket.close(None).await.unwrap();
-        }
-        let (status, result) = request.await.unwrap();
-        assert!(
-            native["params"]["clientUserMessageId"]
-                .as_str()
-                .is_some_and(|id| id.starts_with("agent-session-")),
-            "a keyed busy reply must carry its provider client message id"
-        );
-        assert_eq!(
-            status,
-            if acknowledge {
-                StatusCode::OK
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            },
-            "{result}"
-        );
-        assert_working(&st);
-        replay_and_lookup(st.clone(), &launch, &result).await;
-        assert!(
-            received.try_recv().is_err(),
-            "a replay must not dispatch another request"
-        );
-        if acknowledgement != "closed" {
-            assert!(
-                tokio::time::timeout(Duration::from_millis(100), socket.next())
-                    .await
-                    .is_err(),
-                "replay must not emit another native request"
-            );
-        }
-        if acknowledgement == "unproven" {
-            // A distinct authorized follow-up uses its own key. Its native ACK
-            // cannot repair the earlier request's missing correlation.
-            let later = tokio::spawn(call(
-                router(st.clone()),
-                post_json(&uri, Some(TOKEN), body(&launch, "later-reply")),
-            ));
-            let next = tokio::time::timeout(Duration::from_secs(5), read_json(&mut socket))
-                .await
-                .unwrap();
-            assert_eq!(next["method"], "turn/start");
-            assert_eq!(next["params"]["threadId"], THREAD);
-            assert_ne!(next["id"], native["id"]);
-            assert_ne!(
-                next["params"]["clientUserMessageId"], native["params"]["clientUserMessageId"],
-                "distinct logical replies require distinct client ids"
-            );
-            reply(
-                &mut socket,
-                &next,
-                json!({"turn": {"id": TURN, "status": "inProgress"}}),
-            )
-            .await;
-            let (status, accepted) = later.await.unwrap();
-            assert_eq!(status, StatusCode::OK, "{accepted}");
-            assert_eq!(accepted["data"]["receipt"]["request_id"], "later-reply");
-            assert_eq!(accepted["data"]["receipt"]["outcome"], "submitted");
-            replay_and_lookup(st.clone(), &launch, &result).await;
-            assert_working(&st);
-        }
-        control.abort();
-        let _ = control.await;
+    } else {
+        socket.close(None).await.unwrap();
     }
+    let (status, result) = request.await.unwrap();
+    assert!(
+        native["params"]["clientUserMessageId"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("agent-session-")),
+        "a keyed busy reply must carry its provider client message id"
+    );
+    assert_eq!(
+        status,
+        if acknowledge {
+            StatusCode::OK
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        },
+        "{result}"
+    );
+    assert_working(&st);
+    replay_and_lookup(st.clone(), &launch, &result).await;
+    assert!(
+        received.try_recv().is_err(),
+        "a replay must not dispatch another request"
+    );
+    if acknowledgement != "closed" {
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), socket.next())
+                .await
+                .is_err(),
+            "replay must not emit another native request"
+        );
+    }
+    if acknowledgement == "unproven" {
+        // A distinct authorized follow-up uses its own key. Its native ACK
+        // cannot repair the earlier request's missing correlation.
+        let later = tokio::spawn(call(
+            router(st.clone()),
+            post_json(&uri, Some(TOKEN), body(&launch, "later-reply")),
+        ));
+        let next = tokio::time::timeout(Duration::from_secs(5), read_json(&mut socket))
+            .await
+            .unwrap();
+        assert_eq!(next["method"], "turn/start");
+        assert_eq!(next["params"]["threadId"], THREAD);
+        assert_ne!(next["id"], native["id"]);
+        assert_ne!(
+            next["params"]["clientUserMessageId"], native["params"]["clientUserMessageId"],
+            "distinct logical replies require distinct client ids"
+        );
+        reply(
+            &mut socket,
+            &next,
+            json!({"turn": {"id": TURN, "status": "inProgress"}}),
+        )
+        .await;
+        let (status, accepted) = later.await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{accepted}");
+        assert_eq!(accepted["data"]["receipt"]["request_id"], "later-reply");
+        assert_eq!(accepted["data"]["receipt"]["outcome"], "submitted");
+        replay_and_lookup(st.clone(), &launch, &result).await;
+        assert_working(&st);
+    }
+    control.abort();
+    let _ = control.await;
 }
 
 #[tokio::test]
