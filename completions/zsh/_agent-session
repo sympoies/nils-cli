@@ -2298,7 +2298,7 @@ _agent-session__subcmd__resume-move_commands() {
 'prepare:Inspect or reserve the local destination for an exact source plan' \
 'stage:Verify a source proof and the exact privately staged provider history' \
 'status:Read the durable destination outcome for an exact move' \
-'abort:Verify or record a terminal abort before destination writer admission' \
+'abort:Record or verify a terminal abort and issue a no-writer receipt' \
 'recover:Release a source move fence using a verified destination receipt' \
     )
     _describe -t commands 'agent-session resume-move commands' commands "$@"

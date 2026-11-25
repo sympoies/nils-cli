@@ -45,11 +45,16 @@ fn claude_import_preserves_exact_transcript_and_uses_destination_project() {
         sha256: sha256(&original),
     };
     assert!(!account.join("projects").exists());
-    claude::install_transcript(&target, &path, &metadata).unwrap();
+    claude::prepare_transcript(&target, &path, &metadata)
+        .unwrap()
+        .publish()
+        .unwrap();
     let installed = claude::project_path(&account, &cwd, THREAD).unwrap();
     assert_eq!(fs::read(&installed).unwrap(), original);
     assert_eq!(
-        claude::install_transcript(&target, &path, &metadata)
+        claude::prepare_transcript(&target, &path, &metadata)
+            .unwrap()
+            .publish()
             .unwrap_err()
             .code(),
         Refusal::DestinationWriterPresent.code()

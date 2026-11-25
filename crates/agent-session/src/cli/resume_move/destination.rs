@@ -96,12 +96,75 @@ pub(super) enum Admission {
         provider_home: PathBuf,
         history: History,
         claude_target: Option<claude::Destination>,
-        _writer: File,
+        unlaunched: Box<Unlaunched>,
     },
     Existing {
         session_id: String,
         incarnation: String,
     },
+}
+
+/// Only the start that durably admitted this move can prove a pre-launch
+/// failure. Beginning launch consumes this authority.
+pub(super) struct Unlaunched {
+    binding: Binding,
+    session_id: String,
+}
+
+impl Unlaunched {
+    pub(super) fn begin_launch(self, context: &CliContext) -> Result<File, CliError> {
+        let result = (|| {
+            let _control = lock(context)?;
+            let moves = read_moves(context)?;
+            let entry = entry(&moves, &self.binding.move_id)?;
+            if entry.outcome != Outcome::WriterAdmitted || entry.created.is_some() {
+                return Err(outcome_unknown());
+            }
+            ensure_empty_destination(context, &self.binding)?;
+            start_resume::committed_move_conversation_lock(
+                context,
+                self.binding.provider.agent(),
+                &self.binding.provider_session_id,
+            )
+        })();
+        result.map_err(|_| outcome_unknown())
+    }
+
+    pub(super) fn settle_failure(
+        self,
+        context: &CliContext,
+        verifier: &Verifier,
+        target: &claude::Destination,
+    ) -> CliError {
+        let result = (|| {
+            let _control = lock(context)?;
+            let mut moves = read_moves(context)?;
+            let entry = entry_mut(&mut moves, &self.binding.move_id)?;
+            if entry.outcome != Outcome::WriterAdmitted || entry.created.is_some() {
+                return Err(outcome_unknown());
+            }
+            let ticket = entry.ticket(verifier)?;
+            ticket
+                .record()
+                .binding
+                .check(&self.binding)
+                .map_err(cli_refusal)?;
+            entry.validate_proof(verifier, entry.proof.as_ref().ok_or_else(proof_missing)?)?;
+            ensure_empty_destination(context, &self.binding)?;
+            match fs::symlink_metadata(crate::session_dir(context, &self.session_id)) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Ok(_) => return Err(cli_refusal(Refusal::DestinationWriterPresent)),
+                Err(_) => return Err(state_unavailable()),
+            }
+            target.ensure_unpublished(&self.binding.provider_session_id)?;
+            entry.outcome = Outcome::AbortedNoWriter;
+            write_moves(context, &moves)
+        })();
+        match result {
+            Ok(()) => aborted(),
+            Err(_) => outcome_unknown(),
+        }
+    }
 }
 
 pub(super) fn check_plan(
@@ -317,19 +380,20 @@ pub(super) fn admit(
     }
     let history = verified.history.ok_or_else(proof_missing)?;
     let claude_target = verified.claude_target;
+    let unlaunched = Unlaunched {
+        binding: verified.ticket.record().binding.clone(),
+        session_id: request.managed_session_id(),
+    };
     let entry = entry_mut(&mut moves, request.move_id)?;
     entry.outcome = Outcome::WriterAdmitted;
     write_moves(context, &moves)?;
-    let writer = start_resume::committed_move_conversation_lock(
-        context,
-        request.provider.agent(),
-        request.provider_session_id,
-    )?;
+    // The durable reservation excludes competing starts while this attempt
+    // prepares the destination. The conversation lock is acquired at launch.
     Ok(Admission::New {
         provider_home: provider_home(context, request.move_id),
         history,
         claude_target,
-        _writer: writer,
+        unlaunched: Box::new(unlaunched),
     })
 }
 
@@ -441,6 +505,7 @@ fn deny_reserved(moves: &Moves, provider: Provider, thread: &str) -> Result<(), 
 
 struct VerifiedAdmission<'a> {
     entry: &'a Entry,
+    ticket: Verified<Ticket>,
     history: Option<History>,
     claude_target: Option<claude::Destination>,
 }
@@ -473,6 +538,7 @@ fn verify_admission<'a>(
         Outcome::Created if entry.created.is_some() => {
             return Ok(VerifiedAdmission {
                 entry,
+                ticket,
                 history: None,
                 claude_target: None,
             });
@@ -511,6 +577,7 @@ fn verify_admission<'a>(
     };
     Ok(VerifiedAdmission {
         entry,
+        ticket,
         history: Some(proof.record().history.clone()),
         claude_target,
     })

@@ -167,11 +167,10 @@ readiness, such as the private socket directory. A deterministic failure
 refuses with `resume-unsupported` and leaves the move staged, so abort still
 issues a no-writer receipt. An explicit `--id` that names an existing managed
 session on B refuses with `session-exists` at the same point, in preflight
-and in start. The destination persists writer admission before taking a
-session writer lock.
-Any ambiguous result beyond that point remains fenced. An earlier abort
-records a terminal tombstone before signing the no-writer receipt. The same
-move cannot be admitted after that tombstone. A lost proof transfer can supply
+and in start. The destination reserves the conversation with durable writer
+admission. It takes the session writer lock immediately before launching.
+An abort records a terminal tombstone before signing the no-writer receipt.
+The same move cannot be admitted after that tombstone. A lost proof transfer can supply
 the original proof file to `resume-move abort` for exact receipt binding. A
 missing proof cannot authorize source recovery.
 
@@ -189,21 +188,35 @@ missing proof cannot authorize source recovery.
    and signed snapshot. A successful start records the managed session ID and
    runtime incarnation with the move.
 6. Before writer admission, `resume-move abort --move-id UUID` can record a
-   terminal abort and return the signed no-writer receipt. If B never staged
-   the proof, supply it with `--proof-file`. On A, run
+   terminal abort and return the signed no-writer receipt. After a proven
+   pre-launch failure, it can issue the receipt for the existing terminal
+   abort. If B never staged the proof, supply it with `--proof-file`. On A, run
    `resume-move recover --move-id UUID --receipt-file FILE` to release its fence.
 
 Use `resume-move status --move-id UUID` on B after an interrupted start. An
 admitted writer without a recorded result stays unresolved. An unresolved
 move cannot authorize source recovery.
 
+## Proven pre-launch failure
+
+The destination persists `writer_admitted` before opening the Claude account
+or preparing its transcript. If account preparation or transcript preparation
+fails before publication is attempted, the admitting start can record
+`aborted_no_writer`. The destination checks the exact reservation and retained
+proof under its control lock and confirms that no managed session, writer
+lock, or destination transcript appeared. The failing start returns
+`resume-move-aborted`, and the same move ID cannot launch or retry.
+
+Run `resume-move abort --move-id UUID` on B to issue the existing signed
+no-writer receipt. A stays fenced until `resume-move recover` verifies that
+receipt against its retained stop proof and unchanged source history.
+
 ## Unresolved destination outcome
 
-Admission persists `writer_admitted` before the destination materializes
-credentials, installs a Claude transcript, or launches the session. A failure
-after that point, or an interrupted start, leaves the move in
-`writer_admitted`. This is intentional: the destination cannot prove that no
-writer started, so it never reports a no-writer abort.
+An uncertain transcript publication, a launch failure without a recorded
+result, or an interruption without pre-launch proof leaves the move in
+`writer_admitted`. Absence of a runtime or expiry of the ticket cannot
+establish that no writer started.
 
 Observable behavior while a move is in this state:
 
@@ -234,7 +247,5 @@ What to do:
 - If no session or pane exists, B has probably not started a writer, but the
   tooling cannot prove it. Do not edit or delete the move store, the fence
   ledger, or the lock files by hand. Keep A fenced and report the move ID.
-- Release of A is supported only through a signed no-writer receipt. There is
-  no force option. Automatic settlement of a move whose post-admission failure
-  provably started no writer is tracked as follow-up #4042. Until it lands, an
-  unresolved move keeps A fenced.
+- Release of A requires a signed no-writer receipt bound to the retained source
+  proof. An unresolved move keeps A fenced.
