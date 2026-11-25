@@ -58,7 +58,7 @@ fn short_prompt_left_in_composer_is_reported_unconfirmed() {
     let error = delivered
         .err()
         .expect("a pending composer must not report success");
-    assert_eq!(error.code(), "send-submit-unconfirmed");
+    assert_eq!(error.code(), "send-submit-stuck");
     assert_eq!(error.details().unwrap()["pasted"], true);
     assert_eq!(error.details().unwrap()["cleared"], false);
     assert_eq!(enters(&journal), 2);

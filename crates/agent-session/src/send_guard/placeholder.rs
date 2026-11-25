@@ -221,7 +221,11 @@ fn submit(
                 }
             }
             CliError::runtime(
-                "send-submit-unconfirmed",
+                if report.outcome == send_submit::SubmitOutcome::Stuck {
+                    "send-submit-stuck"
+                } else {
+                    "send-submit-unconfirmed"
+                },
                 "prompt submission was not confirmed",
                 Some(
                     json!({"id":record.id,"outcome":report.outcome,"enter_presses":report.enter_presses,"atomic":false}),
