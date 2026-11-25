@@ -14,8 +14,8 @@
 - The capture-loss regression failed on the baseline and passed after the fix.
 - The focused long-paste suite passed all nine tests; the regression passed the
   tempdir leak probe with no leftovers.
-- Local-fast is pending; earlier runs exposed runtime and temp-directory setup
-  errors that passed their targeted reruns after correcting the environment.
+- The local-fast package gate passed 3,456 tests after correcting runtime and
+  temp-directory setup errors from earlier attempts.
 
 ### Links
 
