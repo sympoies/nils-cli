@@ -99,17 +99,16 @@ pub fn run(options: &PromptSegmentOptions) -> i32 {
         || (force_refresh && !refresh_succeeded)
         || cooldown_active;
     let account_matches = prompt_key.is_none() || key_matches;
-    let plan = owner
+    let account = owner
         .filter(|_| account_matches)
-        .and_then(|owner| owner.plan)
-        .filter(|plan| plan == crate::rate_limits::display::ULTRA);
+        .and_then(|owner| owner.account);
     if let Some(line) = render::render_usage_json_with_options(
         &raw_cache,
         time_format,
         stale,
         &stale_suffix,
         !options.no_5h,
-        plan.as_deref(),
+        account.as_deref(),
         account_matches && !stale,
     ) && !line.trim().is_empty()
     {

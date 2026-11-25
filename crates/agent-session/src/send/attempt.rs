@@ -68,7 +68,11 @@ struct ResultSummary<'a> {
 #[serde(tag = "outcome", rename_all = "snake_case")]
 enum Outcome {
     Submitted,
-    NotSubmitted { composer: &'static str },
+    NotSubmitted {
+        composer: &'static str,
+        #[serde(skip)]
+        possibly_stranded: bool,
+    },
     Unknown,
 }
 
@@ -77,7 +81,8 @@ impl Outcome {
         matches!(
             self,
             Self::NotSubmitted {
-                composer: "exact" | "wrapped_match" | "occupied"
+                possibly_stranded: true,
+                ..
             }
         )
     }
@@ -126,7 +131,7 @@ pub(crate) fn run(context: &CliContext, args: AttemptArgs) -> i32 {
             },
             |result| {
                 let detail = match result.outcome {
-                    Outcome::NotSubmitted { composer } => format!(" (composer {composer})"),
+                    Outcome::NotSubmitted { composer, .. } => format!(" (composer {composer})"),
                     _ if result.recovery_enter_sent => " (one Enter sent)".to_string(),
                     _ => String::new(),
                 };
@@ -172,7 +177,19 @@ fn status(
             } else {
                 composer
             };
-            Outcome::NotSubmitted { composer }
+            let possibly_stranded = matches!(composer, "exact" | "wrapped_match" | "occupied")
+                || (composer == "unknown"
+                    && matches!(
+                        &claim.evidence,
+                        Evidence::NotSubmitted {
+                            composer: Composer::Pasted { .. }
+                        }
+                    )
+                    && key::latest(context, record).as_ref() == Some(&claim));
+            Outcome::NotSubmitted {
+                composer,
+                possibly_stranded,
+            }
         }
         Evidence::NativePending {
             identity_sha256,
@@ -222,8 +239,11 @@ pub(crate) fn unsubmitted_attempt(context: &CliContext, id: &str, tmux: &Path) -
         let Evidence::NotSubmitted { composer } = &claim.evidence else {
             return None;
         };
+        let observed = composer_status(context, &record, tmux, composer, None);
         let status = Outcome::NotSubmitted {
-            composer: composer_status(context, &record, tmux, composer, None),
+            composer: observed,
+            possibly_stranded: matches!(observed, "exact" | "wrapped_match" | "occupied")
+                || (observed == "unknown" && matches!(composer, Composer::Pasted { .. })),
         };
         if !status.holds_unsubmitted_attempt() {
             return None;

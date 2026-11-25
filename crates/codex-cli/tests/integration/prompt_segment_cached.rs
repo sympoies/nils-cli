@@ -443,6 +443,21 @@ fn prompt_segment_default_time_uses_local_format_and_show_timezone_flag() {
     );
     assert_exit(&output, 0);
     assert_eq!(stdout(&output), "alpha 5h:94% W:88% 11-21 20:53 +00:00\n");
+
+    let weekly_with_timezone = run(
+        &["prompt-segment", "--no-5h", "--show-timezone"],
+        &[
+            ("CODEX_AUTH_FILE", &auth_file),
+            ("CODEX_SECRET_DIR", &secrets),
+            ("ZSH_CACHE_DIR", &cache_root),
+        ],
+        &[("CODEX_PROMPT_SEGMENT_ENABLED", "true")],
+    );
+    assert_exit(&weekly_with_timezone, 0);
+    assert_eq!(
+        stdout(&weekly_with_timezone),
+        "alpha W:88% 11-21 20:53 +00:00\n"
+    );
 }
 
 #[test]
