@@ -1,6 +1,7 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
+use nils_test_support::cmd::{CmdOptions, run_resolved};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
@@ -124,6 +125,51 @@ fn source_export_holds_the_writer_fence_until_exact_destination_abort() {
         ensure_unfenced().unwrap_err().code(),
         Refusal::SourceFenced.code()
     );
+
+    let options = CmdOptions::new()
+        .without_ambient_managed_session_env()
+        .with_cwd(&root)
+        .with_env_os("HOME".as_ref(), root.as_os_str())
+        .with_env_os("AGENT_HOME".as_ref(), root.join("agent-home").as_os_str())
+        .with_env_os("CODEX_HOME".as_ref(), config.as_os_str());
+    for check in [true, false] {
+        let mut args = vec![
+            "--state-dir",
+            context.state_dir.to_str().unwrap(),
+            "start",
+            "--agent",
+            "codex",
+            "--resume",
+            &binding.provider_session_id,
+            "--account",
+            &binding.account,
+            "--id",
+            "replacement",
+            "--no-parent",
+            "--tmux-bin",
+            tmux.to_str().unwrap(),
+            "--agent-bin",
+            tmux.to_str().unwrap(),
+            "--format",
+            "json",
+        ];
+        if check {
+            args.push("--check-resume");
+        }
+        let outcome = run_resolved("agent-session", &args, &options);
+        assert_ne!(outcome.code, 0);
+        let response = outcome.stdout_json();
+        assert_eq!(response["error"]["code"], Refusal::SourceFenced.code());
+        assert_eq!(response["error"]["details"]["session_created"], false);
+        assert!(!context.state_dir.join("sessions/replacement").exists());
+        assert!(
+            !context
+                .state_dir
+                .join("session-locks/replacement.lock")
+                .exists()
+        );
+    }
+
     let abort = |sha256: &str| {
         sign(
             &fixture.directory,
@@ -155,6 +201,23 @@ fn source_export_holds_the_writer_fence_until_exact_destination_abort() {
     assert!(ensure_unfenced().is_err());
 
     let receipt = abort(proof.sha256());
+    let original = fs::read(&history).unwrap();
+    let new_event = b"\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n";
+    fs::write(
+        &history,
+        [original.as_slice(), new_event.as_slice()].concat(),
+    )
+    .unwrap();
+    assert_eq!(
+        recover(&receipt).unwrap_err().code(),
+        Refusal::HistoryStale.code()
+    );
+    assert_eq!(
+        ensure_unfenced().unwrap_err().code(),
+        Refusal::SourceFenced.code()
+    );
+    fs::write(&history, original).unwrap();
+
     recover(&receipt).unwrap();
     recover(&receipt).unwrap();
     ensure_unfenced().unwrap();

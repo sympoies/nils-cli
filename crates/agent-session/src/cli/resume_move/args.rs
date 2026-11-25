@@ -58,12 +58,16 @@ enum Command {
     },
     /// Inspect or reserve the local destination for an exact source plan.
     Prepare {
+        /// Unique UUID for this move.
         #[arg(long)]
         move_id: String,
+        /// File containing the read-only source plan.
         #[arg(long, value_hint = ValueHint::FilePath)]
         plan_file: PathBuf,
+        /// Local destination checkout or working directory.
         #[arg(long, value_hint = ValueHint::DirPath)]
         cwd: PathBuf,
+        /// Validate the destination without writing a reservation.
         #[arg(long)]
         check: bool,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
@@ -71,8 +75,10 @@ enum Command {
     },
     /// Verify a source proof and the exact privately staged provider history.
     Stage {
+        /// Exact move UUID.
         #[arg(long)]
         move_id: String,
+        /// File containing the signed source stop proof.
         #[arg(long, value_hint = ValueHint::FilePath)]
         proof_file: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
@@ -80,6 +86,7 @@ enum Command {
     },
     /// Read the durable destination outcome for an exact move.
     Status {
+        /// Exact move UUID.
         #[arg(long)]
         move_id: String,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
@@ -87,8 +94,10 @@ enum Command {
     },
     /// Verify or record a terminal abort before destination writer admission.
     Abort {
+        /// Exact move UUID.
         #[arg(long)]
         move_id: String,
+        /// Signed source proof when staging has not recorded it.
         #[arg(long, value_hint = ValueHint::FilePath)]
         proof_file: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
