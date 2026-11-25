@@ -51,8 +51,8 @@ use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 
 mod account_authority;
 use account_authority::{
-    TuiMutationRejection, account_authority_rejection, manual_cancellation_busy, tui_busy_response,
-    wait_for_bootstrap_binding,
+    TuiMutationRejection, account_authority_rejection, acquire_turn_start_gate,
+    manual_cancellation_busy, tui_busy_response, wait_for_bootstrap_binding,
 };
 
 use crate::{
@@ -1261,83 +1261,6 @@ fn acquire_manual_input_gate(
         .send_to(&[1], manual_input_ack_path(record)?)
         .ok()?;
     Some(ManualInputGate {
-        gate_file,
-        _owner_file: Some(owner_file),
-    })
-}
-
-fn acquire_turn_start_gate(
-    context: &CliContext,
-    record: &SessionRecord,
-    value: &Value,
-) -> Result<ManualInputGate, TuiMutationRejection> {
-    if value.get("method").and_then(Value::as_str) != Some("turn/start")
-        || value.get("id").and_then(json_id_key).is_none()
-        || !value.pointer("/params/input").is_some_and(Value::is_array)
-        || !value
-            .pointer("/params/threadId")
-            .and_then(Value::as_str)
-            .is_some_and(protocol_id_is_valid)
-    {
-        return Err(TuiMutationRejection::TurnRequestInvalid);
-    }
-    let gate_file = open_manual_input_gate_file(&manual_input_gate_path(context, record))
-        .ok_or(TuiMutationRejection::TurnGateOpenFailed)?;
-    // A proxy never waits here: a manual sender may already own the session
-    // record lock, and a competing account mutation drops that record lock
-    // when its own non-blocking gate attempt loses.
-    // SAFETY: `flock` observes the valid descriptor borrowed for this call.
-    if unsafe { libc::flock(gate_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        return Err(TuiMutationRejection::TurnGateBusy);
-    }
-
-    let marker_path = manual_input_section_path(context, record);
-    let Ok(mut owner_file) = fs::File::open(&marker_path) else {
-        return Ok(ManualInputGate {
-            gate_file,
-            _owner_file: None,
-        });
-    };
-    if !marker_has_live_shared_lock(&owner_file) {
-        return Ok(ManualInputGate {
-            gate_file,
-            _owner_file: None,
-        });
-    }
-    if !manual_input_request_matches_bound_thread(context, record, value) {
-        // Keep the rejected TUI's candidate for explicit, provider-verified
-        // recovery. This does not change the binding or admit the failed turn.
-        if let Some(thread_id) = value.pointer("/params/threadId").and_then(Value::as_str) {
-            let _ = crate::conversation::retain_observation(context, record, thread_id);
-        }
-        return Err(TuiMutationRejection::ManualMarkerThreadMismatch);
-    }
-    let own = owner_file
-        .metadata()
-        .map_err(|_| TuiMutationRejection::ManualMarkerReplaced)?;
-    let current =
-        fs::metadata(&marker_path).map_err(|_| TuiMutationRejection::ManualMarkerReplaced)?;
-    if own.dev() != current.dev() || own.ino() != current.ino() {
-        return Err(TuiMutationRejection::ManualMarkerReplaced);
-    }
-    let marker = read_runtime_process_marker_file(&mut owner_file)
-        .ok_or(TuiMutationRejection::ManualMarkerInvalid)?;
-    if !valid_runtime_process_marker(
-        &marker,
-        record,
-        MANUAL_INPUT_SECTION_VERSION,
-        MANUAL_INPUT_SECTION_TTL,
-    ) {
-        return Err(TuiMutationRejection::ManualMarkerInvalid);
-    }
-    UnixDatagram::unbound()
-        .map_err(|_| TuiMutationRejection::ManualAckFailed)?
-        .send_to(
-            &[1],
-            manual_input_ack_path(record).ok_or(TuiMutationRejection::ManualAckFailed)?,
-        )
-        .map_err(|_| TuiMutationRejection::ManualAckFailed)?;
-    Ok(ManualInputGate {
         gate_file,
         _owner_file: Some(owner_file),
     })
