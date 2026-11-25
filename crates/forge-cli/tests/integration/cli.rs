@@ -216,12 +216,24 @@ fn pr_help_lists_every_v1_subcommand() {
 }
 
 #[test]
-fn pr_review_loop_dry_run_uses_each_command_specific_schema_without_backend_calls() {
+fn pr_review_loop_dry_run_uses_command_specific_schemas_with_stubbed_preflight() {
     let stub = StubEnv::new();
+    // Inspect only plans, but observe tries a read-only provider preflight.
+    // Keep both cases off the host's PATH even if the backend override breaks.
+    let no_host_tools = stub.tempdir.path().join("no-host-tools");
+    let stub = stub.env("PATH", no_host_tools.to_string_lossy()).gh_stub(
+        r#"#!/bin/sh
+printf '%s %s\n' "$1" "$2" >> gh-calls
+exit 1
+"#,
+    );
+    let gh_calls = stub.tempdir.path().join("gh-calls");
+    std::fs::write(&gh_calls, "").expect("initialize gh call log");
     let cases = [
         (
             vec!["pr", "review-loop", "inspect", "7"],
             "cli.forge-cli.pr.review-loop.inspect.v1",
+            "",
         ),
         (
             vec![
@@ -235,10 +247,11 @@ fn pr_review_loop_dry_run_uses_each_command_specific_schema_without_backend_call
                 "findings.json",
             ],
             "cli.forge-cli.pr.review-loop.observe.v1",
+            "pr view\n",
         ),
     ];
 
-    for (command, schema) in cases {
+    for (command, schema, expected_calls) in cases {
         let mut args = vec![
             "--format",
             "json",
@@ -253,6 +266,11 @@ fn pr_review_loop_dry_run_uses_each_command_specific_schema_without_backend_call
         assert_eq!(out.code, 0, "stderr={}", out.stderr);
         let envelope = parse_envelope(&out.stdout);
         assert_eq!(envelope["schema_version"], schema);
+        assert_eq!(
+            std::fs::read_to_string(&gh_calls).expect("read gh call log"),
+            expected_calls,
+            "unexpected gh calls for {schema}"
+        );
     }
 }
 
