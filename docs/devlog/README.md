@@ -168,8 +168,7 @@ are optional: omit the whole section rather than leaving a placeholder in it.
 
 <!-- devlog-pending-index -->
 
-- [2026-11-24-ci-retry-hosted-macos-3982](pending/2026-11-24-ci-retry-hosted-macos-3982.md)
-- [2026-11-24-claude-diag-active-target](pending/2026-11-24-claude-diag-active-target.md)
-- [2026-11-24-issue-3979-history-poll-reads](pending/2026-11-24-issue-3979-history-poll-reads.md)
-- [2026-11-24-issue-3979-remaining-serve-poll-reads](pending/2026-11-24-issue-3979-remaining-serve-poll-reads.md)
-- [2026-11-24-issue-3985-codex-api-key-control](pending/2026-11-24-issue-3985-codex-api-key-control.md)
+- [2026-11-25-agent-session-guarded-long-paste](pending/2026-11-25-agent-session-guarded-long-paste.md)
+- [2026-11-25-forge-review-loop-dry-run-fixture](pending/2026-11-25-forge-review-loop-dry-run-fixture.md)
+- [2026-11-25-issue-4021-queue-validation-retry-proof](pending/2026-11-25-issue-4021-queue-validation-retry-proof.md)
+- [2026-11-25-native-notice-ledger-capacity](pending/2026-11-25-native-notice-ledger-capacity.md)
