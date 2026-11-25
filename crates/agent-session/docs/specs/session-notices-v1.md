@@ -363,7 +363,7 @@ no notice text, request values, nonce, provider binding or filesystem path.
 | `authorization-surface`, `authorization-composer-not-empty`, `authorization-cursor` | The provider cannot attest an empty terminal composer at cursor zero. |
 | `readiness-unavailable`, `readiness-changed` | Readiness is unavailable or differs when rechecked before claim. |
 | `claim-unavailable` | The native ledger cannot admit the claim. |
-| `claim-ledger-full` | The live claim cap remains full after eligible finished claims are archived. |
+| `claim-ledger-full` | The live claim cap remains full after overdue claims are settled and eligible terminal claims are archived. |
 | `claim-checkpoint-initialized` | The automatic one-time archive verification and checkpoint publication completed after this send's original deadline. The caller key was not consumed; a new request can use the completed checkpoint. |
 
 Runtime setup and private-file access use operation-specific labels under
@@ -408,19 +408,28 @@ content-only header classification.
 Private attestations live outside managed session directories so history survives
 session deletion/archive. The live ledger permits 1,024 claims, reserving two
 4-KiB record slots per claim in an 8-MiB data budget. Successor segments add one
-bounded header slot. Unfinished claims remain live. At capacity, a writer
-seals terminal `unknown` claims and age-eligible submitted/dropped claims before
-admitting another claim. Archived unknown outcomes retain their uncertainty and
-their keys remain consumed. If none can leave the live set, `claim-ledger-full`
-refuses before key consumption. The refusal and storage failures provide no
-permission to send plain input.
+bounded header slot. An unfinished claim expires after 120 seconds. New
+operation IDs carry their start time as UUIDv7. For an ID without a usable
+timestamp, the ledger persists the first reconciliation's observation time.
+The 120-second interval gives the existing positive proof path its full
+confirmation budget of up to 30 seconds. Serve also settles a claim on its
+next reconciliation when the bound runtime has stopped, is missing, or
+has a different launch ID or generation.
 
-Finished claims become eligible after one hour. A valid terminal timestamp is
-used when available. For an undated/invalid/future timestamp, a sweep persists
-a conservative first-observed time; eligibility starts one hour after that
-observation. Later sweeps retain that time. Archival runs only when admission
-would exceed the live cap, under the original send deadline and a stable private
-`store.lock`; readers take its shared lock. No background process is required.
+Reconciliation writes an `unknown` terminal with `claim_expired` or
+`runtime_retired` and seals it through the existing archive. A recorded
+terminal outcome wins over reconciliation. The archive retains the unknown
+state and the key and operation reservations. Admission at capacity also
+settles overdue claims and seals eligible terminal records before consuming a
+new key. It refuses with `claim-ledger-full` if the live set remains full.
+Neither refusal nor uncertainty authorizes plain input or replay.
+
+Submitted and dropped claims become eligible for capacity archival after one
+hour. A valid terminal timestamp is used when available. For an
+undated/invalid/future timestamp, the writer persists a conservative
+first-observed time and retains it in later sweeps. Capacity work uses the
+original send deadline. Both reconciliation and capacity work hold the stable
+private `store.lock` exclusively, and readers take its shared lock.
 
 The archive is an append-only set of sealed segments in `history/claude-notices`.
 The genesis `ledger.jsonl` and each retired successor retain their exact bytes;
