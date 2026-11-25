@@ -2258,8 +2258,10 @@ mod tests {
         let tmux = tmp.path().join("tmux");
         let _running =
             tmux_probe_fixture::install_status(&tmux, tmux_probe_fixture::Status::Running);
-        let capacity =
-            || serde_json::to_value(admission::snapshot(&context, Some(&tmux)).unwrap()).unwrap();
+        let capacity = || {
+            let (snapshot, _) = admission::snapshot(&context, Some(&tmux)).unwrap();
+            serde_json::to_value(snapshot).unwrap()
+        };
         assert_eq!(capacity()["active_sessions"], 1);
         assert_eq!(
             admission::reserve(&context, Some(&tmux), None)
