@@ -75,11 +75,20 @@ pub(super) struct Preparation {
 #[derive(Clone, Copy)]
 pub(super) struct AdmissionRequest<'a> {
     pub(super) provider: Provider,
+    /// The explicit managed session ID, otherwise the move's default ID.
+    pub(super) session_id: Option<&'a str>,
     pub(super) move_id: &'a str,
     pub(super) account: &'a str,
     pub(super) provider_session_id: &'a str,
     pub(super) cwd: &'a Path,
     pub(super) destination_host: &'a str,
+}
+
+impl AdmissionRequest<'_> {
+    pub(super) fn managed_session_id(&self) -> String {
+        self.session_id
+            .map_or_else(|| format!("move-{}", self.move_id), str::to_owned)
+    }
 }
 
 pub(super) enum Admission {
@@ -481,6 +490,16 @@ fn verify_admission<'a>(
         &provider_home(context, request.move_id),
         now,
     )?;
+    // The managed record is created after admission, so a taken ID must refuse
+    // while the move can still be aborted. Same refusal as ordinary start.
+    let session_id = request.managed_session_id();
+    if crate::session_dir(context, &session_id).exists() {
+        return Err(CliError::runtime(
+            "session-exists",
+            format!("session already exists: {session_id}"),
+            Some(json!({ "id": session_id })),
+        ));
+    }
     let claude_target = if binding.provider == Provider::Claude {
         Some(claude::Destination::for_account(
             request.account,
@@ -560,7 +579,12 @@ impl Entry {
         if Checkout::observe(&self.checkout.cwd)? != self.checkout {
             return Err(cli_refusal(Refusal::PathMismatch));
         }
-        let (history, recorded_cwd) = read_history(home, &proof.record().history, binding)?;
+        let (history, recorded_cwd) = read_history(
+            home,
+            &proof.record().history,
+            binding,
+            &proof.record().source_checkout_sha256,
+        )?;
         proof
             .check(
                 ticket,
@@ -646,6 +670,7 @@ fn read_history(
     home: &Path,
     expected: &History,
     binding: &Binding,
+    checkout_sha256: &str,
 ) -> Result<(History, String), CliError> {
     let missing = || start_resume::refusal("resume-history-missing");
     let unsupported = || cli_refusal(Refusal::HistoryUnsupported);
@@ -674,7 +699,14 @@ fn read_history(
         return Err(stale());
     }
     let recorded_cwd = match binding.provider {
-        Provider::Claude => claude::transcript_cwd_digest(&mut file, &binding.provider_session_id)?,
+        Provider::Claude => {
+            claude::check_transcript_cwds(
+                &mut file,
+                &binding.provider_session_id,
+                checkout_sha256,
+            )?;
+            checkout_sha256.to_owned()
+        }
         Provider::Codex => codex_cwd_digest(&mut file, binding)?,
     };
     file.rewind().map_err(|_| stale())?;

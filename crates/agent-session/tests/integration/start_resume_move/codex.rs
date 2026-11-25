@@ -87,7 +87,7 @@ fn staged_codex_move_launches_in_the_per_move_home_and_replays_one_session() {
     let relative_path = format!("sessions/2026/01/01/rollout-{THREAD}.jsonl");
     let rollout = json!({"type":"session_meta","payload":{
         "id":THREAD,"cwd":cwd,"source":"cli",
-        "timestamp":"2026-01-01T00:00:00Z","history_mode":"legacy"
+        "timestamp":"2026-01-01T00:00:00Z"
     }})
     .to_string();
     let source_checkout = sha256(cwd.as_os_str().as_encoded_bytes());

@@ -283,10 +283,11 @@ fn read_snapshot(binding: &Binding, selected: &source::Source) -> Result<History
             &selected.history_path,
             &binding.provider_session_id,
         )?;
-        let digest = super::claude::transcript_cwd_digest(&mut file, &binding.provider_session_id)?;
-        if digest != selected.plan.source_checkout_sha256 {
-            return Err(cli_refusal(Refusal::PathMismatch));
-        }
+        super::claude::check_transcript_cwds(
+            &mut file,
+            &binding.provider_session_id,
+            &selected.plan.source_checkout_sha256,
+        )?;
         file.rewind().map_err(|_| missing())?;
     } else {
         validate_history_meta(binding, &selected.plan, &mut file)?;

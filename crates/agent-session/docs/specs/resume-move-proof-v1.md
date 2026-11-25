@@ -66,6 +66,14 @@ describes the cwd recorded in the imported history. B opens files only under
 its configured local roots and launches with its verified local cwd. A's
 absolute paths are never used as B filesystem paths.
 
+Claude records the shell's current directory on each transcript row, so one
+conversation can record the checkout root and then subdirectories. The source
+cwd digest binds the checkout root. Every recorded cwd must be that root or
+below it. The check compares normalized absolute path components without
+reading the filesystem, so a symlink cannot move a path into the root. A cwd
+outside the root, or one that is relative or not normalized, refuses with
+`resume-move-transcript-cwd-outside-checkout`.
+
 ## Freshness and refusals
 
 Ticket and proof timestamps are UTC Unix seconds. Each validity interval is
@@ -88,6 +96,7 @@ The verifier returns typed reasons.
 | `resume-account-mismatch` | Account differs from the original binding |
 | `resume-source-live` | Stop verdict is false |
 | `resume-move-path-mismatch` | Checkout binding differs |
+| `resume-move-transcript-cwd-outside-checkout` | A Claude transcript records a cwd outside the planned checkout root |
 | `resume-move-history-stale` | Staged history differs from the snapshot |
 | `resume-move-history-unsupported` | File role or placement falls outside the provider manifest |
 | `resume-move-destination-writer-present` | Destination reports an existing writer |
@@ -156,8 +165,10 @@ outside the single-file contract.
 Before admission the destination checks provider capability and runtime
 readiness, such as the private socket directory. A deterministic failure
 refuses with `resume-unsupported` and leaves the move staged, so abort still
-issues a no-writer receipt. The destination persists writer admission before
-taking a session writer lock.
+issues a no-writer receipt. An explicit `--id` that names an existing managed
+session on B refuses with `session-exists` at the same point, in preflight
+and in start. The destination persists writer admission before taking a
+session writer lock.
 Any ambiguous result beyond that point remains fenced. An earlier abort
 records a terminal tombstone before signing the no-writer receipt. The same
 move cannot be admitted after that tombstone. A lost proof transfer can supply
@@ -211,7 +222,9 @@ What to inspect on B:
 1. Run `resume-move status` and note the state and any recorded session.
 2. List the managed sessions on B and look for one for the move: the ID passed
    with `--id`, otherwise `move-` followed by the move UUID. Check whether its
-   provider pane is running.
+   provider pane is running. An ID that already named a session refuses before
+   admission, so a session found under the move's ID after admission belongs to
+   the move.
 3. Check whether the staged provider home still holds the verified history.
 
 What to do:

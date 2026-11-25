@@ -383,6 +383,7 @@ pub(crate) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
     let request = admission_request(&args, &host)?;
     let verifier = verifier()?;
     let move_id = request.move_id.to_owned();
+    let managed_session_id = request.managed_session_id();
     let thread = request.provider_session_id.to_owned();
     let account = request.account.to_owned();
     let launch_cwd =
@@ -464,7 +465,7 @@ pub(crate) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
             })
         }
     };
-    let session_id = args.id.clone().unwrap_or_else(|| format!("move-{move_id}"));
+    let session_id = managed_session_id;
     args.id = Some(session_id.clone());
     let cwd = args.cwd.as_deref().ok_or_else(unknown)?;
     let launch_args =
@@ -521,6 +522,7 @@ fn admission_request<'a>(
     }
     Ok(destination::AdmissionRequest {
         provider,
+        session_id: args.id.as_deref(),
         destination_host: host,
         move_id: args.move_id.as_deref().ok_or_else(unsupported)?,
         account: args

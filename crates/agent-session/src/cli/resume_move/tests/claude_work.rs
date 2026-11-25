@@ -29,10 +29,12 @@ fn claude_import_preserves_exact_transcript_and_uses_destination_project() {
     fs::write(&path, &original).unwrap();
 
     let mut input = fs::File::open(&path).unwrap();
-    assert_eq!(
-        claude::transcript_cwd_digest(&mut input, THREAD).unwrap(),
-        sha256(source_cwd.as_os_str().as_encoded_bytes())
-    );
+    claude::check_transcript_cwds(
+        &mut input,
+        THREAD,
+        &sha256(source_cwd.as_os_str().as_encoded_bytes()),
+    )
+    .unwrap();
     assert!(!source_cwd.exists());
 
     let target = claude::Destination::observe(&account, &cwd, THREAD).unwrap();
@@ -61,7 +63,7 @@ fn claude_transcript_refuses_external_history_dependencies() {
     let sidechain = json!({"sessionId":THREAD, "cwd":"/source", "isSidechain":true});
     writeln!(fs::File::create(&source).unwrap(), "{sidechain}").unwrap();
     assert_eq!(
-        claude::transcript_cwd_digest(&mut fs::File::open(&source).unwrap(), THREAD)
+        claude::check_transcript_cwds(&mut fs::File::open(&source).unwrap(), THREAD, "unused")
             .unwrap_err()
             .code(),
         Refusal::HistoryUnsupported.code()
@@ -77,4 +79,79 @@ fn claude_transcript_refuses_external_history_dependencies() {
         Refusal::HistoryUnsupported.code()
     );
     assert!(claude::project_path(root.path(), Path::new("relative"), THREAD).is_err());
+}
+
+fn transcript(root: &Path, cwds: &[&str]) -> fs::File {
+    let path = root.join(format!("{THREAD}.jsonl"));
+    let mut file = fs::File::create(&path).unwrap();
+    for cwd in cwds {
+        let row = json!({"type":"user", "sessionId":THREAD, "cwd":cwd});
+        writeln!(file, "{row}").unwrap();
+    }
+    fs::File::open(path).unwrap()
+}
+
+#[test]
+fn transcript_accepts_every_cwd_under_the_planned_checkout_root() {
+    let root = tempfile::tempdir().unwrap();
+    let checkout = sha256(b"/host-a/work/project");
+    let mut file = transcript(
+        root.path(),
+        &[
+            "/host-a/work/project",
+            "/host-a/work/project/crates/app",
+            "/host-a/work/project",
+        ],
+    );
+    claude::check_transcript_cwds(&mut file, THREAD, &checkout).unwrap();
+}
+
+#[test]
+fn transcript_refuses_a_cwd_outside_the_planned_checkout_root_with_a_specific_code() {
+    let root = tempfile::tempdir().unwrap();
+    let checkout = sha256(b"/host-a/work/project");
+    for outside in [
+        "/host-a/work/project-sibling",
+        "/host-a/work",
+        "/host-a/elsewhere",
+        "/host-a/work/project/../other",
+        "/host-a/work/project/./app",
+        "/host-a/work/project/",
+    ] {
+        let mut file = transcript(root.path(), &["/host-a/work/project", outside]);
+        assert_eq!(
+            claude::check_transcript_cwds(&mut file, THREAD, &checkout)
+                .unwrap_err()
+                .code(),
+            Refusal::TranscriptCwdOutsideCheckout.code(),
+            "{outside}"
+        );
+    }
+    // A first row outside the root is refused the same way.
+    let mut file = transcript(root.path(), &["/host-a/elsewhere"]);
+    assert_eq!(
+        claude::check_transcript_cwds(&mut file, THREAD, &checkout)
+            .unwrap_err()
+            .code(),
+        Refusal::TranscriptCwdOutsideCheckout.code()
+    );
+}
+
+#[test]
+fn claude_destination_refuses_a_transcript_in_another_project_directory() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(fixture.path()).unwrap();
+    let account = root.join("account");
+    let cwd = root.join("mapped-workspace");
+    let other = account.join("projects").join("unrelated-project");
+    fs::create_dir_all(&other).unwrap();
+    fs::create_dir(&cwd).unwrap();
+    fs::write(other.join(format!("{THREAD}.jsonl")), "{}\n").unwrap();
+    assert_eq!(
+        claude::Destination::observe(&account, &cwd, THREAD)
+            .err()
+            .unwrap()
+            .code(),
+        Refusal::DestinationWriterPresent.code()
+    );
 }

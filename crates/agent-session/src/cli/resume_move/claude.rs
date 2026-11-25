@@ -167,10 +167,22 @@ pub(super) fn check_source_dependencies(
     Ok(())
 }
 
-pub(super) fn transcript_cwd_digest(file: &mut File, thread: &str) -> Result<String, CliError> {
+/// Verify every cwd the transcript records against the planned checkout root.
+///
+/// Claude records the shell's current directory on each row, so a session that
+/// changed into a subdirectory records several distinct cwds. The plan binds
+/// only the digest of the checkout root: a row passes when that root is its cwd
+/// or one of its ancestors. The comparison is lexical over normalized absolute
+/// paths and never reads the filesystem, so a symlink cannot move a path into
+/// the root.
+pub(super) fn check_transcript_cwds(
+    file: &mut File,
+    thread: &str,
+    checkout_sha256: &str,
+) -> Result<(), CliError> {
     let mut reader = BufReader::new(file);
     let mut line = Vec::new();
-    let mut checkout = None;
+    let mut recorded = false;
     loop {
         line.clear();
         let count = (&mut reader)
@@ -196,18 +208,39 @@ pub(super) fn transcript_cwd_digest(file: &mut File, thread: &str) -> Result<Str
                 return Err(cli_refusal(Refusal::SessionMismatch));
             }
             if let Some(cwd) = row["cwd"].as_str() {
-                if !Path::new(cwd).is_absolute() {
-                    return Err(path_mismatch());
+                if !within_checkout(cwd, checkout_sha256) {
+                    return Err(cli_refusal(Refusal::TranscriptCwdOutsideCheckout));
                 }
-                let digest = sha256(cwd.as_bytes());
-                if checkout.as_ref().is_some_and(|prior| prior != &digest) {
-                    return Err(path_mismatch());
-                }
-                checkout = Some(digest);
+                recorded = true;
             }
         }
     }
-    checkout.ok_or_else(path_mismatch)
+    if recorded {
+        Ok(())
+    } else {
+        Err(path_mismatch())
+    }
+}
+
+/// Whether the normalized absolute `cwd` is the checkout root or below it.
+fn within_checkout(cwd: &str, checkout_sha256: &str) -> bool {
+    if cwd == "/" {
+        return sha256(b"/") == checkout_sha256;
+    }
+    let Some(components) = cwd.strip_prefix('/') else {
+        return false;
+    };
+    let mut ancestor = String::new();
+    let mut inside = sha256(b"/") == checkout_sha256;
+    for component in components.split('/') {
+        if matches!(component, "" | "." | "..") {
+            return false;
+        }
+        ancestor.push('/');
+        ancestor.push_str(component);
+        inside |= sha256(ancestor.as_bytes()) == checkout_sha256;
+    }
+    inside
 }
 
 fn external_attachment(row: &Value) -> bool {

@@ -86,13 +86,15 @@ fn staged_claude_move_creates_one_native_session_after_verified_admission() {
     };
 
     let relative_path = format!("{THREAD}.jsonl");
-    let transcript = format!(
-        "{}\n",
+    // Claude records the shell's current directory on each row, so a session
+    // that changed into a subdirectory of the checkout has several distinct cwds.
+    let row = |directory: &Path| {
         json!({
-            "type":"user", "sessionId":THREAD, "cwd":cwd,
+            "type":"user", "sessionId":THREAD, "cwd":directory,
             "message":{"role":"user", "content":"synthetic move test"},
         })
-    );
+    };
+    let transcript = format!("{}\n{}\n", row(&cwd), row(&cwd.join("subdirectory")));
     let source_checkout = sha256(cwd.as_os_str().as_encoded_bytes());
     let plan = root.join("plan.json");
     write_private(
@@ -172,7 +174,7 @@ fn staged_claude_move_creates_one_native_session_after_verified_admission() {
     let staged_result = stage();
     assert_eq!(staged_result.code, 0, "{}", staged_result.stderr_text());
 
-    let start = |account: &str, check: bool| {
+    let start_as = |id: &str, account: &str, check: bool| {
         let mut args = vec![
             "start",
             "--agent",
@@ -186,7 +188,7 @@ fn staged_claude_move_creates_one_native_session_after_verified_admission() {
             "--cwd",
             cwd.to_str().unwrap(),
             "--id",
-            "moved",
+            id,
             "--no-parent",
             "--paste-delay-ms",
             "0",
@@ -196,6 +198,7 @@ fn staged_claude_move_creates_one_native_session_after_verified_admission() {
         }
         run(&args)
     };
+    let start = |account: &str, check: bool| start_as("moved", account, check);
     // An unusable destination account root refuses before admission, so the
     // move stays staged and no writer or session record is created.
     let failing_broker = root.join("failing-broker");
@@ -242,6 +245,35 @@ fn staged_claude_move_creates_one_native_session_after_verified_admission() {
     assert_eq!(checked.code, 0, "{}", checked.stderr_text());
     assert!(!state.join("sessions").exists());
     assert!(!account_root.join("projects").exists());
+
+    // An existing session ID and a transcript for the conversation in another
+    // project directory both refuse before admission: the move stays staged.
+    let status = || {
+        run(&["resume-move", "status", "--move-id", MOVE_ID]).stdout_json()["data"]["state"].clone()
+    };
+    let taken_dir = state.join("sessions/existing");
+    fs::create_dir_all(&taken_dir).unwrap();
+    for check in [true, false] {
+        let taken = start_as("existing", "fixture-account", check);
+        assert_ne!(taken.code, 0);
+        assert_eq!(taken.stdout_json()["error"]["code"], "session-exists");
+        assert_eq!(status(), "staged");
+    }
+    fs::remove_dir(&taken_dir).unwrap();
+    let other_project = account_root.join("projects/unrelated-project");
+    fs::create_dir_all(&other_project).unwrap();
+    write_private(&other_project.join(format!("{THREAD}.jsonl")), b"{}\n");
+    for check in [true, false] {
+        let elsewhere = start_as("moved", "fixture-account", check);
+        assert_ne!(elsewhere.code, 0);
+        assert_eq!(
+            elsewhere.stdout_json()["error"]["code"],
+            "resume-move-destination-writer-present"
+        );
+        assert_eq!(status(), "staged");
+    }
+    assert!(!state.join("sessions/moved").exists());
+    fs::remove_dir_all(account_root.join("projects")).unwrap();
 
     let started = start("fixture-account", false);
     assert_eq!(
