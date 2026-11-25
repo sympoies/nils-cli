@@ -42,6 +42,41 @@ fn enters(journal: &Path) -> usize {
         .count()
 }
 
+#[test]
+fn short_prompt_left_in_composer_is_reported_unconfirmed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let text = "Unread mailbox messages; run the inbox command";
+    let (tmux, journal) = pasted_pane_tmux(tmp.path(), text, "true");
+    let script = fs::read_to_string(&tmux).unwrap().replace(
+        &format!("touch '{}'", tmp.path().join("entered").display()),
+        "true",
+    );
+    fs::write(&tmux, script).unwrap();
+
+    let (_, delivered) = deliver(tmp.path(), &tmux, text);
+
+    let error = delivered
+        .err()
+        .expect("a pending composer must not report success");
+    assert_eq!(error.code(), "send-submit-stuck");
+    assert_eq!(error.details().unwrap()["pasted"], true);
+    assert_eq!(error.details().unwrap()["cleared"], false);
+    assert_eq!(enters(&journal), 2);
+    assert_eq!(
+        fs::read_to_string(&journal)
+            .unwrap()
+            .lines()
+            .filter(|line| *line == "paste-buffer")
+            .count(),
+        1
+    );
+    let pane = std::process::Command::new(tmux)
+        .arg("capture-pane")
+        .output()
+        .unwrap();
+    assert!(String::from_utf8(pane.stdout).unwrap().contains(text));
+}
+
 fn deliver(
     dir: &Path,
     tmux: &Path,

@@ -129,6 +129,15 @@ fn paste_prompt_file_observing(
                     )
                 },
             )?;
+            if report.outcome == send_submit::SubmitOutcome::Stuck {
+                return Err(CliError::runtime(
+                    "send-submit-stuck",
+                    "prompt submission was not confirmed",
+                    Some(json!({"id":record.id,"outcome":report.outcome,
+                        "enter_presses":report.enter_presses,"atomic":false,
+                        "pasted":true,"cleared":false,"remaining_input":"unobservable"})),
+                ));
+            }
             if matches!(
                 report.outcome,
                 send_submit::SubmitOutcome::Submitted | send_submit::SubmitOutcome::Queued
