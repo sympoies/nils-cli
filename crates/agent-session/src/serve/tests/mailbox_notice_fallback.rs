@@ -119,7 +119,7 @@ async fn resumed_claude_wake_waits_for_a_late_paste() {
 
     let receipt = notification_fixture(fixture.temp.path());
     assert_eq!(receipt["state"], "prompt_submitted");
-    assert_eq!(fs::read_to_string(fixture.temp.path().join("composer")).unwrap(), "");
+    assert!(fs::read_to_string(fixture.temp.path().join("composer")).unwrap().is_empty(), "owned wake was not cleared");
     let submitted = fs::read_to_string(fixture.temp.path().join("submissions")).unwrap();
     assert_eq!(submitted.lines().count(), 1);
     assert!(serde_json::from_str::<String>(submitted.trim()).unwrap() == fs::read_to_string(fixture.temp.path().join("buffer")).unwrap(), "submitted wake differs from the pasted input");
@@ -172,7 +172,22 @@ async fn resumed_claude_wake_with_unobservable_composer_is_never_replayed() {
     assert!(script.contains("if text and not (root / 'submissions').exists(): sys.exit(1)"));
     fs::write(tmux, script).unwrap();
 
-    drain_coordination_notifications(fixture.state.clone()).await;
+    let mut candidate = fixture.candidate.clone();
+    candidate.prompt = candidate.text_wake_prompt();
+    let mut args = crate::send::unguarded_args(
+        "beta".into(), candidate.prompt.clone(), vec![SpecialKey::Enter], false,
+        fixture.state.tmux_bin.clone(),
+    );
+    args.guards.require_idle = true;
+    args.guards.require_empty_composer = true;
+    args.guards.expect_runtime = Some(candidate.target_incarnation.clone());
+    let error = crate::send::send_mailbox_notice(&fixture.state.context, args, &candidate).unwrap_err();
+    let details = error.details().unwrap();
+    assert_eq!(details["pasted"], true);
+    assert_eq!(details["submitted"], false);
+    assert_eq!(details["cleared"], false);
+    assert_eq!(details["remaining_input"], "unobservable");
+    crate::coordination::mark_notification_unknown(&fixture.state.context, &candidate, "submission-outcome-unknown").unwrap();
     let receipt = notification_fixture(fixture.temp.path());
     assert_eq!(receipt["state"], "attempt_unknown");
     assert!(fs::read_to_string(fixture.temp.path().join("composer")).unwrap() == fs::read_to_string(fixture.temp.path().join("buffer")).unwrap(), "wake input was changed");
@@ -232,4 +247,46 @@ async fn resumed_claude_wake_never_submits_a_changed_composer() {
     assert_eq!(fs::read_to_string(fixture.temp.path().join("composer")).unwrap(), "owner draft");
     let calls = fs::read_to_string(fixture.temp.path().join("calls")).unwrap();
     assert_eq!(calls.lines().filter(|line| line.contains("paste-buffer")).count(), 1);
+}
+
+#[tokio::test]
+async fn resumed_claude_wake_cleans_owned_input_after_swallowed_enters() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::remove(&lock, crate::notice::WRITERS_ENV);
+    let fixture = WakeFixture::new(AgentKind::Claude).await;
+    bind_idle(&fixture);
+    fs::write(fixture.temp.path().join("swallow-every-enter"), "").unwrap();
+
+    let mut candidate = fixture.candidate.clone();
+    candidate.prompt = candidate.text_wake_prompt();
+    let mut args = crate::send::unguarded_args(
+        "beta".into(), candidate.prompt.clone(), vec![SpecialKey::Enter], false,
+        fixture.state.tmux_bin.clone(),
+    );
+    args.guards.require_idle = true;
+    args.guards.require_empty_composer = true;
+    args.guards.expect_runtime = Some(candidate.target_incarnation.clone());
+    let error = crate::send::send_mailbox_notice(&fixture.state.context, args, &candidate).unwrap_err();
+    assert_eq!(error.code(), "send-submit-stuck");
+    let details = error.details().unwrap();
+    assert_eq!(details["cleared"], true);
+    assert_eq!(details["remaining_input"], "empty");
+    crate::coordination::mark_notification_unknown(&fixture.state.context, &candidate, "submission-outcome-unknown").unwrap();
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["state"], "attempt_unknown");
+    assert!(fs::read_to_string(fixture.temp.path().join("composer")).unwrap().is_empty(), "owned wake was not cleared");
+    assert_eq!(fs::read_to_string(fixture.temp.path().join("submissions")).unwrap().lines().count(), 2);
+    let calls = fs::read_to_string(fixture.temp.path().join("calls")).unwrap();
+    assert_eq!(calls.lines().filter(|line| line.contains("paste-buffer")).count(), 1);
+
+    fs::remove_file(fixture.temp.path().join("swallow-every-enter")).unwrap();
+    let capability = fs::read_to_string(crate::coordination::capability_path(
+        &fixture.state.context, "alpha", "launch-alpha",
+    )).unwrap();
+    send_notification_fixture(&fixture.state, &capability, "next-wake-after-cleanup").await;
+    bind_idle(&fixture);
+    drain_coordination_notifications(fixture.state.clone()).await;
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["state"], "prompt_submitted");
+    assert_eq!(fs::read_to_string(fixture.temp.path().join("submissions")).unwrap().lines().count(), 3);
 }

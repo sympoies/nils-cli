@@ -830,9 +830,6 @@ fn guarded(
     let submission = match (after_paste(), literal) {
         (Ok(submission), _) => submission,
         (Err(error), Some(text)) => {
-            if text_wake.is_some() {
-                return Err(admission.report_preserved_input(error, text, observed_paste));
-            }
             return Err(admission.report_owned_input(
                 error,
                 text,
@@ -862,12 +859,12 @@ fn guarded(
             Some(json!({"id": record.id, "outcome": report.outcome,
                 "enter_presses": report.enter_presses, "atomic": false})),
         );
-        let text = literal.expect("unconfirmed literal prompt");
-        return Err(if text_wake.is_some() {
-            admission.report_preserved_input(error, text, observed_paste)
-        } else {
-            admission.report_owned_input(error, text, observed_paste, owned_placeholder.as_deref())
-        });
+        return Err(admission.report_owned_input(
+            error,
+            literal.expect("unconfirmed literal prompt"),
+            observed_paste,
+            owned_placeholder.as_deref(),
+        ));
     }
     Ok(SendResult {
         id: record.id,

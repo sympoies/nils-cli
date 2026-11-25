@@ -334,9 +334,6 @@ impl Admission<'_> {
                 retry_until = Some(self.deadline);
                 self.idle(stage)?;
             } else if let Some(input) = input {
-                if mailbox_wake && retry_until.is_some() {
-                    self.idle(stage)?;
-                }
                 return Ok(input);
             }
             if !retryable {

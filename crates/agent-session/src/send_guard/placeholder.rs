@@ -11,15 +11,6 @@ use std::{
 };
 
 impl Admission<'_> {
-    pub(crate) fn report_preserved_input(
-        &self,
-        error: CliError,
-        text: &str,
-        observed: bool,
-    ) -> CliError {
-        self.report_cleared_input(error, text, observed, (None, false))
-    }
-
     pub(crate) fn owned_placeholder(&self) -> Option<String> {
         if self.record.agent != "claude" || !self.args.require_empty_composer {
             return None;
