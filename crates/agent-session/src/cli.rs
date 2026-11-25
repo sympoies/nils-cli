@@ -221,7 +221,7 @@ pub struct StartArgs {
     /// Resume this exact provider conversation in a new managed record.
     #[arg(long, value_name = "PROVIDER_SESSION_ID")]
     pub resume: Option<String>,
-    /// Cross-host move ID. Refused until the complete move protocol is available.
+    /// Exact cross-host move ID for a direct, verified provider resume.
     #[arg(long, requires = "resume", value_name = "UUID")]
     pub move_id: Option<String>,
     /// Check resume admission without creating a record, runtime, prompt or operation.

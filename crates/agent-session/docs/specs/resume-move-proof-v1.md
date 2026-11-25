@@ -1,11 +1,10 @@
 # Cross-host resume proof v1
 
 A move transfers one stopped managed Codex or Claude conversation from host A
-to host B. This contract defines the evidence used by the move protocol. In
-this increment, `start --resume THREAD --move-id UUID` returns
-`resume-move-unavailable` before creating a session, lock, runtime, or Console
-operation. Cross-host admission requires source fencing, destination admission,
-and a working abort and recovery path.
+to host B. Direct local start uses `agent-session start --agent PROVIDER
+--resume THREAD --move-id UUID --account ACCOUNT --cwd CHECKOUT`.
+The Console transport refuses move requests. Resume checks do not acquire a
+session writer or create a runtime.
 
 ## Signed records
 
@@ -67,6 +66,14 @@ describes the cwd recorded in the imported history. B opens files only under
 its configured local roots and launches with its verified local cwd. A's
 absolute paths are never used as B filesystem paths.
 
+Claude records the shell's current directory on each transcript row, so one
+conversation can record the checkout root and then subdirectories. The source
+cwd digest binds the checkout root. Every recorded cwd must be that root or
+below it. The check compares normalized absolute path components without
+reading the filesystem, so a symlink cannot move a path into the root. A cwd
+outside the root, or one that is relative or not normalized, refuses with
+`resume-move-transcript-cwd-outside-checkout`.
+
 ## Freshness and refusals
 
 Ticket and proof timestamps are UTC Unix seconds. Each validity interval is
@@ -89,6 +96,7 @@ The verifier returns typed reasons.
 | `resume-account-mismatch` | Account differs from the original binding |
 | `resume-source-live` | Stop verdict is false |
 | `resume-move-path-mismatch` | Checkout binding differs |
+| `resume-move-transcript-cwd-outside-checkout` | A Claude transcript records a cwd outside the planned checkout root |
 | `resume-move-history-stale` | Staged history differs from the snapshot |
 | `resume-move-history-unsupported` | File role or placement falls outside the provider manifest |
 | `resume-move-destination-writer-present` | Destination reports an existing writer |
@@ -119,9 +127,8 @@ table above. When the cwd belongs to a Git checkout with a configured remote,
 the plan includes a digest of the canonical repository identity, the HEAD
 commit, and the cwd relative to the checkout root.
 
-Export and recovery remain gated while destination abort and admission are
-unavailable. The source fence uses the existing conversation guard and the
-all-source stopped checks. Recovery requires the exact signed abort receipt
+The source fence uses the existing conversation guard and checks that all
+source writers have stopped. Recovery requires the exact signed abort receipt
 and rechecks the source snapshot before releasing the fence.
 
 For source mutation, configure `AGENT_SESSION_RESUME_MOVE_SSH_KEYGEN`,
@@ -148,15 +155,86 @@ checks the ticket and stopped source proof against the local snapshot.
 Immediately before native start, the destination rechecks the exact proof,
 checkout and bytes under the same control lock used to abort. Provider
 argument overrides are refused for a move. Codex recreates local indexes in
-the destination provider home.
+the destination provider home. Claude uses B's verified broker account and
+installs the exact transcript in the local project directory after writer
+admission. The move supports the short ASCII project encoding and refuses
+existing transcripts with the same conversation ID. Claude sidecars such as
+subagent transcripts, spilled tool results, MCP task files, and uploads are
+outside the single-file contract.
 
 Before admission the destination checks provider capability and runtime
 readiness, such as the private socket directory. A deterministic failure
 refuses with `resume-unsupported` and leaves the move staged, so abort still
-issues a no-writer receipt. The destination persists writer admission before
-taking a session writer lock.
+issues a no-writer receipt. An explicit `--id` that names an existing managed
+session on B refuses with `session-exists` at the same point, in preflight
+and in start. The destination persists writer admission before taking a
+session writer lock.
 Any ambiguous result beyond that point remains fenced. An earlier abort
 records a terminal tombstone before signing the no-writer receipt. The same
 move cannot be admitted after that tombstone. A lost proof transfer can supply
 the original proof file to `resume-move abort` for exact receipt binding. A
 missing proof cannot authorize source recovery.
+
+## Direct move sequence
+
+1. On A, create a read-only source plan with `resume-move plan`.
+2. On B, run `resume-move prepare --plan-file FILE --move-id UUID --cwd CHECKOUT`.
+   The output includes a signed destination ticket and B's staging directory.
+3. Stop the source on A. Run `resume-move export --session ID --incarnation UUID
+   --destination HOST --ticket-file FILE` and retain the signed stop proof.
+4. Transfer the one history file to B at its manifest path in the staging
+   directory. Run `resume-move stage --move-id UUID --proof-file FILE`.
+5. On B, run the direct start command above. Add `--check-resume` for a
+   read-only check. The checks bind the exact account, conversation, checkout,
+   and signed snapshot. A successful start records the managed session ID and
+   runtime incarnation with the move.
+6. Before writer admission, `resume-move abort --move-id UUID` can record a
+   terminal abort and return the signed no-writer receipt. If B never staged
+   the proof, supply it with `--proof-file`. On A, run
+   `resume-move recover --move-id UUID --receipt-file FILE` to release its fence.
+
+Use `resume-move status --move-id UUID` on B after an interrupted start. An
+admitted writer without a recorded result stays unresolved. An unresolved
+move cannot authorize source recovery.
+
+## Unresolved destination outcome
+
+Admission persists `writer_admitted` before the destination materializes
+credentials, installs a Claude transcript, or launches the session. A failure
+after that point, or an interrupted start, leaves the move in
+`writer_admitted`. This is intentional: the destination cannot prove that no
+writer started, so it never reports a no-writer abort.
+
+Observable behavior while a move is in this state:
+
+- `resume-move status --move-id UUID` on B reports `writer_admitted` with no
+  recorded session. `created` means the start finished and names the session.
+- `start` for the same move refuses with `resume-move-outcome-unknown` and
+  never launches a second writer.
+- `resume-move abort` refuses with `resume-move-destination-writer-present`,
+  so no no-writer receipt exists.
+- On A, `resume-move recover` needs that receipt, so A stays fenced and an
+  ordinary resume of the conversation on A refuses with
+  `resume-move-source-fenced`. Expiry does not release the fence.
+
+What to inspect on B:
+
+1. Run `resume-move status` and note the state and any recorded session.
+2. List the managed sessions on B and look for one for the move: the ID passed
+   with `--id`, otherwise `move-` followed by the move UUID. Check whether its
+   provider pane is running. An ID that already named a session refuses before
+   admission, so a session found under the move's ID after admission belongs to
+   the move.
+3. Check whether the staged provider home still holds the verified history.
+
+What to do:
+
+- If a managed session for the move exists on B and is running, the
+  conversation continues there. Leave A fenced. A is the stale copy.
+- If no session or pane exists, B has probably not started a writer, but the
+  tooling cannot prove it. Do not edit or delete the move store, the fence
+  ledger, or the lock files by hand. Keep A fenced and report the move ID.
+- Release of A is supported only through a signed no-writer receipt. There is
+  no force option. Automatic settlement of a move whose post-admission failure
+  provably started no writer is tracked as follow-up #4042. Until it lands, an
+  unresolved move keeps A fenced.

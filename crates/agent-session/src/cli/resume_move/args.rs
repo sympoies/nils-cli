@@ -6,14 +6,15 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
-    AgentKind, CliContext, CliError, ProviderResume, StartView, cli, coordination, lifecycle,
-    start_resume,
+    AgentKind, CliContext, CliError, InitialClaudeAccount, ProviderResume, StartView, cli,
+    coordination, lifecycle, start_resume,
 };
 
-use super::{Refusal, SignedRecord, Verifier, cli_refusal, destination, source, source_fence};
+use super::{
+    Provider, Refusal, SignedRecord, Verifier, claude, cli_refusal, destination, source,
+    source_fence,
+};
 
-// Destination admission and its abort receipt must ship together.
-pub(crate) const MOVE_AVAILABLE: bool = false;
 const MAX_RECORD_BYTES: u64 =
     (6 * (super::MAX_PAYLOAD_BYTES + super::MAX_SIGNATURE_BYTES) + 256) as u64;
 
@@ -143,18 +144,6 @@ impl MoveArgs {
 }
 
 pub(crate) fn run(context: &CliContext, args: MoveArgs) -> i32 {
-    if !MOVE_AVAILABLE
-        && !matches!(
-            args.command,
-            Command::Plan { .. } | Command::Prepare { check: true, .. } | Command::Status { .. }
-        )
-    {
-        return crate::render_error(
-            args.name(),
-            args.format(),
-            crate::start_resume::refusal("resume-move-unavailable"),
-        );
-    }
     match args.command {
         Command::Plan {
             session,
@@ -381,7 +370,7 @@ pub(crate) fn move_preflight(
     let request = admission_request(args, &host)?;
     destination::check(context, &verifier()?, request, now())?;
     Ok(json!({
-        "agent": "codex",
+        "agent": request.provider.agent().as_str(),
         "provider_session_id": request.provider_session_id,
         "machine": host,
         "account": request.account,
@@ -394,22 +383,29 @@ pub(crate) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
     let request = admission_request(&args, &host)?;
     let verifier = verifier()?;
     let move_id = request.move_id.to_owned();
+    let managed_session_id = request.managed_session_id();
     let thread = request.provider_session_id.to_owned();
     let account = request.account.to_owned();
     let launch_cwd =
         crate::resolve_cwd(Some(request.cwd)).map_err(|_| cli_refusal(Refusal::PathMismatch))?;
-    let agent_bin = crate::resolve_agent_bin(AgentKind::Codex, args.agent_bin.as_deref());
-    if !crate::codex_app_server::resume_transport_supported(&agent_bin) {
-        return Err(start_resume::refusal("resume-unsupported"));
-    }
-    let roster = crate::codex_account::list_accounts()
-        .map_err(|_| start_resume::refusal("resume-unsupported"))?;
-    if !roster.iter().any(|item| item.account == account) {
-        return Err(cli_refusal(Refusal::AccountMismatch));
+    let provider = request.provider;
+    let agent = provider.agent();
+    let agent_bin = crate::resolve_agent_bin(agent, args.agent_bin.as_deref());
+    if provider == Provider::Codex {
+        if !crate::codex_app_server::resume_transport_supported(&agent_bin) {
+            return Err(start_resume::refusal("resume-unsupported"));
+        }
+        let roster = crate::codex_account::list_accounts()
+            .map_err(|_| start_resume::refusal("resume-unsupported"))?;
+        if !roster.iter().any(|item| item.account == account) {
+            return Err(cli_refusal(Refusal::AccountMismatch));
+        }
     }
     // Readiness is deterministic and must refuse before admission persists a writer.
     // A created replay returns its existing session and needs no new runtime.
-    if !destination::check(context, &verifier, request, now())?
+    let replay = destination::check(context, &verifier, request, now())?;
+    if provider == Provider::Codex
+        && !replay
         && !crate::codex_app_server::resume_runtime_ready(&agent_bin, &context.state_dir)
     {
         return Err(start_resume::refusal("resume-unsupported"));
@@ -418,6 +414,8 @@ pub(crate) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
     let unknown = destination::outcome_unknown;
     let destination::Admission::New {
         provider_home,
+        history,
+        claude_target,
         _writer,
     } = moved
     else {
@@ -444,17 +442,37 @@ pub(crate) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
     };
     args.cwd = Some(launch_cwd);
     args.account = Some(account.clone());
-    args.initial_codex_account = Some(account);
-    args.initial_codex_account_source = Some("explicit".into());
-    args.initial_provider_config_dir = Some(provider_home);
-    let session_id = args.id.clone().unwrap_or_else(|| format!("move-{move_id}"));
+    let claude_account = match provider {
+        Provider::Codex => {
+            args.initial_codex_account = Some(account);
+            args.initial_codex_account_source = Some("explicit".into());
+            args.initial_provider_config_dir = Some(provider_home);
+            None
+        }
+        Provider::Claude => {
+            let target = claude_target.ok_or_else(unknown)?;
+            let config = target.prepare_account(&account).map_err(|_| unknown())?;
+            claude::install_transcript(
+                &target,
+                &provider_home.join(&history.relative_path),
+                &history,
+            )
+            .map_err(|_| unknown())?;
+            args.initial_provider_config_dir = Some(config);
+            Some(InitialClaudeAccount {
+                account,
+                selection_source: "explicit",
+            })
+        }
+    };
+    let session_id = managed_session_id;
     args.id = Some(session_id.clone());
     let cwd = args.cwd.as_deref().ok_or_else(unknown)?;
     let launch_args =
-        crate::canonical_provider_resume_args(AgentKind::Codex, &crate::display_path(cwd), &thread)
+        crate::canonical_provider_resume_args(agent, &crate::display_path(cwd), &thread)
             .ok_or_else(unknown)?;
     let provider_resume = ProviderResume {
-        provider: "codex".into(),
+        provider: agent.as_str().into(),
         session_id: thread,
         captured_at: jiff::Timestamp::now().to_string(),
         capture_method: "cross-host-stop-proof-v1".into(),
@@ -466,7 +484,7 @@ pub(crate) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
             context,
             args,
             crate::StartFailureDisposition::ReturnError,
-            None,
+            claude_account,
             Some(crate::InitialProviderPlan {
                 launch_args,
                 provider_resume: Some(provider_resume),
@@ -487,7 +505,12 @@ fn admission_request<'a>(
 ) -> Result<destination::AdmissionRequest<'a>, CliError> {
     let unsupported = || start_resume::refusal("resume-unsupported");
     let request = start_resume::Request::from_args(args);
-    if request.validate()? != AgentKind::Codex || args.via_console || !args.agent_args.is_empty() {
+    let provider = match request.validate()? {
+        AgentKind::Codex => Provider::Codex,
+        AgentKind::Claude => Provider::Claude,
+        _ => return Err(unsupported()),
+    };
+    if args.via_console || !args.agent_args.is_empty() {
         return Err(unsupported());
     }
     if args
@@ -498,6 +521,8 @@ fn admission_request<'a>(
         return Err(unsupported());
     }
     Ok(destination::AdmissionRequest {
+        provider,
+        session_id: args.id.as_deref(),
         destination_host: host,
         move_id: args.move_id.as_deref().ok_or_else(unsupported)?,
         account: args

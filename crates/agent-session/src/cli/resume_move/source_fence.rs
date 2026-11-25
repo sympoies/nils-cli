@@ -60,7 +60,7 @@ pub(super) fn export(
     {
         return Err(cli_refusal(Refusal::SessionMismatch));
     }
-    let agent = agent_kind(binding.provider);
+    let agent = binding.provider.agent();
     let _conversation =
         start_resume::raw_conversation_lock(context, agent, &binding.provider_session_id)?;
     let _ledger = coordination::lock_private_store(context, STORE_LOCK)?;
@@ -177,7 +177,7 @@ pub(super) fn recover(
     if binding.source_host != source_host {
         return Err(cli_refusal(Refusal::TargetMismatch));
     }
-    let agent = agent_kind(binding.provider);
+    let agent = binding.provider.agent();
     let _conversation =
         start_resume::raw_conversation_lock(context, agent, &binding.provider_session_id)?;
     let _ledger = coordination::lock_private_store(context, STORE_LOCK)?;
@@ -243,7 +243,7 @@ fn ensure_unfenced_in(
 ) -> Result<(), CliError> {
     if fences.values().any(|fence| {
         !fence.recovered
-            && agent_kind(fence.binding.provider) == agent
+            && fence.binding.provider.agent() == agent
             && fence.binding.provider_session_id == conversation
     }) {
         return Err(cli_refusal(Refusal::SourceFenced));
@@ -277,7 +277,21 @@ fn read_snapshot(binding: &Binding, selected: &source::Source) -> Result<History
     if !before.is_file() || before.nlink() != 1 {
         return Err(cli_refusal(Refusal::HistoryUnsupported));
     }
-    validate_history_meta(binding, &selected.plan, &mut file)?;
+    if binding.provider == Provider::Claude {
+        super::claude::check_source_dependencies(
+            &selected.provider_root,
+            &selected.history_path,
+            &binding.provider_session_id,
+        )?;
+        super::claude::check_transcript_cwds(
+            &mut file,
+            &binding.provider_session_id,
+            &selected.plan.source_checkout_sha256,
+        )?;
+        file.rewind().map_err(|_| missing())?;
+    } else {
+        validate_history_meta(binding, &selected.plan, &mut file)?;
+    }
     let mut hasher = Sha256::new();
     let mut snapshot = (&mut file).take(before.len().saturating_add(1));
     let mut bytes = 0;
@@ -318,9 +332,6 @@ fn validate_history_meta(
     plan: &source::Plan,
     file: &mut File,
 ) -> Result<(), CliError> {
-    if binding.provider != Provider::Codex {
-        return Ok(());
-    }
     let unsupported = || cli_refusal(Refusal::HistoryUnsupported);
     let mut line = Vec::new();
     {
@@ -381,11 +392,4 @@ fn sync_fence_directory(context: &CliContext) -> Result<(), CliError> {
     File::open(path)
         .and_then(|file| file.sync_all())
         .map_err(|_| cli_refusal(Refusal::StateUnavailable))
-}
-
-fn agent_kind(provider: Provider) -> AgentKind {
-    match provider {
-        Provider::Codex => AgentKind::Codex,
-        Provider::Claude => AgentKind::Claude,
-    }
 }
