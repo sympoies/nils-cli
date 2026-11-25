@@ -59,6 +59,15 @@ impl Destination {
         }
         Ok(prepared)
     }
+
+    pub(super) fn ensure_unpublished(&self, thread: &str) -> Result<(), CliError> {
+        validate_directory(&self.account_root)?;
+        let projects = projects_root(&self.account_root)?;
+        if projects != self.projects {
+            return Err(path_mismatch());
+        }
+        check_no_transcript(&projects, thread)
+    }
 }
 
 #[cfg(test)]
@@ -253,11 +262,33 @@ fn external_attachment(row: &Value) -> bool {
         || attachment.get("taskId").is_some()
 }
 
-pub(super) fn install_transcript(
-    target: &Destination,
+/// A fully copied transcript whose atomic publication has not been attempted.
+pub(super) struct PreparedTranscript<'a> {
+    temporary: tempfile::NamedTempFile,
+    target: &'a Path,
+    directory: &'a Path,
+}
+
+impl PreparedTranscript<'_> {
+    pub(super) fn publish(self) -> Result<(), CliError> {
+        self.temporary
+            .persist_noclobber(self.target)
+            .map_err(|failure| {
+                if failure.error.kind() == io::ErrorKind::AlreadyExists {
+                    cli_refusal(Refusal::DestinationWriterPresent)
+                } else {
+                    path_mismatch()
+                }
+            })?;
+        sync_directory(self.directory)
+    }
+}
+
+pub(super) fn prepare_transcript<'a>(
+    target: &'a Destination,
     staged: &Path,
     expected: &History,
-) -> Result<(), CliError> {
+) -> Result<PreparedTranscript<'a>, CliError> {
     let directory = target.transcript.parent().ok_or_else(path_mismatch)?;
     for path in [&target.projects, directory] {
         match fs::DirBuilder::new().mode(0o700).create(path) {
@@ -306,16 +337,11 @@ pub(super) fn install_transcript(
         .as_file()
         .sync_all()
         .map_err(|_| path_mismatch())?;
-    temporary
-        .persist_noclobber(&target.transcript)
-        .map_err(|failure| {
-            if failure.error.kind() == io::ErrorKind::AlreadyExists {
-                cli_refusal(Refusal::DestinationWriterPresent)
-            } else {
-                path_mismatch()
-            }
-        })?;
-    sync_directory(directory)
+    Ok(PreparedTranscript {
+        temporary,
+        target: &target.transcript,
+        directory,
+    })
 }
 
 fn sync_directory(directory: &Path) -> Result<(), CliError> {
