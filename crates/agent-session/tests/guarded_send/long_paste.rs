@@ -235,7 +235,7 @@ fn long_paste_keyed_recovery_reports_and_submits_only_the_original_input() {
         assert_eq!(changed_status.code, 0, "{}", changed_status.stdout_text());
         assert_eq!(
             changed_status.stdout_json()["data"]["unsubmitted_attempt"],
-            false
+            true
         );
         fixture.refused(
             &attempt(&fixture, "recover", &text),
@@ -455,4 +455,38 @@ fn long_paste_patrol_detects_a_seven_row_attempt_without_text() {
         super::attempt::status(&fixture, KEY)["unsubmitted_attempt"],
         false
     );
+}
+
+#[test]
+fn capture_loss_after_paste_is_visible_to_patrol_without_text() {
+    let text = long_text(60);
+    let fixture = wrapped_fixture("claude");
+    fs::write(fixture.root().join("fail-capture-after-paste"), "").unwrap();
+    let output = fixture.send_text(Some(&text), GUARDS);
+    assert_eq!(output.code, 1);
+    let receipt = output.stdout_json();
+    assert!(matches!(
+        receipt["error"]["code"].as_str(),
+        Some("send-composer-unobservable" | "send-guard-observation-timeout")
+    ));
+    assert_eq!(receipt["error"]["details"]["pasted"], true);
+    assert_eq!(receipt["error"]["details"]["submitted"], false);
+    assert_eq!(enter_count(&fixture), 0);
+    let tmux_model = fixture.root().join("tmux-model");
+    let script = fs::read_to_string(&tmux_model).unwrap();
+    let marker = "if command == 'has-session':";
+    assert!(script.contains(marker));
+    fs::write(&tmux_model, script.replace(marker, "if command == 'list-windows': print('modeled-guarded\\t0'); sys.exit(0)\nif command == 'has-session':")).unwrap();
+    let status = super::attempt::status(&fixture, KEY);
+    assert_eq!(status["composer"], "unknown");
+    assert_eq!(status["unsubmitted_attempt"], true);
+    let keyed = attempt(&fixture, "status", &text);
+    assert!(!keyed.stdout_text().contains(&text));
+    assert_eq!(keyed.stdout_json()["data"]["unsubmitted_attempt"], true);
+    assert_eq!(list_row(&fixture, &text)["unsubmitted_attempt"], true);
+    fixture.refused(
+        &attempt(&fixture, "recover", &text),
+        "attempt-recovery-unproven",
+    );
+    assert_eq!(enter_count(&fixture), 0);
 }
