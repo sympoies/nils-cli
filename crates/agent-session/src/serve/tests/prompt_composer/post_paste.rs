@@ -61,7 +61,15 @@ fn short_prompt_left_in_composer_is_reported_unconfirmed() {
     assert_eq!(error.code(), "send-submit-unconfirmed");
     assert_eq!(error.details().unwrap()["pasted"], true);
     assert_eq!(error.details().unwrap()["cleared"], false);
-    assert!(enters(&journal) > 0);
+    assert_eq!(enters(&journal), 2);
+    assert_eq!(
+        fs::read_to_string(&journal)
+            .unwrap()
+            .lines()
+            .filter(|line| *line == "paste-buffer")
+            .count(),
+        1
+    );
     let pane = std::process::Command::new(tmux)
         .arg("capture-pane")
         .output()
