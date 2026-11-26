@@ -927,7 +927,21 @@ fn admit_published<R: BackendRunner>(
                 "published review requires exactly one current handoff binding; the designated reviewer must republish through the current forge-cli",
             ));
         }
-        let pass = pr_review::validate_specialist_review_report(&body).is_ok()
+        let report_validation = pr_review::validate_specialist_review_report(&body);
+        if let Err(error) = &report_validation
+            && r.commit_sha == head
+        {
+            return Err(ForgeError::validation(
+                schema(),
+                "awaiting_designated_review",
+                format!(
+                    "awaiting designated review: published review {} has an invalid specialist report: {error}",
+                    r.id
+                ),
+                Some(format!("review_id={}; cause={}", r.id, error.kind())),
+            ));
+        }
+        let pass = report_validation.is_ok()
             && matches!(r.state.as_str(), "APPROVED" | "COMMENTED")
             && r.submitted_at.parse::<jiff::Timestamp>().is_ok_and(|t| {
                 // Provider timestamps can tie within a second. The verified

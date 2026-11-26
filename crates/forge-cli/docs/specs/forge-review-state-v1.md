@@ -238,10 +238,10 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   A newer current-interval blocked or malformed report supersedes an earlier
   pass. Unbound later-generation reports and ambiguous, malformed or unknown
   bindings are not skipped.
-  Admission applies the same exact Reviewable reference binding as publication.
-  An optional full-SHA qualifier must match the native review's current head.
-  A rejected report returns `awaiting_designated_review` with detail
-  `review_id=<id>; field=Reviewable; cause=<validation message>`.
+  Admission checks the exact Reviewable reference and any full head SHA.
+  A mismatch returns `awaiting_designated_review` with `field=Reviewable`.
+  Specialist format failures at the current head return that code with the
+  validator's reason and `cause=invalid_specialist_review_report`.
   Live designated `pr review --submit-review` binds both summary-only and
   threaded native reports to the admitted handoff record with the opaque marker
   `<!-- forge-cli:review-handoff:v1 <handoff-digest> -->`. This binding is captured

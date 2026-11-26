@@ -31,6 +31,79 @@ fn approved() -> Value {
     report
 }
 
+fn approval_without_evidence() -> Value {
+    let mut report = approved();
+    report["body"] = json!(
+        report["body"]
+            .as_str()
+            .unwrap()
+            .replace("- Evidence reviewed: fixture validation\n", "")
+    );
+    report
+}
+
+#[test]
+fn malformed_specialist_report_check_identifies_missing_evidence() {
+    let stub = fixture(
+        HEAD,
+        &records(handoff(None), Some(HEAD)),
+        vec![approval_without_evidence()],
+    );
+    let out = check(&stub, HEAD);
+    assert_refusal(&out, 65, "awaiting_designated_review");
+    let envelope = parse_envelope(&out.stdout);
+    let error = &envelope["error"];
+    assert!(
+        error["message"].as_str().unwrap().contains(
+            "specialist report requires exactly one non-empty - Evidence reviewed: field"
+        ),
+        "{error}"
+    );
+    assert_eq!(
+        error["details"]["detail"],
+        "review_id=REVIEW_1; cause=invalid_specialist_review_report"
+    );
+}
+
+#[test]
+fn malformed_specialist_report_publication_is_rejected_before_provider_access() {
+    let seeded = records(handoff(None), None);
+    let stub = fixture(HEAD, &seeded, vec![]).env("AGENT_SESSION_ID", "reviewer-session");
+    let report = stub.tempdir.path().join("report.md");
+    fs::write(
+        &report,
+        approval_without_evidence()["body"].as_str().unwrap(),
+    )
+    .unwrap();
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review",
+            "7",
+            "--submit-review",
+            "--decision",
+            "approve",
+            "--expected-head",
+            HEAD,
+            "--comment-file",
+            report.to_str().unwrap(),
+        ],
+    );
+    assert_refusal(&out, 65, "invalid_specialist_review_report");
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["message"],
+        "specialist report requires exactly one non-empty - Evidence reviewed: field"
+    );
+    assert!(!stub.tempdir.path().join("calls.log").exists());
+}
+
 #[test]
 fn comment_source_pass_reports_final_approval_pending() {
     let mut report = review(HEAD, "follow-up-pass");

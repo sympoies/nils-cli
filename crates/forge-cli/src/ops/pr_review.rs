@@ -31,6 +31,7 @@ mod pr_review_append;
 pub(crate) use pr_review_append::{ReviewStateAppend, append_review_state_payload};
 
 const SCHEMA: &str = "pr.review";
+const SPECIALIST_REPORT_MARKER: &str = "<!-- agent-kit:specialist-review-report:v1 -->";
 const SCHEMA_VERSION: u32 = 1;
 const REVIEW_THREAD_FILE_MAX_BYTES: u64 = 256 * 1024;
 const REVIEW_THREAD_MAX_COUNT: usize = 50;
@@ -483,7 +484,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         no_agent_attribution(&body, "review comment")?;
         no_escaped_control_markdown(&body)?;
     }
-    if args.specialist_report {
+    if args.specialist_report || body.contains(SPECIALIST_REPORT_MARKER) {
         validate_specialist_review_report(&body)?;
         if ctx.provider == Provider::GitHub {
             let (owner, name) = github_owner_name(&ctx)?;
@@ -3312,11 +3313,10 @@ pub(crate) fn validate_reviewable(
 }
 
 pub(crate) fn validate_specialist_review_report(body: &str) -> Result<(), ForgeError> {
-    const MARKER: &str = "<!-- agent-kit:specialist-review-report:v1 -->";
     const TABLE_HEADER: &str = "| Finding | Severity | Confidence | Evidence | Recommendation |";
     const TABLE_SEPARATOR: &str = "| --- | --- | ---: | --- | --- |";
     let lines = body.lines().map(str::trim).collect::<Vec<_>>();
-    let marker_count = body.matches(MARKER).count();
+    let marker_count = body.matches(SPECIALIST_REPORT_MARKER).count();
     let heading_count = lines
         .iter()
         .filter(|line| **line == "## Review Report")
