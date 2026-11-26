@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, OpenOptions},
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     os::{
         fd::AsRawFd,
         unix::{
@@ -186,12 +186,11 @@ pub(super) fn answer(
     stream
         .set_write_timeout(Some(IO_BOUND))
         .map_err(|_| refusal("permission-hook-unavailable"))?;
-    let bytes = serde_json::to_vec(&request).map_err(|_| refusal("permission-hook-unavailable"))?;
+    let mut bytes =
+        serde_json::to_vec(&request).map_err(|_| refusal("permission-hook-unavailable"))?;
+    bytes.push(b'\n');
     stream
         .write_all(&bytes)
-        .map_err(|_| refusal("permission-delivery-unknown"))?;
-    stream
-        .shutdown(std::net::Shutdown::Write)
         .map_err(|_| refusal("permission-delivery-unknown"))?;
     let mut bytes = Vec::new();
     (&mut stream)
@@ -303,8 +302,14 @@ fn read_answer(stream: &mut UnixStream) -> Result<Option<AnswerRequest>, CliErro
     stream
         .set_write_timeout(Some(IO_BOUND))
         .map_err(|_| refusal("permission-hook-unavailable"))?;
+    // Darwin can time out waiting for EOF after the peer has half-closed.
+    // Read one newline-terminated JSON request with a 4096-byte body limit.
     let mut bytes = Vec::new();
-    if stream.take(4097).read_to_end(&mut bytes).is_err() || bytes.len() > 4096 {
+    if BufReader::new(stream.take(4097))
+        .read_until(b'\n', &mut bytes)
+        .is_err()
+        || bytes.pop() != Some(b'\n')
+    {
         return Ok(None);
     }
     Ok(serde_json::from_slice(&bytes).ok())
