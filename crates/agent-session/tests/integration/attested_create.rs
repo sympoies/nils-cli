@@ -1,5 +1,6 @@
 //! Destination-side Console attestation through the loopback serve API.
 use std::fs;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -79,7 +80,7 @@ impl Daemon {
             command.env_remove("AGENT_SESSION_RELAY_INGRESS_TOKEN");
         }
         let mut daemon = Self {
-            child: command.spawn().unwrap(),
+            child: command.process_group(0).spawn().unwrap(),
             root,
             client: Client::builder()
                 .no_proxy()
@@ -205,8 +206,44 @@ impl Daemon {
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        let pid = self.child.id() as libc::pid_t;
+        // Let serve drain blocking tmux probes, which run in their own groups.
+        // SAFETY: pid identifies the daemon spawned by this fixture.
+        unsafe { libc::kill(pid, libc::SIGINT) };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            // SAFETY: waitid writes the status of this fixture's child into a valid buffer.
+            // WNOWAIT reserves its PID until we have signaled the whole group.
+            let exited = unsafe {
+                let mut status: libc::siginfo_t = std::mem::zeroed();
+                let result = libc::waitid(
+                    libc::P_PID,
+                    pid as libc::id_t,
+                    &mut status,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                );
+                if result < 0
+                    && std::io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD)
+                {
+                    return;
+                }
+                result == 0 && status.si_pid() == pid
+            };
+            if exited {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+
+        let group = -pid;
+        // SAFETY: spawn made the daemon the leader of its own process group.
+        unsafe { libc::kill(group, libc::SIGKILL) };
         let _ = self.child.wait();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        // SAFETY: signal 0 checks whether a process remains in that group.
+        while unsafe { libc::kill(group, 0) } == 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
     }
 }
 
