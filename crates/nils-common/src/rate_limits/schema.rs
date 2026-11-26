@@ -67,6 +67,9 @@ pub struct RateLimitResult {
     pub source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason_code: Option<ProviderUsageReason>,
+    /// Active per-account provider cooldown, as Unix seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backoff_until: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<RateLimitSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -112,6 +115,7 @@ impl RateLimitResult {
             ok: true,
             source: source.to_string(),
             reason_code: None,
+            backoff_until: None,
             summary: Some(summary),
             windows: Some(windows),
             reset_credits: None,
@@ -140,6 +144,7 @@ impl RateLimitResult {
             ok: false,
             source: source.to_string(),
             reason_code,
+            backoff_until: None,
             summary: None,
             windows: None,
             reset_credits: None,
@@ -165,6 +170,7 @@ impl RateLimitResult {
             ok: true,
             source: "network".to_string(),
             reason_code: None,
+            backoff_until: None,
             summary: None,
             windows: Some(Vec::new()),
             reset_credits,

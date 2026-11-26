@@ -643,6 +643,87 @@ fn usage_v1_serves_the_cached_snapshot_until_a_refresh_is_forced() {
     assert_eq!(alpha_credits(&forced), 1);
 }
 
+fn claude_entries(body: &Value) -> Vec<&Value> {
+    body["data"]["usage"]["providers"]
+        .as_array()
+        .expect("usage providers")
+        .iter()
+        .filter(|entry| entry["provider"] == "claude")
+        .collect()
+}
+
+#[test]
+fn usage_v1_claude_concurrent_readers_share_one_refresh() {
+    let (tmp, stubs) = setup();
+    let serve = Serve::spawn(tmp.path(), &stubs, &[]);
+    let hold = stubs.dir.join("claude-diag.hold");
+    fs::write(&hold, "").expect("hold");
+
+    let (first, second) = thread::scope(|scope| {
+        let first = scope.spawn(|| serve.usage("/usage/v1"));
+        stubs.wait_for_calls("claude-cli", "diag", 1);
+        let second = scope.spawn(|| serve.usage("/usage/v1?refresh=1"));
+        // Keep the refresh in flight while the forced read is admitted.
+        thread::sleep(Duration::from_millis(300));
+        fs::remove_file(&hold).expect("release hold");
+        (
+            first.join().expect("first read"),
+            second.join().expect("second read"),
+        )
+    });
+
+    assert_eq!(stubs.calls("claude-cli", "diag").len(), 1);
+    assert_eq!(claude_entries(&first), claude_entries(&second));
+    assert_eq!(claude_entries(&second)[0]["stale"], false);
+}
+
+#[test]
+fn usage_v1_claude_rate_limit_deadline_blocks_every_reader() {
+    let (tmp, stubs) = setup();
+    let backoff_until = now_epoch() + 600;
+    let mut diag = fixture("claude-diag-all.json");
+    diag["ok"] = json!(false);
+    diag["results"] = json!([{
+        "provider": "claude",
+        "name": "alpha",
+        "target_file": "alpha.json",
+        "status": "error",
+        "ok": false,
+        "source": "network",
+        "reason_code": "rate_limited",
+        "backoff_until": backoff_until,
+        "error": { "code": "request-failed", "message": "usage request failed" }
+    }]);
+    stubs.answer("claude-diag", &diag, 1);
+    let serve = Serve::spawn(tmp.path(), &stubs, &[]);
+
+    serve.usage("/usage/v1");
+    stubs.answer("claude-diag", &fixture("claude-diag-all.json"), 0);
+    let forced = serve.usage("/usage/v1?refresh=1");
+
+    assert_eq!(stubs.calls("claude-cli", "diag").len(), 1);
+    let claude = claude_entries(&forced);
+    assert_eq!(claude.len(), 1);
+    assert_eq!(claude[0]["ok"], false);
+    assert_eq!(claude[0]["reason_code"], "rate_limited");
+    assert_eq!(claude[0]["backoff_until"], backoff_until);
+}
+
+#[test]
+fn usage_v1_claude_unavailable_source_does_not_loop_on_forced_reads() {
+    let (tmp, stubs) = setup();
+    stubs.answer("claude-diag", &json!({}), 1);
+    let serve = Serve::spawn(tmp.path(), &stubs, &[]);
+
+    for path in ["/usage/v1", "/usage/v1?refresh=1", "/usage/v1?refresh=1"] {
+        let body = serve.usage(path);
+        let claude = claude_entries(&body);
+        assert_eq!(claude.len(), 1, "{path}");
+        assert_eq!(claude[0]["ok"], false, "{path}");
+    }
+    assert_eq!(stubs.calls("claude-cli", "diag").len(), 1);
+}
+
 #[test]
 fn usage_v1_forced_refresh_waits_for_a_run_that_starts_after_the_request() {
     let (tmp, stubs) = setup();

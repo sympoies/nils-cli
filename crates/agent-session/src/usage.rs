@@ -218,6 +218,8 @@ struct Entry {
     error: Option<&'static str>,
     reason: Option<ProviderUsageReason>,
     reset_credits: Option<u64>,
+    /// The account's shared provider cooldown, as Unix seconds.
+    backoff_until: Option<i64>,
 }
 
 impl Entry {
@@ -234,6 +236,7 @@ impl Entry {
             error: None,
             reason: None,
             reset_credits: None,
+            backoff_until: None,
         }
     }
 
@@ -258,6 +261,7 @@ impl Entry {
 
     /// Hide windows from a snapshot that is too old or dated in the future.
     fn expire(&mut self, now: i64) {
+        self.backoff_until = self.backoff_until.filter(|until| *until > now);
         let expired = self
             .updated_at
             .is_none_or(|at| now - at >= MAX_STALE_SECONDS || at - now > FUTURE_SKEW_SECONDS);
@@ -274,7 +278,7 @@ impl Entry {
     }
 
     fn to_json(&self) -> Value {
-        json!({
+        let mut value = json!({
             "provider": self.provider.id(),
             "account": self.account,
             "label": self.provider.label(),
@@ -287,7 +291,11 @@ impl Entry {
             "error": self.error,
             "reason_code": self.reason.map(ProviderUsageReason::as_str),
             "reset_credits": self.reset_credits.map(|count| json!({ "available_count": count })),
-        })
+        });
+        if let Some(until) = self.backoff_until {
+            value["backoff_until"] = json!(until);
+        }
+        value
     }
 }
 
@@ -708,6 +716,12 @@ fn claude_diag_entry(result: &Value, now: i64) -> Option<Entry> {
         entry.account = Some(account.to_string());
         entry.ok = false;
         entry.error = Some(message);
+        if reason == ProviderUsageReason::RateLimited {
+            entry.backoff_until = result
+                .get("backoff_until")
+                .and_then(Value::as_i64)
+                .filter(|until| *until > 0);
+        }
         return Some(entry);
     }
 
@@ -824,6 +838,19 @@ struct SlotState {
     completions: u64,
 }
 
+impl SlotState {
+    /// Every account in the last snapshot is inside its provider cooldown.
+    fn all_cooling(&self, now: i64) -> bool {
+        self.last.as_ref().is_some_and(|last| {
+            !last.entries.is_empty()
+                && last
+                    .entries
+                    .iter()
+                    .all(|entry| entry.backoff_until.is_some_and(|until| until > now))
+        })
+    }
+}
+
 /// One provider's cache: a fresh snapshot is served as is; an expired one is
 /// served as stale last-good while at most one background refresh runs.
 struct Slot {
@@ -860,12 +887,26 @@ impl Slot {
             let fresh = state.fresh_until.is_some_and(|until| now < until);
             let may_retry = state.retry_after.is_none_or(|after| now >= after);
             let mut target = state.completions;
-            if force {
-                target = self.invalidate_locked(&mut state);
-            } else if !fresh && !state.refreshing && may_retry {
-                self.start_refresh(&mut state);
+            if self.provider == Provider::Claude {
+                // Readers share one refresh. A forced read joins a running one
+                // instead of queueing another, and no read starts one inside
+                // the unavailable-source retry interval or before every
+                // account's shared cooldown has ended.
+                let allowed = may_retry && !state.all_cooling(now_epoch());
+                if !state.refreshing && allowed && (force || !fresh) {
+                    state.fresh_until = None;
+                    self.start_refresh(&mut state);
+                }
+                let wait_for_it = state.refreshing && (force || state.last.is_none());
+                (target, wait_for_it)
+            } else {
+                if force {
+                    target = self.invalidate_locked(&mut state);
+                } else if !fresh && !state.refreshing && may_retry {
+                    self.start_refresh(&mut state);
+                }
+                (target, force || state.last.is_none())
             }
-            (target, force || state.last.is_none())
         };
         if should_wait {
             let _ = tokio::time::timeout(wait, completed.wait_for(|count| *count > target)).await;
@@ -1675,6 +1716,32 @@ mod tests {
         assert_eq!(entry["ok"], false);
         assert_eq!(entry["reason_code"], "timeout");
         assert_eq!(entry["error"], "Codex usage refresh timed out.");
+    }
+
+    #[test]
+    fn cooldown_blocks_refresh_only_while_every_account_is_cooling() {
+        let mut limited = Entry::unavailable(Provider::Claude, ProviderUsageReason::RateLimited);
+        limited.backoff_until = Some(100);
+        let mut state = SlotState {
+            last: Some(Snapshot {
+                entries: vec![limited],
+                good: true,
+                completed_at: Instant::now(),
+            }),
+            ..SlotState::default()
+        };
+
+        assert!(state.all_cooling(99));
+        assert!(!state.all_cooling(100));
+
+        // Another account keeps the snapshot eligible for a refresh.
+        state
+            .last
+            .as_mut()
+            .expect("snapshot")
+            .entries
+            .push(Entry::new(Provider::Claude, true));
+        assert!(!state.all_cooling(99));
     }
 
     #[test]
