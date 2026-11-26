@@ -23,8 +23,8 @@ use crate::model::{Capability, LoadedPolicy, Product, SetupAction};
 use crate::paths::Layout;
 use crate::strict_json;
 use notification_entrypoint::{
-    codex_forward_argv_is_safe, codex_notify_argv, codex_owned_notify, is_migration_notify,
-    migration_activity_command,
+    CodexNotifyMode, codex_forward_argv_is_safe, codex_notify_argv, codex_notify_mode,
+    codex_owned_notify, is_migration_notify, migration_activity_command,
 };
 
 const CODEX_BLOCK_START: &str = "# >>> agent-hook:provider-ingress:v1 >>>";
@@ -60,6 +60,7 @@ pub struct HookGroup {
 pub enum ProviderStatus {
     Missing,
     CompatibilityOnly,
+    MigrationNeeded,
     Dual,
     Drifted,
     Converged,
@@ -72,6 +73,7 @@ impl std::fmt::Display for ProviderStatus {
         let value = match self {
             Self::Missing => "missing",
             Self::CompatibilityOnly => "compatibility-only",
+            Self::MigrationNeeded => "migration-needed",
             Self::Dual => "dual",
             Self::Drifted => "drifted",
             Self::Converged => "converged",
@@ -136,6 +138,7 @@ struct Plan {
     legacy_before: usize,
     unrelated_before: usize,
     drifted: bool,
+    migration_needed: bool,
     auxiliary_configured_before: bool,
     auxiliary_configured_after: bool,
 }
@@ -233,6 +236,7 @@ pub fn run(
         plan.groups.len(),
         plan.legacy_before,
         plan.unrelated_before,
+        plan.migration_needed,
         plan.drifted,
     );
     Ok(SetupResult {
@@ -293,6 +297,7 @@ pub fn doctor(loaded: &LoadedPolicy, product: Product) -> Result<DoctorResult, H
         plan.groups.len(),
         plan.legacy_before,
         plan.unrelated_before,
+        plan.migration_needed,
         plan.drifted || (plan.owned_before > 0 && !plan.auxiliary_configured_before),
     );
     if status == ProviderStatus::Converged {
@@ -371,15 +376,38 @@ fn build_codex_plan(
         HookError::data("provider-config-invalid", "Codex config is not valid TOML")
     })?;
     let expected_block = render_codex_block(&groups, product);
-    let (stripped, owned_before, drifted) =
+    let (mut stripped, owned_before, drifted) =
         strip_codex_block(&marker_repaired_raw, &expected_block)?;
-    let mut document = stripped.parse::<DocumentMut>().map_err(|_| {
+    let parsed = toml_edit::Document::parse(stripped.as_str()).map_err(|_| {
         HookError::data("provider-config-invalid", "Codex config is not valid TOML")
     })?;
+    let notify_span = parsed.get("notify").and_then(TomlItem::span);
+    let mut document = parsed.into_mut();
     let (legacy_before, unrelated_before) = inspect_toml_handlers(&document, loaded);
     let notify = plan_codex_notification(&mut document, &path, action, &stripped)?;
-    remove_legacy_toml_handlers(&mut document, loaded);
-    let mut rendered = document.to_string();
+    let removes_handlers = legacy_before > 0;
+    let mut rendered = match (
+        removes_handlers,
+        notify.changed,
+        notify.migration_needed,
+        notify_span,
+    ) {
+        (false, true, true, Some(span)) => {
+            stripped.replace_range(
+                span,
+                &document["notify"]
+                    .as_array()
+                    .expect("notify array")
+                    .to_string(),
+            );
+            stripped
+        }
+        (false, false, _, _) => stripped,
+        _ => {
+            remove_legacy_toml_handlers(&mut document, loaded);
+            document.to_string()
+        }
+    };
     if !action.is_remove() {
         if !rendered.is_empty() && !rendered.ends_with('\n') {
             rendered.push('\n');
@@ -393,7 +421,7 @@ fn build_codex_plan(
     };
     if action.is_remove()
         && owned_before == 0
-        && legacy_before == 0
+        && !removes_handlers
         && !notify.changed
         && !trust_boundary_repaired
         && !legacy_markers_repaired
@@ -431,6 +459,7 @@ fn build_codex_plan(
         legacy_before: legacy_before + hooks_owned + hooks_legacy,
         unrelated_before: unrelated_before + hooks_unrelated,
         drifted: drifted || hooks_drifted || notify.requires_review || trust_boundary_repaired,
+        migration_needed: notify.migration_needed,
         auxiliary_configured_before: notify.configured_before,
         auxiliary_configured_after: notify.configured_after,
     })
@@ -441,16 +470,7 @@ struct CodexNotificationPlan {
     configured_before: bool,
     configured_after: bool,
     requires_review: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum CodexNotifyMode {
-    Absent,
-    Owned,
-    Composed(Vec<String>),
-    ComputerUseWrappedOwned(CodexComputerUseWrappedOwned),
-    Foreign(Vec<String>),
-    Invalid,
+    migration_needed: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -483,6 +503,7 @@ fn plan_codex_notification(
     action: SetupAction,
     original_raw: &str,
 ) -> Result<CodexNotificationPlan, HookError> {
+    let before = document.get("notify").map(ToString::to_string);
     let remove = action.is_remove();
     let mode = codex_notify_mode(document, config_path, !remove);
     let notify_needs_migration = is_migration_notify(document, &mode);
@@ -493,7 +514,8 @@ fn plan_codex_notification(
                 | CodexNotifyMode::Composed(_)
                 | CodexNotifyMode::ComputerUseWrappedOwned(_)
         );
-    let mut requires_review = notify_needs_migration;
+    let migration_needed = !remove && mode == CodexNotifyMode::PriorSelector;
+    let mut requires_review = notify_needs_migration || migration_needed;
     if remove {
         match mode {
             CodexNotifyMode::Owned => {
@@ -503,11 +525,16 @@ fn plan_codex_notification(
             CodexNotifyMode::ComputerUseWrappedOwned(wrapped) => {
                 set_codex_notify(document, &wrapped.restored)
             }
-            CodexNotifyMode::Absent | CodexNotifyMode::Foreign(_) | CodexNotifyMode::Invalid => {}
+            CodexNotifyMode::Absent
+            | CodexNotifyMode::PriorSelector
+            | CodexNotifyMode::Foreign(_)
+            | CodexNotifyMode::Invalid => {}
         }
     } else {
         match mode {
-            CodexNotifyMode::Absent => set_codex_notify(document, &codex_notify_argv()),
+            CodexNotifyMode::Absent | CodexNotifyMode::PriorSelector => {
+                set_codex_notify(document, &codex_notify_argv())
+            }
             CodexNotifyMode::Owned if notify_needs_migration => {
                 set_codex_notify(document, &codex_notify_argv())
             }
@@ -577,45 +604,14 @@ fn plan_codex_notification(
             | CodexNotifyMode::Composed(_)
             | CodexNotifyMode::ComputerUseWrappedOwned(_)
     );
-    let changed = document.to_string().as_bytes() != original_raw.as_bytes();
+    let changed = document.get("notify").map(ToString::to_string) != before;
     Ok(CodexNotificationPlan {
         changed,
         configured_before,
         configured_after,
         requires_review,
+        migration_needed,
     })
-}
-
-fn codex_notify_mode(
-    document: &DocumentMut,
-    config_path: &Path,
-    require_computer_use_executable: bool,
-) -> CodexNotifyMode {
-    let Some(item) = document.get("notify") else {
-        return CodexNotifyMode::Absent;
-    };
-    let Some(array) = item.as_array() else {
-        return CodexNotifyMode::Invalid;
-    };
-    let Some(argv) = array
-        .iter()
-        .map(|value| value.as_str().map(str::to_string))
-        .collect::<Option<Vec<_>>>()
-    else {
-        return CodexNotifyMode::Invalid;
-    };
-    if let Some(owned) = codex_owned_notify(&argv) {
-        return match owned {
-            CodexOwnedNotify::Owned => CodexNotifyMode::Owned,
-            CodexOwnedNotify::Composed(forwarded) => CodexNotifyMode::Composed(forwarded),
-        };
-    }
-    if let Some(wrapped) =
-        codex_computer_use_wrapped_owned(&argv, config_path, require_computer_use_executable)
-    {
-        return CodexNotifyMode::ComputerUseWrappedOwned(wrapped);
-    }
-    CodexNotifyMode::Foreign(argv)
 }
 
 fn codex_computer_use_path_matches(
@@ -936,6 +932,7 @@ fn build_json_plan(
         legacy_before,
         unrelated_before,
         drifted,
+        migration_needed: false,
         auxiliary_configured_before: true,
         auxiliary_configured_after: true,
     })
@@ -1978,9 +1975,12 @@ fn classify_status(
     expected: usize,
     compatibility: usize,
     unrelated: usize,
+    migration_needed: bool,
     drifted: bool,
 ) -> ProviderStatus {
-    if drifted {
+    if migration_needed {
+        ProviderStatus::MigrationNeeded
+    } else if drifted {
         ProviderStatus::Drifted
     } else if owned > 0 && compatibility > 0 {
         ProviderStatus::Dual
@@ -2149,6 +2149,7 @@ mod tests {
             legacy_before: 0,
             unrelated_before: 0,
             drifted: false,
+            migration_needed: false,
             auxiliary_configured_before: true,
             auxiliary_configured_after: true,
         };
