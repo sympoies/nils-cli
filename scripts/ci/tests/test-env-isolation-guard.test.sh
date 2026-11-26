@@ -76,6 +76,13 @@ write_fake_cargo 'test -z "${ENV_GUARD_OUTER_VARIABLE-}" && exit 0
 exit 3'
 expect_pass "hermetic run sees a cleared environment"
 
+# Production code refuses symlinked state paths, so the temp root the guard
+# hands to the tests must be symlink-free even when the caller's is not.
+mkdir -p "$work/real-tmp"
+ln -s "$work/real-tmp" "$work/linked-tmp"
+write_fake_cargo 'test "$(realpath "$TMPDIR")" = "$TMPDIR"'
+TMPDIR="$work/linked-tmp" expect_pass "a symlinked caller TMPDIR still yields a canonical test temp root"
+
 export NILS_CLI_RUNNER_MAX=3 NEXTEST_TEST_THREADS=2
 write_fake_cargo 'test "${NEXTEST_TEST_THREADS-}" = 2'
 expect_pass "poisoned nextest run keeps the admitted thread limit"
