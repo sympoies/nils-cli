@@ -86,10 +86,49 @@ pub(super) fn authoring_remote_for_branch(
     }
     let remotes = raw(cwd, &["remote"])?;
     let names: Vec<_> = remotes.lines().collect();
-    if names.len() != 1 {
-        return Err(Error::new("identity_target_ambiguous"));
+    match names.as_slice() {
+        [name] => Ok(name.to_string()),
+        [] => Err(Error::with_detail(
+            "identity_target_ambiguous",
+            "no Git remotes are configured; configure an authoring remote".to_string(),
+        )),
+        _ => Err(Error::with_detail(
+            "identity_target_ambiguous",
+            format!(
+                "no authoring remote is selected; candidate remotes: {}; select one with branch.<name>.pushRemote or remote.pushDefault",
+                candidate_labels(&names, remote_label)
+            ),
+        )),
     }
-    Ok(names[0].to_string())
+}
+
+fn candidate_labels(values: &[&str], label: impl Fn(&str) -> Option<String>) -> String {
+    const MAX_CANDIDATES: usize = 8;
+    let mut candidates = values
+        .iter()
+        .take(MAX_CANDIDATES)
+        .enumerate()
+        .map(|(index, value)| label(value).unwrap_or_else(|| format!("#{}", index + 1)))
+        .collect::<Vec<_>>();
+    if values.len() > MAX_CANDIDATES {
+        candidates.push(format!("{} more", values.len() - MAX_CANDIDATES));
+    }
+    candidates.join(", ")
+}
+
+fn remote_label(remote: &str) -> Option<String> {
+    (remote.len() <= 128 && remote.split('/').all(super::policy::identifier))
+        .then(|| remote.to_string())
+}
+
+fn url_label(url: &str) -> Option<String> {
+    // A URL can carry credentials or a local path. Show only repository coordinates
+    // that pass the same identifier checks as configured identity targets.
+    let parsed = crate::git::parse_git_remote_url(url)?;
+    if parsed.path.len() > 128 || !super::policy::identifier(&parsed.host) {
+        return None;
+    }
+    Some(Target::new_gitlab(&parsed.host, &parsed.path).ok()?.key())
 }
 fn selected_remote(cwd: Option<&Path>, tail: &[&str], op: Operation) -> Result<String> {
     if op == Operation::Commit {
@@ -154,7 +193,16 @@ pub fn target_for_remote(cwd: Option<&Path>, remote: &str, push: bool) -> Result
     };
     let urls: Vec<_> = urls.lines().collect();
     if urls.len() != 1 {
-        return Err(Error::new("identity_target_ambiguous"));
+        let label = remote_label(remote).unwrap_or_else(|| "<redacted>".to_owned());
+        let kind = if push { "push" } else { "fetch" };
+        return Err(Error::with_detail(
+            "identity_target_ambiguous",
+            format!(
+                "remote {label} resolves to {} {kind} URLs; candidate targets: {}; configure exactly one effective {kind} URL",
+                urls.len(),
+                candidate_labels(&urls, url_label)
+            ),
+        ));
     }
     let url = urls[0];
     // GitHub HTTPS and SSH repository shapes only; SSH is routed through pinned HTTPS
