@@ -48,7 +48,8 @@ V1 covers managed origins and outcome reconciliation only. Routed
 create route. Source stop and retain
 ([#4058](https://github.com/sympoies/nils-cli/issues/4058)), export,
 transfer, staging, abort, source recovery and settlement stay outside
-the relay's authority.
+the relay's authority. [Console succession stop](console-succession-stop-v1.md)
+defines a separate route for regular start succession.
 
 ## Start request
 

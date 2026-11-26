@@ -49,6 +49,8 @@ or integrating a specific subsystem.
   and read-only reconciliation. Runtime support follows separately.
 - [Console resume-move v1 transport supplement](specs/console-resume-move-transport-v1.md):
   discovery, delegated relay binding, and authenticated destination status.
+- [Console succession stop v1](specs/console-succession-stop-v1.md):
+  delegated, fenced predecessor stop and receipt for regular start succession.
 - [Console attested session creation v1](specs/console-attested-create-v1.md):
   relay admission, server-set role provenance, and broker verification.
 - [Session notices v1](specs/session-notices-v1.md): display-only envelope,

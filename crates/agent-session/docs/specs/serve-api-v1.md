@@ -73,6 +73,15 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `GET /sessions/{id}/attach` | Bearer | [Terminal transport](serve-terminal-v1.md) |
 | `PATCH and DELETE /sessions/{id}` | Bearer | [Title updates](serve-session-create-v1.md); [Deletion](serve-history-v1.md) |
 
+The following daemon routes are reserved for the
+[Console succession stop v1 contract](console-succession-stop-v1.md#routes-and-media-type).
+They require the separate runtime implementation.
+
+| Method and path | Authentication | Canonical contract |
+| --- | --- | --- |
+| `POST /sessions/{caller}/console-succession-stop/v1` and `GET /sessions/{caller}/console-succession-stop/v1/{operation_id}` | Current local session capability | [Source routes](console-succession-stop-v1.md#routes-and-media-type) |
+| `POST /sessions/{id}/succession-stop/v1` and `GET /sessions/{id}/succession-stop/v1/{operation_id}` | Machine bearer + relay ingress token + succession-stop binding | [Destination routes](console-succession-stop-v1.md#routes-and-media-type) |
+
 ## Endpoint contracts
 
 `agent-session serve` exposes the session control plane over loopback HTTP for a per-machine edge (e.g. the agent-console
