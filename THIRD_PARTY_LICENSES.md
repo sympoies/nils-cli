@@ -3,8 +3,8 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `826f03f9d6fec4858b56bab8888719788a43848af11403a6030e4b9142509e3e`
-- Third-party crates (`source != null`): 487
+- Cargo.lock SHA256: `b9ea649ed004cf02ba9176d4d8bd81ec7fa89adf6e59b00d6b4375c560741f1e`
+- Third-party crates (`source != null`): 492
 - Workspace crates (`source == null`, excluded below): 42
 
 ## Notes
@@ -22,8 +22,8 @@ This file documents third-party Rust crate licenses used by this workspace.
 | Apache-2.0 OR MIT | 41 |
 | Zlib OR Apache-2.0 OR MIT | 21 |
 | Unicode-3.0 | 18 |
+| Unlicense OR MIT | 14 |
 | MIT/Apache-2.0 | 12 |
-| Unlicense OR MIT | 9 |
 | ISC | 6 |
 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | 5 |
 | Apache-2.0 | 4 |
@@ -226,11 +226,16 @@ This file documents third-party Rust crate licenses used by this workspace.
 | jaq-core | 3.1.2 | MIT | crates.io |
 | jaq-json | 2.0.3 | MIT | crates.io |
 | jaq-std | 3.0.4 | MIT | crates.io |
-| jiff | 0.2.43 | Unlicense OR MIT | crates.io |
-| jiff-core | 0.1.5 | Unlicense OR MIT | crates.io |
-| jiff-static | 0.2.43 | Unlicense OR MIT | crates.io |
+| jiff | 0.2.46 | Unlicense OR MIT | crates.io |
+| jiff | 1.0.3 | Unlicense OR MIT | crates.io |
+| jiff-core | 0.1.8 | Unlicense OR MIT | crates.io |
+| jiff-core | 1.0.2 | Unlicense OR MIT | crates.io |
+| jiff-static | 0.2.46 | Unlicense OR MIT | crates.io |
+| jiff-static | 1.0.3 | Unlicense OR MIT | crates.io |
 | jiff-tzdb | 0.1.6 | Unlicense OR MIT | crates.io |
+| jiff-tzdb | 1.0.0 | Unlicense OR MIT | crates.io |
 | jiff-tzdb-platform | 0.1.3 | Unlicense OR MIT | crates.io |
+| jiff-tzdb-platform | 1.0.0 | Unlicense OR MIT | crates.io |
 | jni | 0.22.4 | MIT OR Apache-2.0 | crates.io |
 | jni-macros | 0.22.4 | MIT OR Apache-2.0 | crates.io |
 | jni-sys | 0.4.1 | MIT OR Apache-2.0 | crates.io |

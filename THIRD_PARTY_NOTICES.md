@@ -3,8 +3,8 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `826f03f9d6fec4858b56bab8888719788a43848af11403a6030e4b9142509e3e`
-- Third-party crates (`source != null`): 487
+- Cargo.lock SHA256: `b9ea649ed004cf02ba9176d4d8bd81ec7fa89adf6e59b00d6b4375c560741f1e`
+- Third-party crates (`source != null`): 492
 
 ## Notice Extraction Policy
 
@@ -1492,7 +1492,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - Notice files: No explicit NOTICE file discovered.
 - License file reference: none declared
 
-### jiff 0.2.43
+### jiff 0.2.46
 
 - License: `Unlicense OR MIT`
 - Source: `crates.io`
@@ -1502,7 +1502,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `COPYING`
   - `UNLICENSE`
 
-### jiff-core 0.1.5
+### jiff 1.0.3
 
 - License: `Unlicense OR MIT`
 - Source: `crates.io`
@@ -1512,7 +1512,37 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `COPYING`
   - `UNLICENSE`
 
-### jiff-static 0.2.43
+### jiff-core 0.1.8
+
+- License: `Unlicense OR MIT`
+- Source: `crates.io`
+- Notice files: No explicit NOTICE file discovered.
+- License file references:
+  - `LICENSE-MIT`
+  - `COPYING`
+  - `UNLICENSE`
+
+### jiff-core 1.0.2
+
+- License: `Unlicense OR MIT`
+- Source: `crates.io`
+- Notice files: No explicit NOTICE file discovered.
+- License file references:
+  - `LICENSE-MIT`
+  - `COPYING`
+  - `UNLICENSE`
+
+### jiff-static 0.2.46
+
+- License: `Unlicense OR MIT`
+- Source: `crates.io`
+- Notice files: No explicit NOTICE file discovered.
+- License file references:
+  - `LICENSE-MIT`
+  - `COPYING`
+  - `UNLICENSE`
+
+### jiff-static 1.0.3
 
 - License: `Unlicense OR MIT`
 - Source: `crates.io`
@@ -1532,7 +1562,27 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `COPYING`
   - `UNLICENSE`
 
+### jiff-tzdb 1.0.0
+
+- License: `Unlicense OR MIT`
+- Source: `crates.io`
+- Notice files: No explicit NOTICE file discovered.
+- License file references:
+  - `LICENSE-MIT`
+  - `COPYING`
+  - `UNLICENSE`
+
 ### jiff-tzdb-platform 0.1.3
+
+- License: `Unlicense OR MIT`
+- Source: `crates.io`
+- Notice files: No explicit NOTICE file discovered.
+- License file references:
+  - `LICENSE-MIT`
+  - `COPYING`
+  - `UNLICENSE`
+
+### jiff-tzdb-platform 1.0.0
 
 - License: `Unlicense OR MIT`
 - Source: `crates.io`
