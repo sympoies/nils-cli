@@ -39,7 +39,8 @@ recorded in `sympoies/nils-cli#1409`.
   provider_resume_import_supported, history_resume_supported }` launch-profile summaries.
   `data.capabilities.profile_resume_import` advertises support for selecting one of those safe ids during
   provider import; executable paths, configuration roots, readiness commands, and environment remain
-  private.
+  private. The route stays open, but the `resume_move` lineage field appears only for
+  bearer-authenticated requests (see [Console resume-move v1](console-resume-move-v1.md#destination-admission-and-lineage)).
 
   `data.capabilities.managed_resume_command` remains false until an unqualified CLI resume can revalidate
   the daemon's active profile registry and readiness contract; consumers must copy the provider session
