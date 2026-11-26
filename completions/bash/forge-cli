@@ -523,8 +523,14 @@ _forge__cli() {
             forge__cli__help__security,settings)
                 cmd="forge__cli__help__security__settings"
                 ;;
+            forge__cli__help__security__alerts,dismiss)
+                cmd="forge__cli__help__security__alerts__dismiss"
+                ;;
             forge__cli__help__security__alerts,list)
                 cmd="forge__cli__help__security__alerts__list"
+                ;;
+            forge__cli__help__security__alerts,reopen)
+                cmd="forge__cli__help__security__alerts__reopen"
                 ;;
             forge__cli__help__security__alerts,view)
                 cmd="forge__cli__help__security__alerts__view"
@@ -1372,20 +1378,32 @@ _forge__cli() {
             forge__cli__security,settings)
                 cmd="forge__cli__security__settings"
                 ;;
+            forge__cli__security__alerts,dismiss)
+                cmd="forge__cli__security__alerts__dismiss"
+                ;;
             forge__cli__security__alerts,help)
                 cmd="forge__cli__security__alerts__help"
                 ;;
             forge__cli__security__alerts,list)
                 cmd="forge__cli__security__alerts__list"
                 ;;
+            forge__cli__security__alerts,reopen)
+                cmd="forge__cli__security__alerts__reopen"
+                ;;
             forge__cli__security__alerts,view)
                 cmd="forge__cli__security__alerts__view"
+                ;;
+            forge__cli__security__alerts__help,dismiss)
+                cmd="forge__cli__security__alerts__help__dismiss"
                 ;;
             forge__cli__security__alerts__help,help)
                 cmd="forge__cli__security__alerts__help__help"
                 ;;
             forge__cli__security__alerts__help,list)
                 cmd="forge__cli__security__alerts__help__list"
+                ;;
+            forge__cli__security__alerts__help,reopen)
+                cmd="forge__cli__security__alerts__help__reopen"
                 ;;
             forge__cli__security__alerts__help,view)
                 cmd="forge__cli__security__alerts__help__view"
@@ -1399,8 +1417,14 @@ _forge__cli() {
             forge__cli__security__help,settings)
                 cmd="forge__cli__security__help__settings"
                 ;;
+            forge__cli__security__help__alerts,dismiss)
+                cmd="forge__cli__security__help__alerts__dismiss"
+                ;;
             forge__cli__security__help__alerts,list)
                 cmd="forge__cli__security__help__alerts__list"
+                ;;
+            forge__cli__security__help__alerts,reopen)
+                cmd="forge__cli__security__help__alerts__reopen"
                 ;;
             forge__cli__security__help__alerts,view)
                 cmd="forge__cli__security__help__alerts__view"
@@ -3965,7 +3989,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__help__security__alerts)
-            opts="list view"
+            opts="list view dismiss reopen"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3978,7 +4002,35 @@ _forge__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        forge__cli__help__security__alerts__dismiss)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         forge__cli__help__security__alerts__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__help__security__alerts__reopen)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -11881,7 +11933,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__security__alerts)
-            opts="-h --format --remote --provider --host --repo --store-root --dry-run --help list view help"
+            opts="-h --format --remote --provider --host --repo --store-root --dry-run --help list view dismiss reopen help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -11918,9 +11970,69 @@ _forge__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        forge__cli__security__alerts__help)
-            opts="list view help"
+        forge__cli__security__alerts__dismiss)
+            opts="-h --reason --comment-file --format --remote --provider --host --repo --store-root --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --reason)
+                    COMPREPLY=($(compgen -W "false-positive wont-fix used-in-tests mitigated" -- "${cur}"))
+                    return 0
+                    ;;
+                --comment-file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --remote)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --provider)
+                    COMPREPLY=($(compgen -W "github gitlab local" -- "${cur}"))
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --store-root)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__security__alerts__help)
+            opts="list view dismiss reopen help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__security__alerts__help__dismiss)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
@@ -11947,6 +12059,20 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__security__alerts__help__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__security__alerts__help__reopen)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -11993,6 +12119,44 @@ _forge__cli() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --remote)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --provider)
+                    COMPREPLY=($(compgen -W "github gitlab local" -- "${cur}"))
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --store-root)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__security__alerts__reopen)
+            opts="-h --format --remote --provider --host --repo --store-root --dry-run --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0
@@ -12089,7 +12253,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__security__help__alerts)
-            opts="list view"
+            opts="list view dismiss reopen"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -12102,7 +12266,35 @@ _forge__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        forge__cli__security__help__alerts__dismiss)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         forge__cli__security__help__alerts__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__security__help__alerts__reopen)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

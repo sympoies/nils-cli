@@ -1737,6 +1737,20 @@ invocation's managed identity. Provider permission errors remain errors.
   and `resolved`. `all` omits the provider state filter. Incompatible states
   fail with `alert_state_invalid`. Alert output selects safe metadata fields
   and never includes scanned secret values or code snippets.
+- `security alerts dismiss NUMBER --reason false-positive|wont-fix|used-in-tests|mitigated
+  --comment-file PATH` and `security alerts reopen NUMBER` change a GitHub
+  code-scanning alert in the selected repository using the write-scoped identity.
+  Dismissal requires a nonblank UTF-8 comment. The
+  JSON success schemas are `cli.forge-cli.security.alerts.dismiss.v1` and
+  `cli.forge-cli.security.alerts.reopen.v1`; data contains `provider`, `host`,
+  `repo`, `number`, `state`, `dismissed_reason`, `dismissed_comment`, and `url`.
+  `--dry-run --format json` returns the planned PATCH without sending it.
+  Invalid input exits 65; inaccessible or unknown alerts return
+  `security_alert_not_found`, and denied permissions return
+  `security_permission_denied` (both exit 65). A 404 can also mean the selected
+  identity cannot access the repository; a 403 can also indicate an archived
+  repository or unavailable security feature. Other provider errors retain the
+  standard backend error contract.
 - `security alerts view NUMBER --repo owner/repo --kind code-scanning
   --ref REF --commit SHA [--include-sarif]` emits
   `cli.forge-cli.security.alerts.view.v1`: `provider`, `host`, `repo`, `kind`,
