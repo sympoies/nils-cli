@@ -524,6 +524,10 @@ exact Console grant. With federation unconfigured the route fails with
 explicit `attest_role: true` extension for authorized fresh roots, including
 relay capability discovery and an explicit session ID.
 
+[Console succession stop](console-succession-stop-v1.md) defines the
+same-owner delegation and terminal receipt for stopping an acknowledged
+predecessor in a regular start succession.
+
 The CLI's `--operation-id` has the same canonical UUIDv7 requirement; a UUID of another version
 or a malformed ID fails with `console-start-invalid` and a UUIDv7 diagnostic. A valid ID with
 session fields creates or reconciles the identical submission without another launch;

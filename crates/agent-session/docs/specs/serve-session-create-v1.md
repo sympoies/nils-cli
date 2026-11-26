@@ -9,6 +9,9 @@ separate admission path on `POST /sessions` selected by its dedicated media
 type or an attestation header. It requires the machine bearer, a
 per-destination attested-create credential and a matching relay binding.
 
+[Console succession stop](console-succession-stop-v1.md) defines the
+separate fenced retirement path for an acknowledged regular start.
+
 Console notice launches add optional `notice_kind`, `notice_source`, and
 `notice_id` beside the already encoded `prompt`. The target validates matching
 metadata before creating a session and does not encode the prompt again.

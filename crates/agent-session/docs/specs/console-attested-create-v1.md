@@ -7,6 +7,9 @@ Console roots and gives [role-based review-handoff supervisors](https://github.c
 a way to obtain a broker-verified steward role. Runtime support follows in
 a separate test-first change.
 
+[Console succession stop](console-succession-stop-v1.md) defines the
+separate delegation for stopping an acknowledged predecessor.
+
 ## Console admission
 
 The origin daemon authenticates the managed caller's current session
