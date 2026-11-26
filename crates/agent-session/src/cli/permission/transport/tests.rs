@@ -89,7 +89,8 @@ fn received_answer(
         call_id: pending.call_id.clone(),
         decision: Decision::Allow,
     };
-    let bytes = serde_json::to_vec(&request).unwrap();
+    let mut bytes = serde_json::to_vec(&request).unwrap();
+    bytes.push(b'\n');
     caller.write_all(&bytes[..1]).unwrap();
     if expire_during_read {
         thread::sleep(
@@ -98,8 +99,7 @@ fn received_answer(
         assert!(Instant::now() >= deadline);
     }
     caller.write_all(&bytes[1..]).unwrap();
-    caller.shutdown(std::net::Shutdown::Write).unwrap();
-    let received = serde_json::from_reader((&mut receiver).take(4097)).unwrap();
+    let received = read_answer(&mut receiver).unwrap().unwrap();
     (receiver, caller, received, deadline)
 }
 
@@ -113,7 +113,6 @@ fn assert_no_ack(mut caller: UnixStream) {
 }
 
 #[test]
-#[cfg_attr(target_os = "macos", ignore = "nils-cli#4014")]
 fn accepted_nonblocking_stream_delivers_delayed_answer() {
     let (_temp, context, pending) = session();
     let socket_dir = tempfile::tempdir_in("/tmp").unwrap();
@@ -125,22 +124,41 @@ fn accepted_nonblocking_stream_delivers_delayed_answer() {
     // Model a macOS accept on every platform, even when the kernel clears
     // the listener's nonblocking flag on the accepted socket.
     receiver.set_nonblocking(true).unwrap();
-    caller.set_read_timeout(Some(IO_BOUND)).unwrap();
     let body = json!({
         "request_id": pending.request_id,
         "call_id": pending.call_id,
         "decision": "allow",
     });
-    let client = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(50));
-        serde_json::to_writer(&mut caller, &body).unwrap();
-        caller.shutdown(std::net::Shutdown::Write).unwrap();
-        serde_json::from_reader::<_, Value>(caller).unwrap()
-    });
+    let accepted = receiver.try_clone().unwrap();
+    let (request, caller) = thread::scope(|scope| {
+        let client = scope.spawn(move || {
+            // The clone shares the file status flags. Clearing O_NONBLOCK
+            // proves read_answer has started before the caller writes.
+            let deadline = Instant::now() + IO_BOUND;
+            loop {
+                // SAFETY: accepted owns a valid descriptor and F_GETFL takes no argument.
+                let flags = unsafe { libc::fcntl(accepted.as_raw_fd(), libc::F_GETFL) };
+                assert!(flags >= 0, "could not read accepted socket flags");
+                if flags & libc::O_NONBLOCK == 0 {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "receiver never entered blocking mode"
+                );
+                thread::sleep(Duration::from_millis(1));
+            }
+            serde_json::to_writer(&mut caller, &body).unwrap();
+            caller.write_all(b"\n").unwrap();
+            caller
+        });
 
-    let request = read_answer(&mut receiver)
-        .unwrap()
-        .expect("accepted stream dropped the delayed answer");
+        let request = read_answer(&mut receiver).unwrap();
+        // Keep the caller alive through receipt. The frame must be sufficient
+        // to deliver even when the kernel does not report EOF.
+        (request, client.join().unwrap())
+    });
+    let request = request.expect("accepted stream dropped the delayed answer");
     assert_eq!(request.request_id, pending.request_id);
     assert_eq!(request.call_id, pending.call_id);
     let mut output = Vec::new();
@@ -156,14 +174,27 @@ fn accepted_nonblocking_stream_delivers_delayed_answer() {
     .unwrap();
     drop(receiver);
 
-    assert_eq!(
-        client.join().unwrap(),
-        json!({"outcome": "delivered_to_hook"})
-    );
+    let acknowledgement: Value = serde_json::from_reader(caller).unwrap();
+    assert_eq!(acknowledgement, json!({"outcome": "delivered_to_hook"}));
     assert_eq!(
         serde_json::from_slice::<Value>(&output).unwrap(),
         json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}})
     );
+}
+
+#[test]
+fn read_answer_rejects_unterminated_and_oversized_frames() {
+    let body = br#"{"request_id":"fixture","call_id":"call-one","decision":"allow"}"#;
+    let mut oversized = body.to_vec();
+    oversized.resize(4097, b' ');
+    oversized.push(b'\n');
+
+    for bytes in [body.as_slice(), oversized.as_slice()] {
+        let (mut receiver, mut caller) = UnixStream::pair().unwrap();
+        caller.write_all(bytes).unwrap();
+        caller.shutdown(std::net::Shutdown::Write).unwrap();
+        assert!(read_answer(&mut receiver).unwrap().is_none());
+    }
 }
 
 #[test]

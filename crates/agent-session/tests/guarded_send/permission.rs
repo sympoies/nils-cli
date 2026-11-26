@@ -344,9 +344,12 @@ fn claude_permission_prompt_resolved_during_answer_sends_no_decision() {
     // after a complete answer is covered deterministically by transport tests;
     // connect alone does not prove the waiter has accepted this socket.
     hook(&f, "PostToolUse", Some("call-one"));
-    let bytes = json!({"request_id": request["request_id"], "call_id": request["call_id"], "decision":"allow"}).to_string();
-    let _ = stream.write_all(bytes.as_bytes());
-    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let mut bytes = serde_json::to_vec(
+        &json!({"request_id": request["request_id"], "call_id": request["call_id"], "decision":"allow"}),
+    )
+    .unwrap();
+    bytes.push(b'\n');
+    let _ = stream.write_all(&bytes);
     let mut reply = String::new();
     let _ = stream.read_to_string(&mut reply);
     let output = child.wait_with_output().unwrap();
