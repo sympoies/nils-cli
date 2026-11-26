@@ -36,8 +36,8 @@ assertion edits are canceled; new assertions alone are permitted.
 For changed Rust, JavaScript/TypeScript, Python and Java files, the detector
 compares test names and enclosing scopes in the complete pre-image at the
 three-dot merge base and the complete post-image at the PR head. Declarations
-distinguish same-named tests in different scopes. Each enclosing scope is joined
-with `::`:
+distinguish same-named tests in different scopes. The key joins scope names with
+`::`.
 
 | Language | Enclosing scopes | Example finding kind |
 | --- | --- | --- |

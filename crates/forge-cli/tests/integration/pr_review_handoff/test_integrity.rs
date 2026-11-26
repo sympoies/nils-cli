@@ -385,7 +385,7 @@ fn confirmed_changes_pass_but_author_self_confirmation_does_not() {
 fn stale_and_retired_declarations_reach_each_warning_surface() {
     let body = "## Test changes\n\n\
         - api_test.go | deleted-test:TestRemoved | The replacement covers the removed behavior.\n\
-        - api_test.go | deleted-test | This legacy row used to cover the same removal.\n\
+        - api_test.go | deleted-test | The replacement test covers the same behavior.\n\
         - api_test.go | assertion-change | This row describes an unchanged assertion.\n";
     let fixture = |confirmation: &str| {
         let stub = integrity_fixture(body, confirmation, "contributor");
