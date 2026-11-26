@@ -3,8 +3,10 @@
 
 ### Result
 
-- Defined the two-credential relay binding and server-set steward attestation
-  for fresh Console sessions.
+- Defined per-destination credential isolation, explicit relay grants and
+  server-set steward attestation for fresh Console roots.
+- Bound attested dispatch to relay capability discovery, a persisted
+  operation receipt and a verified result.
 
 ### Why / context
 

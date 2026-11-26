@@ -4,177 +4,271 @@ This contract defines relay-authorized role attestation on
 [`POST /sessions`](serve-session-create-v1.md) for
 [#4077](https://github.com/sympoies/nils-cli/issues/4077). It covers fresh
 Console roots and gives [role-based review-handoff supervisors](https://github.com/sympoies/nils-cli/issues/3853)
-a way to obtain the same broker-verified role as a trusted local launch.
-Runtime support follows in a separate test-first change.
+a way to obtain a broker-verified steward role. Runtime support follows in
+a separate test-first change.
 
 ## Console admission
 
-Console authenticates the dispatch caller and resolves its exact current
-caller grant and permitted destination using the trust boundary in the
-[resume-move transport](console-resume-move-transport-v1.md#delegated-caller-binding).
-An explicit server-side allowlist of authenticated dispatch callers maps
-an eligible launch to the literal role `steward`. The relay checks that
-policy for every attested dispatch.
+The origin daemon authenticates the managed caller's current session
+capability and runtime incarnation before sending a dispatch. The Console
+relay authenticates that daemon using its configured origin bearer and
+resolves the asserted caller ID and incarnation to the current caller on
+that machine. Existing Console ownership, permitted-destination and account
+checks also apply.
 
-The authenticated `POST /api/coordination/sessions/v1` request opts in
-with the JSON boolean `attest_role: true` at the top level, beside
-`source_session_id` and `source_incarnation`. This field conveys intent
-only. The relay consumes it and never forwards it to the destination.
-An omitted field or `attest_role: false` selects ordinary creation.
-An ordinary `role` label never opts in. For `true`, the relay requires a fresh root, no
-caller-supplied role or forge identity, and a matching grant. If any
-check fails, refuse before forwarding. A managed dispatcher may sponsor
-a root without becoming its lineage parent.
+A grant is a reusable operator-managed entry in the Console relay
+configuration. It maps the exact authenticated origin machine, caller
+session ID and current session incarnation to the literal allowed role
+`steward`. The relay checks that exact tuple and current caller authority on
+every request, including an operation receipt lookup. A stale or unknown
+incarnation fails admission. Removing the allowlist entry revokes it on the
+next request. A request field, ordinary role label or caller's own
+attestation supplies no grant and confers no authority to mint a steward.
 
-Console continues to apply its existing ownership, destination and
-account admission. The relay constructs its destination request from
-those decisions. Console retains its existing ownership of the session
-and claims only the identity returned by the pinned destination. A
-client cannot supply relay credentials, a binding, a forge initiator or
-forge launch context. The relay rejects attempts to supply them before
-dispatch and never forwards a local caller capability to the destination.
+The explicit client surface is the authenticated local
+`POST /sessions/{id}/console-start/v1` API. An attested submission sets
+the top-level JSON members `attest_role: true` and `no_parent: true`, and
+supplies a valid explicit managed ID in `session.id`. The existing
+`operation_id` and reconcile contract applies. An older local daemon rejects
+the unknown attestation member before dispatch. Clients must treat that
+refusal as unavailable and preserve the request's intent.
+
+The origin sends `attest_role: true` on
+`POST /api/coordination/sessions/v1` at the top level beside
+`source_session_id`, `source_incarnation` and `no_parent: true`. The literal
+case-sensitive key `attest_role` is valid only at the top level and only
+once, with a JSON boolean value. An omitted field or false selects ordinary
+creation. A different spelling, a nested field, duplicate members or a
+non-boolean value is invalid. An ordinary role label does not opt in.
+Attested requests require a fresh root and refuse any supplied role key,
+including null or an empty string. A managed dispatcher can sponsor the
+root without becoming its lineage parent. The relay consumes the intent
+and root flag and omits them from the destination request.
+
+### Capability discovery
+
+Before dispatching an attested create, the origin MUST discover support
+from its configured relay with authenticated
+`GET /api/coordination/attested-create/v1`, with no query or body.
+The relay uses the existing origin bearer and returns HTTP 200 with
+`schema_version: "agent-session.console-attested-create-capability.v1"`,
+`ok: true` and `data` containing the authenticated origin `machine` and
+`capability: "console-attested-create/v1"`. The origin verifies the response
+shape and the machine against its configured origin. Recheck before each
+dispatch. A missing route, invalid or missing capability or non-200 reply
+returns `console-create-attestation-unavailable` before a create POST.
+The origin MUST NOT drop the intent or fall back to ordinary creation.
+
+### Operation and replay
+
+Attested create requires an explicit `session.id` and binds it to the
+existing [Console operation receipt](coordination-runtime-v1.md#operation-diagnostics-and-reconciliation).
+Use the canonical UUIDv7 operation identity and existing freshness rules.
+The origin retains the operation identity for retries. Before possible
+dispatch, bind the receipt to the authorized caller and incarnation, the
+pinned destination, the requested ID, and the exact validated launch
+inputs including attestation intent. The relay must commit the dispatch
+claim before sending a destination create. Unavailable or uncertain
+receipt writes prohibit dispatch.
+
+Recheck the grant before using an existing receipt. Key the attested
+dispatch fence by the pinned destination and requested managed ID. An
+exact retry replays or reconciles its receipt without another destination
+create. Reusing either bound identity with changed inputs conflicts.
+Preserve the fence through relay restart and receipt expiry. A stale
+operation, unavailable receipt or unconfirmed outcome cannot reopen the
+fence, even with a fresh operation ID. Receipt reconciliation is read-only.
+
+The relay retains attribution in the private operation receipt, including
+the authenticated origin and caller incarnation, pinned destination, and
+the confirmed session identity. It claims ownership and records the start
+mark only after confirming the exact attested result. Neither a local
+caller capability nor caller-supplied relay credentials, binding, role or
+forge identity may cross into the destination request.
 
 ## Destination request
 
-The relay sends `POST /sessions` to the configured destination over the
-same protected machine transport as resume-move. It supplies exactly one
-`Authorization: Bearer` with the destination machine bearer and exactly
-one `X-Agent-Session-Relay-Token` with the distinct configured Console
-relay ingress credential. The credentials are separately provisioned
-and must differ. The destination verifies both before using the binding
-or processing the body. The relay uses the pinned route, follows no
-redirects, and keeps both credentials and the binding out of browsers,
-logs and error responses.
+The relay sends `POST /sessions` to the configured destination. The
+transport MUST protect credentials in transit, MUST NOT follow redirects
+and MUST NOT expose credentials or bindings to browsers, logs, runtime
+environments or error responses. These requirements apply to the
+origin-to-relay and relay-to-destination hops.
 
-Use `Content-Type: application/vnd.agent-session.console-attested-create.v1`
-for the UTF-8 JSON body. This media type is outside the ordinary JSON
-extractor's recognized types, so a destination without this contract
-refuses the request before ordinary creation. A request with this media
-type or the binding header selects attested admission. The relay sends
-neither on ordinary creates. A refusal, unsupported media type, or
-unconfirmed reply never authorizes an ordinary create or automatic
-replay.
+On this route the relay supplies exactly one `Authorization: Bearer` with
+the destination machine bearer and exactly one
+`X-Agent-Session-Attested-Create-Token` with the dedicated attested-create
+credential for that destination. The destination configures this secret
+locally as `AGENT_SESSION_CONSOLE_ATTESTED_CREATE_TOKEN`. Only the Console
+relay and the target daemon hold it. The Console relay selects it from
+its per-destination credential map. Each destination MUST use its own
+unique credential, distinct from the machine bearer and the federated
+mailbox `AGENT_SESSION_RELAY_INGRESS_TOKEN`.
+An absent, unconfigured, invalid or reused credential cannot authorize
+attestation.
 
-The relay sets exactly one `X-Agent-Session-Console-Create-Binding`
-header from its authenticated request context. As in resume-move, the
-value is unpadded base64url of a UTF-8 JSON object, with a maximum of
-2 KiB encoded. This is an encoding. Authentication comes from the
-protected transport and the two credentials. Use SHA-256 for request matching, as in the existing resume-move
-transport contract.
+The attested-create credential is accepted only for the attested media
+type and scope on `POST /sessions`. It grants no authority on ordinary
+create, mailbox ingress or resume-move.
+
+Rotate or revoke by changing the local credential configuration on the
+destination and the relay's matching destination entry. The destination
+loads its credential at daemon start. Applying a changed or removed
+credential requires a daemon restart. A partially updated pair fails
+closed.
+
+The attested media type is
+`application/vnd.agent-session.console-attested-create.v1`, with a UTF-8
+JSON body. It MUST NOT use a `+json` suffix or a generic JSON media type.
+An unsupported destination MUST reject the attested media type with HTTP
+415 before ordinary create admission. A request carrying the attested
+media type, token header or binding header selects attested admission.
+The relay sends none of these markers for ordinary create. Even if an
+intermediary rewrites the media type and strips all distinguishing
+headers, the forwarded body contains no authority to attest. At most
+ordinary creation can occur. Both the relay and origin reject the
+ordinary reply as unconfirmed, and never retry through ordinary create.
+
+The relay sets exactly one `X-Agent-Session-Console-Create-Binding` from
+its verified dispatch context. The value is unpadded base64url of a UTF-8
+JSON object, limited to 2 KiB encoded. Authentication comes from the
+protected transport and the two credentials. Serialize the body once and
+compute `body_sha256` over the exact bytes that the relay sends.
 
 | Member | Value |
 | --- | --- |
 | `schema_version` | Literal `agent-session.console-create-binding.v1` |
 | `scope` | Literal `create`, valid only for the attested `POST /sessions` |
-| `origin_machine` | Exact origin machine from the authenticated caller grant |
-| `caller_session_id` | Exact managed ID from that grant |
-| `caller_session_incarnation` | Exact canonical lowercase, hyphenated, non-nil UUID from that grant |
+| `origin_machine` | Exact origin machine authenticated by the relay |
+| `caller_session_id` | Exact managed ID matched by the relay grant |
+| `caller_session_incarnation` | Exact canonical lowercase, hyphenated, non-nil UUID matched by the relay grant |
 | `destination_machine` | Exact machine selected and authorized by the relay |
-| `attested_role` | Literal `steward`, selected by server policy |
-| `body_sha256` | 64 lowercase hexadecimal characters for the SHA-256 of the exact JSON body bytes sent to the destination |
+| `attested_role` | Literal `steward`, selected from the matched grant |
+| `body_sha256` | 64 lowercase hexadecimal characters for SHA-256 of the exact received body bytes |
 
-All members are required non-null strings. Machine and caller ID use
-the validated routing and grant selectors. Reject unknown and duplicate
-members, repeated binding headers and invalid encoding. The daemon
-checks the version, scope, exact local destination and digest of the
-received bytes before admitting the create. The caller fields describe
-the exact grant verified by the authenticated relay. They cannot
-establish a parent or a session owner on the daemon.
+All members are required non-null strings. Reject unknown or duplicate
+members, repeated binding headers and invalid encoding. Verify the
+version, scope, exact local destination and body digest before using the
+binding. Caller fields attribute the request to the grant verified by
+the relay. They convey neither lineage parentage nor session ownership
+to the daemon.
 
-The relay uses the ordinary fresh-create fields for launch inputs and
-omits body `role`. The daemon accepts only fresh root creates for
-attestation and builds the Console root lineage itself. If `lineage` is
-present, it must pass the existing lineage validation and describe a
-root. The daemon validates ordinary
-launch inputs through existing admission checks, including account,
-workspace and capacity. The attested request cannot import a provider
-conversation, resume a session, or attach the role to an existing
-record.
+The relay sends normal fresh-create launch inputs and the exact mandatory
+`id` and omits caller-supplied lineage. A caller-supplied role or forge
+identity is refused. Forge identity fields include `forge_context`, `initiator` and
+`attested_role` at the root or within lineage. Both
+relay and destination refuse non-empty caller lineage. An absent, null
+or empty lineage object is treated as empty and never stored. The
+destination constructs and stores its own Console root lineage. Account,
+workspace, capacity and other launch inputs pass normal create checks.
+An attested request cannot import a provider conversation, resume an
+existing session or attach the role to an existing record.
 
-## Persistence and Forge consumption
+## Persistence and confirmation
 
-At new-record persistence, the daemon sets the record's role to
-`steward` and stores an immutable `LaunchContext` in
-`lineage.forge_context` with `initiator: "console-relay"`,
-`role: "steward"` and `attested_role: "steward"`. The initiator is a
-daemon-owned literal. Neither the body nor the relay grant can choose
-an initiator or claim an existing operator initiator. Store the launch
-context with the new record before making the session available. The
-record contains no relay credential, raw binding or dispatch-caller
-identity from the header.
+At new-record persistence, the daemon sets `role` to `steward` and writes
+an immutable `lineage.forge_context` with `initiator: "console-relay"`,
+`role: "steward"` and `attested_role: "steward"`. The initiator literal
+`console-relay` is reserved for this daemon path and is unavailable to
+operator-selected initiator IDs. Persist the launch context before
+making the record available. The record carries no relay credential,
+raw binding or dispatch-caller identity from the header.
+
+The destination success is HTTP 201 and carries the resulting session
+projection. Before claiming ownership or returning success, the relay
+verifies the pinned destination's response, including the exact requested
+`session.id`, `session.role: "steward"` and all three required members of
+`session.lineage.forge_context`. The origin verifies the same fields in
+the relay reply before reporting success. A missing, malformed, mismatched
+or ordinary success response, a transport failure, or any reply that
+fails these checks leaves the outcome unconfirmed unless a definitive
+typed refusal was verified. Return `console-create-attestation-unavailable`
+and reconcile the existing receipt. An unconfirmed reply claims no
+ownership and permits neither another launch nor a fallback.
 
 The existing
 [broker identity projection](session-lineage-work-v1.md#forge-launch-context)
-returns `attested_role` for the authenticated current session and
-runtime incarnation. `forge-cli` reads that binding and verifies it
-matches the acting session. For the role-based review-handoff selector,
-`role:steward` matches the attested role independently of the initiator.
-Repository policy and the other
+returns `attested_role` for the authenticated current session and runtime
+incarnation. `forge-cli` verifies that the binding matches the acting
+session. The review-handoff selector `role:steward` matches the attested
+role independently of the initiator. Repository policy and the other
 [coordinator takeover checks](../../../forge-cli/docs/specs/forge-review-state-v1.md#coordinator-takeover)
-still apply. Ordinary role labels and display data confer no supervisor
-authority. A child has no inherited attestation. Existing lifecycle
-operations preserve the original context on the same record, and each
-replacement session requires its own authorized create.
+still apply. Each replacement session needs its own attested create.
+Children receive no inherited attestation. Lifecycle operations preserve
+the original context on the same record.
 
 ## Refusals
 
-These refusals precede record creation and launch. The destination uses
-the ordinary serve error envelope. Authenticate first, then verify the
-binding and role, then check the parsed body and regular create inputs.
-Ordinary requests retain their existing authentication and validation.
-Other routes cannot consume this binding as launch authority.
+The destination uses the ordinary serve error envelope. For attested
+admission, check the machine bearer before looking up or reporting the
+dedicated credential configuration. Once bearer authentication succeeds,
+check the dedicated credential, media type, binding and role in that
+order, then check the strict JSON body and ordinary launch constraints.
+At the relay, authenticate the origin before inspecting dispatch members;
+validate their shape, then check the exact caller and grant before any
+forwarding or receipt disclosure. Reuse the static message `invalid
+attested create request` for the invalid-body code at either boundary.
 
 | Boundary | HTTP | Code | Condition |
 | --- | --- | --- | --- |
-| Console relay | 400 | `console-create-invalid-body` | The dispatch request repeats `attest_role` or supplies a non-boolean value, including null. |
-| Console relay | 403 | `console-create-attestation-forbidden` | An authenticated caller requests attestation without a matching current role grant or uses a destination outside that grant. Advise using an authorized dispatch caller and destination. |
+| Console relay | 400 | `console-create-invalid-body` | Invalid dispatch shape, including an unknown, nested, repeated or non-boolean `attest_role`, or an invalid or missing explicit ID on opt-in. |
+| Console relay | 403 | `console-create-attestation-forbidden` | Missing or revoked exact grant, stale or unknown caller incarnation, or forbidden destination. |
 | Destination | 503 | `token-not-configured` | The destination machine bearer is unconfigured. |
-| Destination | 401 | `unauthorized` | The machine bearer is missing or invalid, or an attested request has a repeated bearer or a missing, invalid or repeated ingress credential. |
-| Destination or relay | 503 | `console-create-attestation-unavailable` | The authenticated attestation path is disabled, its distinct ingress credential is unavailable or equals the machine bearer, or the relay receives an unsupported-media-type refusal. |
-| Destination | 403 | `console-create-binding-mismatch` | After credential verification, the required media type or binding is missing, malformed or repeated, or the binding version, scope, destination or body digest does not match. |
-| Destination | 403 | `console-create-role-forbidden` | A validly shaped and matched binding proposes any role string other than the exact literal `steward`. |
-| Destination | 400 | `console-create-invalid-body` | After binding and role verification the attested body is invalid UTF-8 or JSON, is not an object, or contains duplicate JSON keys. |
-| Console relay or destination | 400 | `identity_session_binding_untrusted` | Any `lineage.forge_context` member, even if null. An attested request also refuses body `role` or any explicit forge identity field (`forge_context`, `initiator`, `attested_role`) at the root or in `lineage`. Console uses the same refusal for a client-supplied binding or ingress header. |
-| Console relay or destination | 400 | `role-requires-root` | The attested create supplies valid parented session lineage. |
-| Console relay or destination | 400 | `resume-unsupported` | The attested create requests a provider import or a resume. |
+| Destination | 401 | `unauthorized` | The machine bearer is missing, invalid or repeated, or the configured attested-create credential is missing from the request, invalid or repeated. |
+| Destination | 415 | Unsupported media type | The destination refuses the request media type before launch. The relay maps a destination 415 to `console-create-attestation-unavailable`. |
+| Destination, relay or origin | 503 | `console-create-attestation-unavailable` | The attested path or required credential configuration is unavailable, required discovery fails, or the result is unconfirmed. |
+| Destination | 403 | `console-create-binding-mismatch` | After both credentials and the media type are verified, the required binding is absent, invalid, repeated or mismatched. |
+| Destination | 403 | `console-create-role-forbidden` | A validly shaped and matched binding proposes a role other than `steward`. |
+| Destination | 400 | `console-create-invalid-body` | After binding and role verification, the body is invalid UTF-8 or JSON, is not an object, contains duplicate keys, or lacks a valid explicit ID. |
+| Console relay or destination | 400 | `identity_session_binding_untrusted` | Caller-supplied forge identity or any present body `role` key on attested create, or caller-supplied attestation headers at the relay. |
+| Console relay or destination | 400 | `role-requires-root` | Attested create lacks the required root intent at the relay or supplies non-empty lineage at either hop. |
+| Console relay or destination | 400 | `resume-unsupported` | Attested create requests a provider import or resume. |
 
-Ordinary bearer-authenticated creates may still carry an ordinary
-`role` under the existing root rule. They cannot set a forge launch
-context and still refuse `lineage.forge_context` with
-`identity_session_binding_untrusted`. Regular create failures,
-including an already used session ID, retain their existing codes.
-The relay preserves these typed refusals and their status without
-copying raw transport diagnostics.
+Ordinary bearer-authenticated creates may carry a descriptive role under
+the existing root rule. They still refuse any `lineage.forge_context`
+member, including null, with `identity_session_binding_untrusted`.
+Regular create failures, including an already used ID, retain their
+existing codes. Preserve verified typed refusals and their status across
+the relay, except for the unsupported-media-type mapping above. Do not
+copy raw diagnostics.
 
 ## Threat model and implementation acceptance
 
-- A holder of only the machine bearer keeps its ordinary machine
-  permissions, including ordinary creation. It cannot mint attested
-  launch context or provide a trusted relay binding. A holder of only
-  the ingress credential cannot create a session or attest a role.
-  A copy of the binding header alone grants neither permission.
-- The relay is trusted to authenticate the exact caller, enforce its
-  grant, and bind the role to the right body and destination. A stale
-  caller grant, caller-provided headers, or a binding copied to a
-  different body, machine or route cannot authorize an attested launch.
-  Compromise of the relay or both credentials is outside this boundary.
-  The role is provenance, and the existing same-OS-user launcher and
-  private registry trust boundary still applies. Existing access to
-  control a running session remains outside the create-time guarantee.
-- Verify that only explicit true opts in. An absent or false flag with
-  an ordinary `steward` label leaves ordinary creation in effect. The
-  flag never reaches the destination.
-- Verify that a grant-matched opt-in creates a fresh Console root with
-  the server-set context and that its broker-authenticated
-  `role:steward` satisfies the configured Forge selector. Exercise the
-  same call from an ordinary `steward`-labeled session, from a child and
-  with a stale broker incarnation. Each lacks a matching role binding.
-- Verify the exact refusals for missing credentials, invalid bindings,
-  a non-allowlisted role, caller-supplied identity, and child or resume
-  creation. Confirm that none produces a session record or start. Send
-  the attested media type to a destination that lacks support and
-  verify it cannot create an ordinary session.
+- The origin daemon is trusted to verify the local caller capability
+  and live incarnation. The relay trusts the configured origin bearer
+  to attest the origin and enforces the exact operator grant. Compromise
+  of the origin bearer defeats the caller authentication on which grant
+  matching relies. The relay is trusted with each destination's dedicated
+  credential and machine bearer.
+- A holder of only a machine bearer retains ordinary machine
+  permissions. A holder of only a dedicated attested-create credential,
+  mailbox ingress token or copied binding cannot attest a role. The
+  destination trusts an authenticated relay for the exact caller and
+  body. Compromise of the relay, both destination credentials, or the
+  same-user trusted launcher/private registry is outside the boundary.
+- Verify grant admission and revocation, a stale or unknown incarnation
+  and a caller who has the ordinary or attested `steward` role but lacks
+  the operator grant. Verify the exact root-only checks and invalid-body
+  cases, including wrong-case, nested and duplicate intent and null role.
+- Use the preceding released daemon in a synthetic loopback fixture.
+  Send the exact attested media type to `POST /sessions` with a valid
+  fixture machine bearer and otherwise ordinary valid create JSON.
+  Require HTTP 415 and verify that the session-record and launch counts
+  remain zero. Against an older origin and relay, require pre-dispatch
+  refusal and zero create POSTs for explicit attestation intent.
+- With valid and invalid machine bearers, verify that dedicated-credential
+  availability is disclosed only after bearer authentication. Exercise
+  missing and duplicate credentials and confirm zero launch.
+- Strip a binding, rewrite Content-Type, then drop all distinguishing
+  headers in a synthetic proxy. None of those cases may persist an
+  attested launch or produce ownership or a confirmed success. Reject
+  replies with the wrong ID, role or attested context. Verify that a
+  dropped reply and exact retry can only reconcile the first attempt.
+- Verify that a matching grant creates one fresh Console root with
+  server-set context and that the authenticated broker projection
+  satisfies the configured Forge role selector. Check that the dedicated
+  credential is scoped to one destination and refuse disabled, rotated
+  away, shared or wrong-purpose credentials.
 
-The contract requires security review and the Salon owner's exact-head
-sign-off. The merged contract is the implementation reference. Enable
-Console dispatch after the destination can admit the attested request.
+Merge requires security review and the Salon owner's exact-head sign-off.
+Enable attested dispatch after both relay capability discovery and
+destination attested admission are available.

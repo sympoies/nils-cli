@@ -4,6 +4,11 @@ Part of [Serve API v1](serve-api-v1.md). Its scope and shared rules also apply h
 
 ## Session creation
 
+[Attested Console creation](console-attested-create-v1.md) defines the
+separate admission path on `POST /sessions` selected by its dedicated media
+type or an attestation header. It requires the machine bearer, a
+per-destination attested-create credential and a matching relay binding.
+
 Console notice launches add optional `notice_kind`, `notice_source`, and
 `notice_id` beside the already encoded `prompt`. The target validates matching
 metadata before creating a session and does not encode the prompt again.
