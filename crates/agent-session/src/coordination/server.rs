@@ -736,6 +736,7 @@ pub(crate) fn send(
             context,
             cli::MessageSendArgs {
                 to_machine: None,
+                expect_label: None,
                 from_session: sender.id.clone(),
                 to_session: Some(id.to_string()),
                 body_file,

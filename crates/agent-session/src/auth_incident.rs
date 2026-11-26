@@ -718,6 +718,7 @@ fn send(
             from_session: record.id.clone(),
             to_session: Some(owner.session_id.clone()),
             to_machine: (owner.machine != local_machine).then(|| owner.machine.clone()),
+            expect_label: None,
             body_file,
             capability_file: Some(capability),
             idempotency_key,

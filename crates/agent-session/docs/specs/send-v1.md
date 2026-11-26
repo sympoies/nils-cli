@@ -124,6 +124,45 @@ cleanup path as post-paste guard failures. Post-paste refusal is distinct from a
 `pasted: true` and `cleared`. When `cleared` is `false` the pasted text may
 remain in the input, and the outcome stays unknown to callers.
 
+## Workflow label precondition
+
+`agent-session send ID --expect-label KEY=VALUE` requires an exact match on
+the destination's local session record before writing terminal input.
+`agent-session message send --to ID --expect-label KEY=VALUE` makes the same
+comparison before committing a local mailbox message.
+
+The workflow that owns the assignment sets or rotates the value on the
+destination host using its private session state:
+
+```bash
+agent-session metadata set-label "$SESSION_ID" assignment=handoff-42
+agent-session send "$SESSION_ID" --expect-label assignment=handoff-42 --key escape
+```
+
+Set a fresh value for each assignment. Rotate the old holder's value before
+publishing the new assignment to senders. The session record stores up to
+32 non-secret labels in `send_labels`. A key is 1–64 ASCII characters, starts
+with a lowercase letter, and contains lowercase letters, digits, dots, hyphens,
+or underscores. Values are 1–256 UTF-8 bytes without control characters.
+The setter operates on an exact session ID and returns the ID and label key.
+
+The setter and the receiver take the same destination record lock. The
+receiver resolves a unique destination prefix to the canonical ID and holds
+that ID's lock from comparison through terminal delivery or mailbox commit.
+A missing or different value exits `75` with `send-label-mismatch` before
+terminal input or enqueue. The error does not include either value. Invalid
+assignments exit `64` with `send-label-invalid`. A matching label permits
+the usual delivery checks, and omitting the flag retains the usual behavior.
+The label comparison is atomic with respect to the setter. The observation
+limits below still apply to terminal and provider state.
+
+An explicit `--to-machine` naming the local machine uses the local mailbox
+transaction. A different machine or a destination resolved as a service reply
+exits `69` with `send-label-unsupported` before outbox creation. A retained
+successful mailbox receipt replays for an identical request even after a
+rotation. Changing the expected label while reusing that idempotency key
+returns the usual key conflict.
+
 ## Observation limits
 
 These terminal checks report `data.guards.atomic: false` on guarded success.
@@ -515,11 +554,14 @@ included in refusal output. Use `--format json` to consume `error.code` and
 | `1` | Guard refusal, persistence failure, stopped runtime, or delivery failure. |
 | `64` | CLI usage error, including an empty/oversized idempotency key. |
 | `65` | Invalid session data or another existing data-contract refusal. |
+| `75` | The expected workflow label is missing or differs. |
 
 | Reason (`error.code`) | Meaning |
 | --- | --- |
 | `send-identity-mismatch` | Expected or live runtime/provider identity differs. |
 | `send-identity-unobservable` | Runtime identity or terminal markers are unavailable. |
+| `send-label-mismatch` | The destination's workflow label is missing or differs. |
+| `send-label-invalid` | The workflow label assignment is malformed. |
 | `send-session-not-idle` | A provider-reported phase or current turn is not idle. |
 | `send-provider-event-pending` | Provider event ingestion is queued/in progress. |
 | `send-idle-unobservable` | Provider-reported activity or ingress status cannot be observed. |
