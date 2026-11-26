@@ -2,7 +2,11 @@
 pub(crate) mod resume_metrics;
 
 use super::*;
+use std::borrow::Cow;
+use std::ffi::OsStr;
 use std::io::{Read, Seek, SeekFrom};
+use std::os::unix::ffi::OsStrExt;
+use std::process::Output;
 
 pub(super) const STDERR_FILE: &str = ".startup-stderr.log";
 
@@ -15,7 +19,7 @@ pub(super) fn start_interactive_tmux(
     provider_launch_args: &[String],
     agent_args: &[String],
 ) -> Result<TmuxRuntimeIdentity, CliError> {
-    let mut command = new_session_command(tmux_bin, tmux_scope_runner().as_ref());
+    let mut command = ProcessCommand::new(tmux_bin);
     command
         .arg("new-session")
         .arg("-d")
@@ -80,8 +84,7 @@ pub(super) fn start_interactive_tmux(
         } else {
             command.args(provider_launch_args);
         }
-        command.args(agent_args);
-        return run_tmux_new_session(command, tmux_bin, record);
+        return run_tmux_new_session(command, agent_args, record);
     }
 
     command.arg(agent_bin);
@@ -110,8 +113,7 @@ pub(super) fn start_interactive_tmux(
             command.args(provider_launch_args);
         }
     }
-    command.args(agent_args);
-    run_tmux_new_session(command, tmux_bin, record)
+    run_tmux_new_session(command, agent_args, record)
 }
 
 pub(super) fn start_resume_tmux(
@@ -121,7 +123,7 @@ pub(super) fn start_resume_tmux(
     record: &SessionRecord,
     resume_args: &[String],
 ) -> Result<TmuxRuntimeIdentity, CliError> {
-    let mut command = new_session_command(tmux_bin, tmux_scope_runner().as_ref());
+    let mut command = ProcessCommand::new(tmux_bin);
     command
         .arg("new-session")
         .arg("-d")
@@ -141,8 +143,42 @@ pub(super) fn start_resume_tmux(
     {
         command.arg("--plugin-dir").arg(module);
     }
-    command.args(&record.agent_args);
-    run_tmux_new_session(command, tmux_bin, record)
+    run_tmux_new_session(command, &record.agent_args, record)
+}
+
+/// Apply tmux argv encoding to the full launch before adding the outer scope
+/// wrapper's arguments. Launch builders set only arguments and environment.
+pub(super) fn output_new_session(
+    launch: &ProcessCommand,
+    agent_args: &[String],
+) -> io::Result<Output> {
+    let tmux_bin = Path::new(launch.get_program());
+    let mut command = new_session_command(tmux_bin, tmux_scope_runner().as_ref());
+    command.args(
+        launch
+            .get_args()
+            .chain(agent_args.iter().map(OsStr::new))
+            .map(literal_tmux_argument),
+    );
+    for (key, value) in launch.get_envs() {
+        if let Some(value) = value {
+            command.env(key, value);
+        } else {
+            command.env_remove(key);
+        }
+    }
+    runtime_environment::output(command, PANE_INPUT_COMMAND_TIMEOUT)
+}
+
+fn literal_tmux_argument(arg: &OsStr) -> Cow<'_, OsStr> {
+    // Both tmux 3.4 and 3.7b interpret a final semicolon before command
+    // dispatch and remove one preceding backslash from an escaped argument.
+    let Some(prefix) = arg.as_bytes().strip_suffix(b";") else {
+        return Cow::Borrowed(arg);
+    };
+    let mut escaped = OsStr::from_bytes(prefix).to_os_string();
+    escaped.push(r"\;");
+    Cow::Owned(escaped)
 }
 
 /// Observe only the fresh-launch interval. A timeout without a terminal fact
@@ -514,4 +550,53 @@ pub(super) fn release_held_runtime(
             None,
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn tmux_new_session_transports_literal_arguments() {
+        let lock = GlobalStateLock::new();
+        let _no_scope = EnvGuard::remove(&lock, "AGENT_SESSION_TMUX_SCOPE");
+        let _discard = EnvGuard::set(&lock, "NILS_TEST_TMUX_DISCARD", "present in parent");
+        let temp = tempfile::tempdir().unwrap();
+        let tmux = temp.path().join("tmux");
+        let argv = temp.path().join("argv");
+        fs::write(
+            &tmux,
+            "#!/bin/sh\nprintf '%s\\n' \"${NILS_TEST_TMUX_DISCARD-unset}\" \"$@\" > \"$NILS_TEST_TMUX_ARGV\"\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        let record = serde_json::from_value(json!({
+            "schema_version": SESSION_DOCUMENT_VERSION,
+            "id": "argv-fixture",
+            "agent": "codex",
+            "mode": "interactive",
+            "cwd": "/workspace/project",
+            "tmux_session": "argv-fixture",
+            "created_at": "2030-01-01T00:00:00Z",
+            "updated_at": "2030-01-01T00:00:00Z"
+        }))
+        .unwrap();
+        let mut command = ProcessCommand::new(&tmux);
+        command
+            .env("NILS_TEST_TMUX_ARGV", &argv)
+            .env_remove("NILS_TEST_TMUX_DISCARD")
+            .args(["new-session", "-e"])
+            .arg(OsStr::from_bytes(b"DEMO=label\xff;"))
+            .args(["--", "example"]);
+        let agent_args = ["label; with space", "label;", r"label\;", ""].map(str::to_owned);
+
+        let error = run_tmux_new_session(command, &agent_args, &record).unwrap_err();
+        assert_eq!(error.code(), "command-failed");
+        assert_eq!(
+            fs::read(argv).unwrap(),
+            b"unset\nnew-session\n-e\nDEMO=label\xff\\;\n--\nexample\nlabel; with space\nlabel\\;\nlabel\\\\;\n\n"
+        );
+    }
 }
