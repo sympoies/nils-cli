@@ -15,6 +15,8 @@ import shlex
 import sys
 
 SETUP_ACTION = 'dtolnay/rust-toolchain'
+# The upstream numbered refs select a Rust version; master accepts an explicit input.
+ACTION_REF = 'df2a88e9fe4098bad09cb42c3dec7187f15861fc'
 EXACT_VERSION = re.compile(r'^\d+\.\d+\.\d+$')
 CHANNEL_LINE = re.compile(r'^\s*channel\s*=\s*"([^"]*)"')
 # Each pattern captures the toolchain a command or setting selects; the first
@@ -109,11 +111,11 @@ def scan_lines(relative, text, pin, problems, workflow):
         if match:
             name, _, ref = match.group(1).partition('@')
             if name == SETUP_ACTION:
-                if ref != pin:
-                    problems.append(f'{relative}:{number}: {match.group(1)} (expected {SETUP_ACTION}@{pin})')
+                if ref != ACTION_REF:
+                    problems.append(f'{relative}:{number}: {match.group(1)} (expected {SETUP_ACTION}@{ACTION_REF})')
             elif RUST_ACTION_NAME.search(name):
                 problems.append(
-                    f'{relative}:{number}: {match.group(1)} (toolchain setup must use {SETUP_ACTION}@{pin})')
+                    f'{relative}:{number}: {match.group(1)} (toolchain setup must use {SETUP_ACTION}@{ACTION_REF})')
 
 
 def jobs(text):
@@ -173,14 +175,16 @@ def check_job_setup(relative, text, pin, problems):
         setup_at = cargo_at = None
         for index, step in enumerate(steps(lines)):
             joined = '\n'.join(step)
-            if re.search(rf'uses:\s*{re.escape(SETUP_ACTION)}@{re.escape(pin)}\s*$', joined, re.MULTILINE):
+            if re.search(rf'uses:\s*{re.escape(SETUP_ACTION)}@{re.escape(ACTION_REF)}\s*$', joined, re.MULTILINE):
+                if not re.search(rf'^\s*toolchain:\s*[\"\']?{re.escape(pin)}[\"\']?\s*$', joined, re.MULTILINE):
+                    problems.append(f'{relative}: job {name} toolchain setup must explicitly select {pin}')
                 setup_at = index if setup_at is None else setup_at
             if cargo_at is None and CARGO_WORD.search(run_text(step)):
                 cargo_at = index
         if cargo_at is not None and (setup_at is None or setup_at > cargo_at):
             problems.append(
                 f'{relative}: job {name} runs cargo without a pinned toolchain step '
-                f'({SETUP_ACTION}@{pin} before the first cargo step)')
+                f'({SETUP_ACTION}@{ACTION_REF} before the first cargo step)')
 
 
 def helper_files(root):

@@ -86,7 +86,9 @@ jobs:
 
       - name: Set up Rust for the existing contract tests
         if: steps.discover.outputs.newer == 'true'
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
+        with:
+          toolchain: 1.100.0
 
       - name: Install cargo-nextest
         if: steps.discover.outputs.newer == 'true'
