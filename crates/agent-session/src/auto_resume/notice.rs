@@ -4,7 +4,7 @@ use super::*;
 /// A live submit releases the record lock for provider ingress. This separate
 /// nonblocking fence distinguishes it from a crash-left checking claim. Closing
 /// the descriptor releases the fence, including after process termination.
-pub(super) fn try_attempt(
+pub(crate) fn try_attempt(
     context: &CliContext,
     id: &str,
 ) -> Result<Option<std::fs::File>, CliError> {

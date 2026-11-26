@@ -307,6 +307,9 @@ _agent__session() {
             agent__session__resume__move,status)
                 cmd="agent__session__resume__move__status"
                 ;;
+            agent__session__resume__move,stop)
+                cmd="agent__session__resume__move__stop"
+                ;;
             agent__session__title,auto)
                 cmd="agent__session__title__auto"
                 ;;
@@ -3993,7 +3996,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__resume__move)
-            opts="-h --state-dir --host --help plan export prepare stage status abort recover"
+            opts="-h --state-dir --host --help plan stop export prepare stage status abort recover"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -4321,6 +4324,43 @@ _agent__session() {
             fi
             case "${prev}" in
                 --move-id)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agent__session__resume__move__stop)
+            opts="-h --session --incarnation --format --state-dir --host --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --incarnation)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

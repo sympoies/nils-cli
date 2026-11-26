@@ -776,7 +776,7 @@ fn guarded(
                     admission.bind_placeholder(&mut owned_placeholder)?;
                 }
                 if first_enter {
-                    admission.check_first_submit(text)?;
+                    admission.check_first_submit(text, text_wake.is_some())?;
                     first_enter = false;
                 } else {
                     admission.check(Some(text), "submit")?;

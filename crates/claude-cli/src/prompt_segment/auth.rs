@@ -1,3 +1,4 @@
+use crate::auth::store::{self, Identity};
 use nils_common::env as shared_env;
 use serde_json::Value;
 use std::process::{Command, Stdio};
@@ -15,13 +16,11 @@ pub enum TokenSource {
 pub struct AccessToken {
     pub value: String,
     pub source: TokenSource,
-    pub plan: Option<&'static str>,
 }
 
 pub fn resolve_access_token() -> Option<AccessToken> {
     if let Some(value) = shared_env::env_non_empty("CLAUDE_PROMPT_SEGMENT_ACCESS_TOKEN") {
         return Some(AccessToken {
-            plan: active_plan(&value),
             value,
             source: TokenSource::AccessTokenEnv,
         });
@@ -40,15 +39,54 @@ pub fn resolve_access_token() -> Option<AccessToken> {
     keychain_credentials().and_then(|raw| credentials_login(&raw, TokenSource::Keychain))
 }
 
-fn active_plan(token: &str) -> Option<&'static str> {
-    use crate::auth::store;
-
+fn active_account(token: &str) -> Option<serde_json::Map<String, Value>> {
     let path = store::credentials_file()?;
     let credentials = store::read_json_object(&path, "active-credentials-invalid").ok()??;
     let oauth = credentials.get("claudeAiOauth")?.as_object()?;
-    (oauth.get("accessToken")?.as_str()?.trim() == token)
-        .then(|| crate::rate_limits::display::plan(oauth))
-        .flatten()
+    if store::non_empty_str(oauth.get("accessToken"))?.trim() != token {
+        return None;
+    }
+    let config = store::global_config_file()?;
+    let mut config = store::read_json_object(&config, "active-config-invalid").ok()??;
+    Some(store::take_object(&mut config, "oauthAccount"))
+}
+
+/// Prefer the saved profile's name, not fields containing credentials.
+pub(super) fn account_name(token: &str) -> Option<String> {
+    let active = active_account(token);
+    let identity = active.as_ref().and_then(Identity::from_account);
+    if let Some(name) = store::list_profiles()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|name| {
+            store::read_profile(name).is_ok_and(|profile| {
+                store::non_empty_str(profile.oauth.get("accessToken")).map(str::trim) == Some(token)
+                    || identity
+                        .as_ref()
+                        .zip(profile.identity())
+                        .is_some_and(|(active, saved)| active.same_account(&saved))
+            })
+        })
+    {
+        return Some(name);
+    }
+
+    // Only use a local account label after matching the token to its login.
+    let active = active?;
+    if let Some(name) = store::config_dir()
+        .and_then(|dir| std::fs::read_to_string(dir.join(store::ACCOUNT_MARKER)).ok())
+        .map(|name| name.trim().to_owned())
+        .filter(|name| store::is_account_dir_name(name))
+    {
+        return Some(name);
+    }
+    let (name, domain) = store::non_empty_str(active.get("emailAddress"))?
+        .trim()
+        .split_once('@')?;
+    (!name.is_empty()
+        && !domain.is_empty()
+        && !name.chars().any(|ch| ch.is_control() || ch.is_whitespace()))
+    .then(|| name.to_owned())
 }
 
 fn credentials_login(raw: &str, source: TokenSource) -> Option<AccessToken> {
@@ -61,7 +99,6 @@ fn credentials_login(raw: &str, source: TokenSource) -> Option<AccessToken> {
     Some(AccessToken {
         value: token.to_string(),
         source,
-        plan: crate::rate_limits::display::plan(oauth),
     })
 }
 

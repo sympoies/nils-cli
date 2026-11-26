@@ -171,20 +171,26 @@ mod tests {
     #[test]
     fn dangling_entries_do_not_reject_valid_skills() {
         let temp = tempfile::tempdir().unwrap();
+        let actual_root = temp.path().join("actual-skills");
+        fs::create_dir(&actual_root).unwrap();
+        // Exercise a noncanonical spelling even if TMPDIR itself is canonical.
         let root = temp.path().join("skills");
+        symlink(&actual_root, &root).unwrap();
         let good = root.join("good");
         fs::create_dir_all(&good).unwrap();
-        fs::write(good.join("SKILL.md"), "fixture").unwrap();
+        let skill = good.join("SKILL.md");
+        fs::write(&skill, "fixture").unwrap();
         symlink(root.join("missing"), root.join("dangling")).unwrap();
         let mut command = Command::new("codex");
         apply_roots(&mut command, vec![root]).unwrap();
+        let canonical_skill = skill.canonicalize().unwrap();
         let args = command
             .get_args()
             .map(|arg| arg.to_str().unwrap())
             .collect::<Vec<_>>();
         assert!(
             args.iter()
-                .any(|arg| arg.contains(good.join("SKILL.md").to_str().unwrap()))
+                .any(|arg| arg.contains(canonical_skill.to_str().unwrap()))
         );
     }
 

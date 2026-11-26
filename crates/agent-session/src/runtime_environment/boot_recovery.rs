@@ -5,6 +5,12 @@ use serde_json::json;
 const KEY: &str = "boot_recovery";
 const SHUTDOWN_MARK_TTL_SECONDS: i64 = 24 * 60 * 60;
 
+pub(crate) fn shutdown_mark_armed(record: &SessionRecord) -> bool {
+    record.extra.get(KEY).is_some_and(|value| {
+        value.get("shutdown_boot_id").is_some() || value.get("marked_at_epoch").is_some()
+    })
+}
+
 pub(crate) fn persist_launch(
     context: &CliContext,
     record: &mut SessionRecord,
@@ -380,6 +386,7 @@ fn prepare(context: &CliContext, tmux: &std::path::Path) -> Result<serde_json::V
             let Some(mut record) = read_exact(context, &id)? else {
                 return Ok(None);
             };
+            crate::restart::ensure_not_fenced(context, &record)?;
             // An interrupted or repeated preparation cannot leave an older mark armed.
             if let Some(entry) = record
                 .extra

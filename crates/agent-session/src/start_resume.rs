@@ -300,12 +300,15 @@ pub(crate) fn prove_stopped(
     let prior = persisted_prior_tmux_runtime_identities(record).map_err(|_| unknown())?;
     verify_stopped_process_runtimes(&prior, Duration::ZERO).map_err(|_| unknown())?;
     match persisted_tmux_runtime_identity(record).map_err(|_| unknown())? {
-        Some(identity) => {
+        Some(identity)
+            if identity.process_group_id.is_some()
+                || crate::runtime_is_from_prior_boot(&identity) =>
+        {
             verify_stopped_tmux_runtime(tmux, &record.tmux_session, &identity, Duration::ZERO)
                 .map_err(|_| unknown())?
         }
         None if runtime_is_proven_never_launched(record) && prior.is_empty() => {}
-        None => return Err(unknown()),
+        _ => return Err(unknown()),
     }
     if matches!(
         persisted_tmux_termination_state(record).map_err(|_| unknown())?,
