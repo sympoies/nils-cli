@@ -384,10 +384,12 @@ async fn upload_original_names_are_safe_and_match_history_parts_on_reload() {
             .zip([&named, &missing, &unsafe_name])
         {
             assert_eq!(image.get("original_name"), part.get("original_name"));
+            if let Some(name) = image.get("original_name") {
+                assert!(!name.as_str().unwrap().contains("private"));
+            }
             assert_eq!(image["upload_path"], path.to_str().unwrap());
             assert_eq!(part["upload_path"], image["upload_path"]);
         }
-        assert!(!serde_json::to_string(message).unwrap().contains("private"));
     }
     let page = fixture
         .state

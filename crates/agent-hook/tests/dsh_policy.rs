@@ -249,7 +249,7 @@ fn lifecycle_request(
 }
 
 fn git(fixture: &Fixture, args: &[&str]) {
-    let output = Command::new("git")
+    let output = support::git_command(fixture)
         .arg("-C")
         .arg(&fixture.root)
         .args(args)
@@ -2896,7 +2896,7 @@ fn unsafe_default_delivery_resolves_explicit_cross_repository_targets() {
         vec!["config", "user.email", "test@example.com"],
         vec!["config", "user.name", "Test"],
     ] {
-        let output = Command::new("git")
+        let output = support::git_command(&fixture)
             .arg("-C")
             .arg(&target)
             .args(args)
@@ -2913,7 +2913,7 @@ fn unsafe_default_delivery_resolves_explicit_cross_repository_targets() {
         vec!["add", "--all"],
         vec!["commit", "--quiet", "-m", "test: initial"],
     ] {
-        let output = Command::new("git")
+        let output = support::git_command(&fixture)
             .arg("-C")
             .arg(&target)
             .args(args)

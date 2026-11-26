@@ -19,6 +19,16 @@ pub struct Fixture {
     pub policy: PathBuf,
 }
 
+pub fn git_command(fixture: &Fixture) -> Command {
+    let config = fixture.home.join(".gitconfig");
+    fs::write(&config, "").expect("private git config");
+    let mut command = Command::new("git");
+    command.env("GIT_CONFIG_GLOBAL", config);
+    command.env("GIT_CONFIG_NOSYSTEM", "1");
+    command.args(["-c", "commit.gpgsign=false"]);
+    command
+}
+
 impl Fixture {
     pub fn new(policy: &str) -> Self {
         let temp = tempfile::TempDir::new().expect("tempdir");
