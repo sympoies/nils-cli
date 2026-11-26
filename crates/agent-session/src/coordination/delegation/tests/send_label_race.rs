@@ -21,7 +21,9 @@ fn send_labels_rotation_cannot_interleave_comparison_and_commit() {
             context,
             MessageSendArgs {
                 from_session: "caller".into(),
-                to_session: Some(recipient.into()),
+                // Delivery resolves a unique prefix, but the workflow
+                // always sets labels on the exact canonical session ID.
+                to_session: Some("recip".into()),
                 to_machine: None,
                 expect_label: Some(old.into()),
                 body_file: body.clone(),

@@ -1011,7 +1011,20 @@ fn send_authenticated(
             return Ok(replay);
         }
     }
-    let mut lifecycle_ids = vec![sender_session_id, recipient_session_id];
+    // A guarded send must lock the same canonical ID as the label writer,
+    // even when the caller addresses that session by a unique prefix.
+    let guarded_recipient_id = expected_label
+        .as_ref()
+        .map(|_| {
+            crate::load_session_record(context, recipient_session_id)
+                .map(|record| record.id)
+                .map_err(|_| message_not_found())
+        })
+        .transpose()?;
+    let recipient_lock_id = guarded_recipient_id
+        .as_deref()
+        .unwrap_or(recipient_session_id);
+    let mut lifecycle_ids = vec![sender_session_id, recipient_lock_id];
     lifecycle_ids.sort_unstable();
     lifecycle_ids.dedup();
     let mut _lifecycle_locks = Vec::with_capacity(lifecycle_ids.len());
@@ -1023,8 +1036,13 @@ fn send_authenticated(
     }
     let sender = crate::load_session_record(context, sender_session_id)
         .map_err(|_| super::unauthorized())?;
-    let recipient = crate::load_session_record(context, recipient_session_id)
-        .map_err(|_| message_not_found())?;
+    let recipient =
+        crate::load_session_record(context, recipient_lock_id).map_err(|_| message_not_found())?;
+    // If the canonical record disappeared, a prefix fallback would load a
+    // different record whose lock we do not hold.
+    if guarded_recipient_id.is_some() && recipient.id != recipient_lock_id {
+        return Err(message_not_found());
+    }
     let recipient_incarnation = incarnation(&recipient).map_err(|_| message_not_found())?;
     if expected_recipient_incarnation.is_some_and(|expected| expected != recipient_incarnation) {
         return Err(CliError::data(

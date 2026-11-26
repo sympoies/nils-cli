@@ -147,7 +147,8 @@ or underscores. Values are 1–256 UTF-8 bytes without control characters.
 The setter operates on an exact session ID and returns the ID and label key.
 
 The setter and the receiver take the same destination record lock. The
-receiver holds it from comparison through terminal delivery or mailbox commit.
+receiver resolves a unique destination prefix to the canonical ID and holds
+that ID's lock from comparison through terminal delivery or mailbox commit.
 A missing or different value exits `75` with `send-label-mismatch` before
 terminal input or enqueue. The error does not include either value. Invalid
 assignments exit `64` with `send-label-invalid`. A matching label permits
