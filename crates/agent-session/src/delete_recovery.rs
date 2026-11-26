@@ -4,6 +4,8 @@ use super::*;
 pub(crate) mod codex_daemons;
 mod idle;
 #[cfg(target_os = "macos")]
+mod macos_codex_daemons;
+#[cfg(target_os = "macos")]
 mod macos_orphans;
 mod shared_daemons;
 
@@ -1163,7 +1165,9 @@ fn classify_macos_environment(
         Some(environment) => {
             scan.inspected += 1;
             if matches_runtime(environment, id, runtime) {
-                if orphan && let Some(command) = macos_shared_daemon(bytes, environment, policy) {
+                if orphan
+                    && let Some(command) = macos_shared_daemon(pid, bytes, environment, policy)
+                {
                     scan.shared_daemons.push(shared_daemons::RetainedDaemon {
                         pid,
                         command,
@@ -1192,6 +1196,7 @@ fn classify_macos_environment(
 
 #[cfg(any(target_os = "macos", test))]
 fn macos_shared_daemon(
+    _pid: libc::pid_t,
     bytes: &[u8],
     environment: &[u8],
     policy: Option<&shared_daemons::DaemonPaths>,
@@ -1200,6 +1205,12 @@ fn macos_shared_daemon(
     let executable = Path::new(std::str::from_utf8(executable).ok()?);
     if shared_daemons::macos_sccache_server(executable, environment) {
         return Some("sccache".to_string());
+    }
+    #[cfg(target_os = "macos")]
+    if executable.file_name().is_some_and(|name| name == "codex")
+        && let Some(command) = macos_codex_daemons::classify(_pid)
+    {
+        return Some(command.to_owned());
     }
     shared_daemons::gnupg_executable(executable, policy)
 }

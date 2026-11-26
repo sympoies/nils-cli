@@ -132,7 +132,7 @@ fn authorize(
     let environment = macos_environment(&bytes)
         .ok_or_else(|| io::Error::other("process environment unavailable"))?;
     if !matches_runtime(environment, id, launch)
-        || macos_shared_daemon(&bytes, environment, policy).is_some()
+        || macos_shared_daemon(pid, &bytes, environment, policy).is_some()
     {
         return Ok(None);
     }
@@ -159,7 +159,7 @@ fn wait_for_exit(targets: &mut Vec<(ProcessSummary, AuditToken)>, timeout: Durat
     }
 }
 
-fn process_info(pid: libc::pid_t) -> io::Result<Option<libc::proc_bsdinfo>> {
+pub(super) fn process_info(pid: libc::pid_t) -> io::Result<Option<libc::proc_bsdinfo>> {
     let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
     let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
     let read = unsafe {

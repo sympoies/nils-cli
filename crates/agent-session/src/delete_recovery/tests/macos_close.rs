@@ -1,4 +1,5 @@
 use super::*;
+use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::assert_eq;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -62,6 +63,10 @@ fn wait_until(mut condition: impl FnMut() -> bool) {
 }
 
 fn fixture_process(pid: libc::pid_t) -> Option<(u32, bool)> {
+    fixture_process_info(pid).map(|info| (info.pbi_ppid, info.pbi_status == libc::SZOMB))
+}
+
+fn fixture_process_info(pid: libc::pid_t) -> Option<libc::proc_bsdinfo> {
     let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
     let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
     let length = unsafe {
@@ -73,10 +78,7 @@ fn fixture_process(pid: libc::pid_t) -> Option<(u32, bool)> {
             size,
         )
     };
-    (length == size).then(|| {
-        let info = unsafe { info.assume_init() };
-        (info.pbi_ppid, info.pbi_status == libc::SZOMB)
-    })
+    (length == size).then(|| unsafe { info.assume_init() })
 }
 
 fn start_orphan(
@@ -208,4 +210,92 @@ fn ordinary_macos_close_stops_only_marked_session_orphans() {
     assert!(!lookalike_path.with_extension("term").exists());
     assert_eq!(fixture_process(daemon_pid), Some((1, false)));
     assert!(!daemon_path.with_extension("term").exists());
+}
+
+#[test]
+fn ordinary_macos_close_retains_proven_codex_provider_daemon() {
+    let lock = GlobalStateLock::new();
+    let (tmp, context, mut record) = session_fixture();
+    let home = tmp.path().join("codex-home");
+    let package = home.join("packages/app-server-daemon");
+    let executable = package.join("releases/fixture/bin/codex");
+    fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+    std::os::unix::fs::symlink("releases/fixture", package.join("current")).unwrap();
+    let pid_dir = home.join("app-server-daemon");
+    fs::create_dir(&pid_dir).unwrap();
+    let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", home.to_str().unwrap());
+
+    let daemon_path = tmp.path().join("provider-daemon");
+    let (launcher, daemon_pid) = start_orphan(&executable, &daemon_path, &record, true, false);
+    let pane = launcher.id() as libc::pid_t;
+    let tmux_probe_fixture::Probe::Running(identity) = tmux_probe_fixture::running_identity(
+        "$42",
+        "%42",
+        pane,
+        Some(pane),
+        Some(&record.runtime.as_ref().unwrap().launch_id),
+    ) else {
+        unreachable!()
+    };
+    persist_tmux_runtime_identity(&mut record, &identity).unwrap();
+    write_session_record(&context, &record).unwrap();
+    exit_launcher(launcher, &daemon_path, daemon_pid);
+
+    let info = fixture_process_info(daemon_pid).unwrap();
+    // proc_uniqidentifierinfo is 56 bytes with the unique ID after the UUID.
+    let mut unique_info = [0_u64; 7];
+    let bytes = std::mem::size_of_val(&unique_info) as libc::c_int;
+    assert_eq!(
+        unsafe { libc::proc_pidinfo(daemon_pid, 17, 1, unique_info.as_mut_ptr().cast(), bytes) },
+        bytes
+    );
+    let pid_record = json!({
+        "pid": daemon_pid,
+        "processIdentity": {
+            "bootId": capture_macos_boot_id().unwrap(),
+            "uniqueId": unique_info[2],
+            "startSeconds": info.pbi_start_tvsec,
+            "startMicroseconds": info.pbi_start_tvusec,
+        },
+    });
+    nils_common::fs::write_atomic(
+        &pid_dir.join("daemon.pid"),
+        &serde_json::to_vec(&pid_record).unwrap(),
+        0o600,
+    )
+    .unwrap();
+
+    let orphan_path = tmp.path().join("session-codex");
+    let (launcher, orphan_pid) = start_orphan(&executable, &orphan_path, &record, true, false);
+    exit_launcher(launcher, &orphan_path, orphan_pid);
+    let mut stale_record = pid_record;
+    stale_record["pid"] = json!(orphan_pid);
+    nils_common::fs::write_atomic(
+        &pid_dir.join("daemon-updater.pid"),
+        &serde_json::to_vec(&stale_record).unwrap(),
+        0o600,
+    )
+    .unwrap();
+
+    let tmux = tmp.path().join("tmux");
+    let _capture = tmux_probe_fixture::install(&tmux, tmux_probe_fixture::Probe::Stopped);
+    let _status = tmux_probe_fixture::install_status(&tmux, tmux_probe_fixture::Status::Stopped);
+    let result = delete_session_with_timeouts(
+        &context,
+        &record.id,
+        tmux,
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    assert!(result.deleted);
+    assert_eq!(fixture_process(daemon_pid), Some((1, false)));
+    assert!(!daemon_path.with_extension("term").exists());
+    let retained = &result.process_inventory.retained_shared_daemons;
+    assert_eq!(retained.len(), 1);
+    assert_eq!(retained[0].pid, daemon_pid);
+    assert_eq!(retained[0].command, "codex-app-server");
+    assert!(orphan_path.with_extension("term").is_file());
+    assert!(fixture_process(orphan_pid).is_none_or(|(_, zombie)| zombie));
 }
