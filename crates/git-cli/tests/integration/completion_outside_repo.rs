@@ -147,3 +147,30 @@ fn completion_rejects_unknown_shell_outside_git_repo() {
     );
     assert!(!output.stderr_text().contains("Not a git repository"));
 }
+
+#[test]
+fn dynamic_completion_exposes_conditional_removal_flags() {
+    let harness = GitCliHarness::new();
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    for shell in ["bash", "zsh"] {
+        let options = harness
+            .cmd_options(dir.path())
+            .with_env("COMPLETE", shell)
+            .with_env("_CLAP_COMPLETE_INDEX", "3")
+            .with_env("_CLAP_IFS", "\n");
+        let output = run_with(
+            &harness.git_cli_bin(),
+            &["--", "git-cli", "worktree", "remove", "--"],
+            &options,
+        );
+        assert_eq!(output.code, 0, "{}", output.stderr_text());
+        for flag in ["--expect-head", "--require-clean", "--ancestor-of"] {
+            assert!(
+                output
+                    .stdout_text()
+                    .lines()
+                    .any(|line| line.split(':').next() == Some(flag))
+            );
+        }
+    }
+}

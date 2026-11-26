@@ -459,6 +459,26 @@ fn build_worktree_group() -> Command {
                         .action(ArgAction::SetTrue)
                         .help("Compatibility no-op"),
                 )
+                .arg(
+                    Arg::new("expect-head")
+                        .long("expect-head")
+                        .value_name("oid")
+                        .help("Require the target's full HEAD object ID")
+                        .num_args(1),
+                )
+                .arg(
+                    Arg::new("require-clean")
+                        .long("require-clean")
+                        .help("Require a clean checkout with no Git operation in progress")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("ancestor-of")
+                        .long("ancestor-of")
+                        .value_name("ref")
+                        .help("Require HEAD to be an ancestor of a fully qualified local ref")
+                        .num_args(1),
+                )
                 .arg(format_arg()),
         )
         .subcommand(

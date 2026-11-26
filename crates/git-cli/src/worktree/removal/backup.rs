@@ -1,5 +1,8 @@
 //! Object-backed worktree preservation; the real index is never the snapshot index.
-use super::{CliError, Fence, git, git_error_reason, lease, probe, probe_error_reason, refused};
+use super::{
+    CliError, Fence, eligibility::Predicates, git, git_error_reason, in_phase, lease, probe,
+    probe_error_reason, refused,
+};
 mod signing;
 
 use serde::{Deserialize, Serialize};
@@ -107,8 +110,9 @@ fn config(target: &Path, key: &str) -> Option<String> {
 
 pub(in crate::worktree) fn capture(
     target: &Path,
-    fence: &Fence,
+    fence: &mut Fence,
     acknowledge: bool,
+    eligibility: &Predicates,
 ) -> Result<Receipt, CliError> {
     let mut receipt = Receipt {
         max_bytes: 50 * 1024 * 1024,
@@ -137,14 +141,29 @@ pub(in crate::worktree) fn capture(
             "refs/tags",
             "refs/remotes",
         ],
-    )
-    .map_err(|error| caused_failure("HEAD reachability unavailable", error))?;
-    let status = git(
-        target,
-        &["status", "--porcelain=v1", "--untracked-files=all"],
-    )
-    .map_err(|error| caused_failure("working tree inventory unavailable", error))?;
-    if !status.is_empty() {
+    );
+    let status = (!eligibility.require_clean).then(|| {
+        git(
+            target,
+            &[
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+            ],
+        )
+    });
+    // Recheck against current state after the read-only backup inventory and
+    // before writing snapshot objects or releasing the checkout lease.
+    eligibility
+        .verify(target, fence)
+        .map_err(|error| in_phase(error, "fence", "none"))?;
+    let reachable =
+        reachable.map_err(|error| caused_failure("HEAD reachability unavailable", error))?;
+    let status = status
+        .transpose()
+        .map_err(|error| caused_failure("working tree inventory unavailable", error))?;
+    if status.is_some_and(|status| !status.is_empty()) {
         receipt.reasons.push("dirty-or-untracked".into());
         receipt
             .warnings

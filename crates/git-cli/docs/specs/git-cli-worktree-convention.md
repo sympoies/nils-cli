@@ -26,7 +26,9 @@ If `AGENT_HOME` is unset, the CLI falls back to
 
 - `git-cli worktree add <slug> [--from <ref>] [--kind <kind>] [--format text|json]`
 - `git-cli worktree list [--format text|json]`
-- `git-cli worktree remove <slug-or-path> [--safe] [--forge-delivery] [--acknowledge-backup-omissions] [--format text|json]`
+- `git-cli worktree remove <slug-or-path>` accepts `--expect-head <oid>`,
+  `--require-clean`, `--ancestor-of <ref>`, `--safe`, `--forge-delivery`,
+  `--acknowledge-backup-omissions`, and `--format text|json`.
 - `git-cli worktree restore <backup-ref> [--path <dir>] [--format text|json]`
 - `git-cli worktree backup list [--format text|json]`
 - `git-cli worktree backup prune [--older-than <dur>] [--dry-run] [--format text|json]`
@@ -143,6 +145,42 @@ warning; it does not rebind the persistent inventory. Unknown or unavailable
 lease/registry state also warns. Existing readable collision evidence still
 blocks in every coordination mode. Stable lock files are never unlinked to
 bypass exclusion. Install matching lifecycle-aware launchers and removers.
+
+### Conditional removal
+
+For cleanup based on a previous HEAD sample, pass any combination of these options:
+
+- `--expect-head <oid>` requires the full HEAD object ID sampled by the caller.
+- `--require-clean` requires no staged or unstaged changes, non-ignored untracked
+  files, or in-progress Git operation. An index that can hide changes, such as
+  one with assume-unchanged or skip-worktree entries, cannot prove cleanliness.
+- `--ancestor-of <ref>` requires HEAD to be an ancestor of a commit selected by
+  an exact, fully qualified local ref, such as `refs/heads/main` or
+  `refs/remotes/origin/main`. Equality satisfies ancestry. The check uses locally
+  available objects and genuine commit parents. It disables lazy fetch and
+  ignores replacement objects and grafts. Cached refs reflect the last local
+  update, and shallow or incomplete history can prevent proof.
+
+```sh
+git-cli worktree remove "$target" --expect-head "$sampled_head" \
+  --require-clean --ancestor-of refs/heads/main --format json
+```
+
+The removal transaction checks eligibility after inventory and before it writes a
+backup or releases the caller's lease. It requires both the lifecycle and
+checkout fences and holds them through removal. A refusal has a nonzero exit
+status and `error.details.phase = "fence"` with
+`error.details.worktree_mutation = "none"`. The conditional refusal codes are
+`removal-head-mismatch`, `removal-dirty`, `removal-ref-unavailable`,
+`removal-not-ancestor`, and `removal-proof-unavailable`. Existing holder,
+Git-lock and target-identity checks also apply. Ordinary removal continues to
+preserve discardable work through the backup path below.
+
+Batch callers invoke removal once per target with that target's expected HEAD
+and inspect each result. The fences coordinate tools that share the same
+lifecycle and checkout locks. They cannot serialize arbitrary editors, direct
+Git commands, or updates to shared refs. The proof uses the selected ref tip
+observed during the check. Keep other writers idle through removal.
 
 ### Automatic preservation and restore
 
