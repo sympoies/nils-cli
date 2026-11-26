@@ -5,6 +5,67 @@ use std::path::Path;
 
 use pretty_assertions::assert_eq;
 
+#[test]
+fn commit_dry_run_refuses_ambiguous_identity_in_managed_worktree() {
+    let Some(fixture) = crate::identity_fixture::Fixture::new(false) else {
+        return;
+    };
+    fixture.git(&["remote", "add", "other", "git@github.com:sandbox/other.git"]);
+    fs::write(fixture.worktree.join("change"), b"staged\n").unwrap();
+    fixture.git(&["add", "change"]);
+    let head = fixture.git(&["rev-parse", "HEAD"]);
+    let staged = fixture.git(&["ls-files", "--stage"]);
+    let run = |extra: &[&str]| {
+        let mut args = vec![
+            "commit",
+            "--repo",
+            fixture.worktree.to_str().unwrap(),
+            "--message",
+            "fix: change fixture",
+            "--json",
+        ];
+        args.extend(extra);
+        nils_test_support::cmd::run_with(
+            Path::new(env!("CARGO_BIN_EXE_semantic-commit")),
+            &args,
+            &fixture.options(&fixture.repo),
+        )
+    };
+
+    let actual = run(&[]);
+    assert_eq!(actual.code, 1, "{}", actual.stderr_text());
+    assert!(actual.stderr_text().contains("identity_target_ambiguous"));
+    let preview = run(&["--dry-run"]);
+    assert_eq!(preview.code, actual.code, "{}", preview.stdout_text());
+    assert_eq!(preview.stderr_text(), actual.stderr_text());
+    assert!(preview.stdout.is_empty());
+    assert!(
+        preview
+            .stderr_text()
+            .contains("no authoring remote is selected")
+    );
+    assert!(preview.stderr_text().contains("origin, other"));
+    assert_eq!(fixture.git(&["rev-parse", "HEAD"]), head);
+    assert_eq!(fixture.git(&["ls-files", "--stage"]), staged);
+
+    fixture.git(&["config", "branch.fix/replay-fixture.pushRemote", "origin"]);
+    let preview = run(&["--dry-run"]);
+    assert_eq!(preview.code, 0, "{}", preview.stderr_text());
+    let data: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();
+    assert_eq!(data["ok"], true);
+    assert_eq!(fixture.git(&["rev-parse", "HEAD"]), head);
+    assert_eq!(fixture.git(&["ls-files", "--stage"]), staged);
+
+    let actual = run(&[]);
+    assert_eq!(actual.code, 0, "{}", actual.stderr_text());
+    fixture.git(&["verify-commit", "HEAD"]);
+    assert_eq!(
+        fixture.git(&["log", "-1", "--format=%s"]),
+        "fix: change fixture"
+    );
+    assert_eq!(fixture.git(&["diff", "--cached", "--name-only"]), "");
+}
+
 fn as_str(output: &[u8]) -> String {
     String::from_utf8_lossy(output).to_string()
 }

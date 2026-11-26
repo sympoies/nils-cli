@@ -275,6 +275,8 @@ impl DefaultBranchCommitOptions {
 
 #[path = "default_branch/commit_options.rs"]
 mod default_branch_options;
+#[path = "commit/git_commit.rs"]
+mod git_commit;
 
 fn run_options(
     mut options: CommitOptions,
@@ -389,6 +391,13 @@ fn run_options(
     };
 
     if options.dry_run {
+        if installation.is_none()
+            && let Err(err) = git_commit::preflight(tmpfile.path(), &options, operation)
+        {
+            eprintln!("{err}");
+            return EXIT_ERROR;
+        }
+
         if options.output_format == OutputFormat::Json {
             print_commit_json_result(
                 operation,
@@ -417,7 +426,7 @@ fn run_options(
         progress.tick();
     }
 
-    let status = git_commit(tmpfile.path(), &options, operation, installation);
+    let status = git_commit::run(tmpfile.path(), &options, operation, installation);
 
     if let Some(progress) = &progress {
         progress.finish_and_clear();
@@ -1128,14 +1137,6 @@ fn run_git_output_with_pager(repo: Option<&Path>, args: &[&str]) -> std::io::Res
     }
 }
 
-fn run_git_output_with_pager_owned(
-    repo: Option<&Path>,
-    args: &[String],
-) -> std::io::Result<Output> {
-    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    run_git_output_with_pager(repo, &refs)
-}
-
 fn run_git_status_inherit_with_pager(
     repo: Option<&Path>,
     args: &[&str],
@@ -1144,49 +1145,6 @@ fn run_git_status_inherit_with_pager(
         Some(repo) => common_git::run_status_inherit_in_with_env(repo, args, &CAT_PAGER_ENV),
         None => common_git::run_status_inherit_with_env(args, &CAT_PAGER_ENV),
     }
-}
-
-fn git_commit(
-    message_path: &Path,
-    options: &CommitOptions,
-    operation: CommitOperation,
-    installation: Option<&mut crate::default_branch::install::Installation<'_>>,
-) -> anyhow::Result<std::process::ExitStatus> {
-    if let Some(installation) = installation {
-        return installation.commit(message_path, options.signoff, &options.trailers);
-    }
-    let message_path = message_path.to_string_lossy();
-    let mut args = vec!["commit".to_string()];
-    if matches!(
-        operation,
-        CommitOperation::Amend | CommitOperation::MessageOnlyAmend
-    ) {
-        args.push("--amend".to_string());
-    }
-    if options.allow_empty {
-        args.push("--allow-empty".to_string());
-    }
-    if options.signoff {
-        args.push("--signoff".to_string());
-    }
-    for trailer in &options.trailers {
-        args.push("--trailer".to_string());
-        args.push(trailer.clone());
-    }
-    if options.no_edit {
-        args.push("--no-edit".to_string());
-    } else {
-        args.push("-F".to_string());
-        args.push(message_path.to_string());
-    }
-
-    let output = run_git_output_with_pager_owned(options.repo.as_deref(), &args)?;
-
-    if !output.stderr.is_empty() {
-        std::io::stderr().write_all(&output.stderr)?;
-    }
-
-    Ok(output.status)
 }
 
 fn git_cleanup_commit(
@@ -1986,7 +1944,7 @@ fn print_usage(stderr: bool) {
     );
     let _ = writeln!(
         out,
-        "      --dry-run                Validate + staged checks, skip git commit"
+        "      --dry-run                Check message, staged changes and identity without committing"
     );
     let _ = writeln!(
         out,

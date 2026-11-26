@@ -77,7 +77,9 @@ Commit operation options:
 - `--message-only` - with `--amend`, update only the `HEAD` message and
   require no staged changes
 - `--allow-empty` - allow a commit operation without staged changes
-- `--dry-run` - validate message and staged-state checks without committing
+- `--dry-run` - validate the message, staged state, and any configured forge
+  identity policy without committing. Identity checks can verify the provider
+  account and record local audit events.
 - `--validate-only` - validate only the message; does not require a git repo
 
 Output and recovery options:

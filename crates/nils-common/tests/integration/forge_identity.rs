@@ -448,15 +448,15 @@ mod execution {
                 "--add",
                 "--push",
                 "origin",
-                "https://github.com/sandbox/other.git",
+                "https://fixture:synthetic-password@github.com/sandbox/other.git",
             ],
         );
-        assert_eq!(
-            identity::target_for_remote(Some(repo.path()), "origin", true)
-                .unwrap_err()
-                .code,
-            "identity_target_ambiguous"
-        );
+        let error = identity::target_for_remote(Some(repo.path()), "origin", true).unwrap_err();
+        assert_eq!(error.code, "identity_target_ambiguous");
+        let detail = error.to_string();
+        assert!(detail.contains("remote origin resolves to 2 push URLs"));
+        assert!(detail.contains("github.com/sandbox/widget, github.com/sandbox/other"));
+        assert!(!detail.contains("synthetic-password"));
         raw_git(
             repo.path(),
             &[

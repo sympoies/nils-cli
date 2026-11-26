@@ -15,6 +15,8 @@ mod default_branch;
 mod default_branch_contract;
 #[path = "integration/exit_codes.rs"]
 mod exit_codes;
+#[path = "integration/rebase_fixture.rs"]
+mod identity_fixture;
 #[path = "integration/rebase.rs"]
 mod rebase;
 #[path = "integration/staged_context.rs"]

@@ -1,6 +1,4 @@
-#[path = "rebase_fixture.rs"]
-mod fixture;
-use fixture::Fixture;
+use crate::identity_fixture::{self as fixture, Fixture};
 use pretty_assertions::assert_eq;
 use std::fs;
 
