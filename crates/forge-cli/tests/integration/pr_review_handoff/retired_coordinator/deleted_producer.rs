@@ -2,9 +2,66 @@
 use super::*;
 use pretty_assertions::{assert_eq, assert_ne};
 use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+
+fn private_file(path: &Path, bytes: &[u8]) {
+    fs::write(path, bytes).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+fn local_board_caller(state: &Path) -> PathBuf {
+    let id = "successor-session";
+    let incarnation = "fixture-incarnation";
+    let token = "fixture-capability-for-local-board-0001";
+    let now = jiff::Timestamp::now();
+    let digest = |value: &str| {
+        review_state::sha256_digest(value.as_bytes())
+            .trim_start_matches("sha256:")
+            .to_owned()
+    };
+    let session = state.join("sessions").join(id);
+    let coordination = session.join("coordination");
+    fs::create_dir_all(&coordination).unwrap();
+    private_file(
+        &session.join("session.json"),
+        &serde_json::to_vec(&json!({
+            "schema_version": "agent-session.session.v1",
+            "id": id, "agent": "claude", "mode": "interactive", "title": "Fixture successor",
+            "cwd": state, "tmux_session": "fixture-successor",
+            "created_at": now.to_string(), "updated_at": now.to_string(),
+            "coordination_mode": "advisory",
+            "runtime": {"kind": "tmux", "tmux_session": "fixture-successor",
+                        "generation": 1, "started_at": now.to_string(), "launch_id": incarnation}
+        }))
+        .unwrap(),
+    );
+    let capability = coordination.join(format!("capability-{}", digest(incarnation)));
+    private_file(&capability, token.as_bytes());
+    private_file(
+        &coordination.join("heartbeat"),
+        format!("{incarnation}:{}\n", now.as_second()).as_bytes(),
+    );
+    fs::create_dir_all(state.join("coordination")).unwrap();
+    private_file(
+        &state.join("coordination/registry.json"),
+        &serde_json::to_vec(&json!({
+            "schema_version": "agent-session.coordination-registry.v2",
+            "fingerprint_epoch": 1,
+            "fingerprint_key": "fixture-private-fingerprint-key-material-0000000001",
+            "brokers": {id: {
+                "session_id": id, "incarnation": incarnation, "coordination_mode": "advisory",
+                "capability_digest": digest(token), "generation": 1, "state": "ready",
+                "heartbeat_at": now.to_string(), "heartbeat_epoch": now.as_second()
+            }},
+            "claims": [], "operations": [], "messages": [], "receipts": {}, "notifications": {}
+        }))
+        .unwrap(),
+    );
+    capability
+}
 
 #[test]
-fn current_deleted_producer_recovers_after_staleness_and_reassigns_at_exact_tip() {
+fn authenticated_local_recovery_uses_retained_deleted_producer_at_exact_tip() {
     let producer = nils_test_support::bin::required_sibling("agent-session", "nils-agent-session");
     let seeded = records(retired_coordinator_handoff(), Some(HEAD));
     let tip = &seeded.last().unwrap().record_digest;
@@ -49,8 +106,9 @@ fn current_deleted_producer_recovers_after_staleness_and_reassigns_at_exact_tip(
         .unwrap();
     assert!(deleted.status.success(), "{deleted:?}");
     assert!(!session_dir.exists());
-    let ledger: Value =
-        serde_json::from_slice(&fs::read(state.join("board/closed-ledger.json")).unwrap()).unwrap();
+    let closed_ledger_path = state.join("board/closed-ledger.json");
+    let mut ledger: Value =
+        serde_json::from_slice(&fs::read(&closed_ledger_path).unwrap()).unwrap();
     let retained = &ledger["entries"][0]["record"];
     assert_eq!(retained["state"], "closed");
     assert_eq!(retained["close_reason"], "deleted");
@@ -60,9 +118,9 @@ fn current_deleted_producer_recovers_after_staleness_and_reassigns_at_exact_tip(
         .parse()
         .unwrap();
     assert!(activity >= before && activity <= jiff::Timestamp::now());
-    let mut board = Command::new(&producer);
-    let _board_home = nils_test_support::hermetic::isolate(&mut board);
-    let produced = board
+    let mut board_cmd = Command::new(&producer);
+    let _board_home = nils_test_support::hermetic::isolate(&mut board_cmd);
+    let produced = board_cmd
         .arg("--state-dir")
         .arg(&state)
         .args(["board", "--state", "all", "--format", "json"])
@@ -78,23 +136,25 @@ fn current_deleted_producer_recovers_after_staleness_and_reassigns_at_exact_tip(
         retained["last_terminal_activity_at"]
     );
     let board_output = stub.tempdir.path().join("producer-board.json");
-    let activity_text = retained["last_terminal_activity_at"].as_str().unwrap();
-    let adapter = stub.write_stub("producer-board", r#"#!/bin/sh
-unset AGENT_SESSION_ID AGENT_SESSION_RUNTIME_ID AGENT_SESSION_CAPABILITY_FILE AGENT_SESSION_CHECKPOINT_FILE
+    let adapter = stub.write_stub(
+        "producer-board",
+        r#"#!/bin/sh
+unset AGENT_SESSION_RUNTIME_ID AGENT_SESSION_CAPABILITY_FILE AGENT_SESSION_CHECKPOINT_FILE
+if [ -n "$DELETED_PRODUCER_CAPABILITY" ]; then
+    export AGENT_SESSION_CAPABILITY_FILE="$DELETED_PRODUCER_CAPABILITY"
+fi
 "$DELETED_PRODUCER_BIN" --state-dir "$DELETED_PRODUCER_STATE" "$@" > "$DELETED_PRODUCER_BOARD"
 result=$?
-sed "s|$DELETED_PRODUCER_ACTIVITY_FROM|$DELETED_PRODUCER_ACTIVITY_TO|g" "$DELETED_PRODUCER_BOARD" > "$DELETED_PRODUCER_BOARD.aged"
-mv "$DELETED_PRODUCER_BOARD.aged" "$DELETED_PRODUCER_BOARD"
 cat "$DELETED_PRODUCER_BOARD"
 exit "$result"
-"#);
+"#,
+    );
     let stub = stub
         .env("FORGE_CLI_AGENT_SESSION_BIN", adapter.to_string_lossy())
         .env("DELETED_PRODUCER_BIN", producer.to_string_lossy())
         .env("DELETED_PRODUCER_STATE", state.to_string_lossy())
         .env("DELETED_PRODUCER_BOARD", board_output.to_string_lossy())
-        .env("DELETED_PRODUCER_ACTIVITY_FROM", activity_text)
-        .env("DELETED_PRODUCER_ACTIVITY_TO", activity_text)
+        .env("DELETED_PRODUCER_CAPABILITY", "")
         .env("AGENT_SESSION_TMUX_BIN", tmux.to_string_lossy())
         .env("AGENT_SESSION_MACHINE", "source")
         .env("AGENT_SESSION_ID", "successor-session")
@@ -131,28 +191,41 @@ exit "$result"
     let board: Value = serde_json::from_slice(&fs::read(&board_output).unwrap()).unwrap();
     assert_eq!(&board["data"]["board"]["records"][0], produced_row);
 
-    // Age the producer's terminal activity by the minimum supported policy
-    // plus one second instead of sleeping, so no production clock or trust
-    // override is needed. The adapter rewrites only the board output the
-    // consumer reads; the extra second clears the whole-second boundary.
-    let aged_text = activity
-        .checked_sub(jiff::SignedDuration::from_secs(61))
-        .unwrap()
-        .to_string();
-    let mut aged_row = produced_row.clone();
-    aged_row["last_terminal_activity_at"] = json!(aged_text);
-    assert!(
-        jiff::Timestamp::now().as_second()
-            - aged_text.parse::<jiff::Timestamp>().unwrap().as_second()
-            >= 60
-    );
+    // Age the stored row before querying the real local board.
+    let aged_close = activity - jiff::SignedDuration::from_hours(8 * 24);
+    let aged_text = (aged_close - jiff::SignedDuration::from_secs(1)).to_string();
+    ledger["entries"][0]["record"]["closed_at"] = json!(aged_close.to_string());
+    ledger["entries"][0]["record"]["last_terminal_activity_at"] = json!(aged_text);
+    private_file(&closed_ledger_path, &serde_json::to_vec(&ledger).unwrap());
+    let mut aged_row = ledger["entries"][0]["record"].clone();
+    aged_row["machine"] = json!("source");
+    let dependency_path = state.join("board/review-handoff-coordinators.json");
+    let set_dependencies = |digests: Vec<String>| {
+        private_file(
+            &dependency_path,
+            &serde_json::to_vec(&json!({
+                "schema_version": "agent-session.board-review-handoff-coordinators.v1",
+                "coordinator_digests": digests
+            }))
+            .unwrap(),
+        );
+    };
+    set_dependencies(vec![review_state::sha256_digest(
+        COORDINATOR_UUID.as_bytes(),
+    )]);
+    let ordinary = board_cmd.output().unwrap();
+    assert!(ordinary.status.success());
+    let ordinary: Value = serde_json::from_slice(&ordinary.stdout).unwrap();
+    assert_eq!(ordinary["data"]["board"]["records"], json!([]));
+    assert_eq!(ordinary["data"]["board"].get("retained_for_review"), None);
     let repo = stub.tempdir.path().join("repo");
     let base = nils_test_support::git::git(&repo, &["rev-parse", "HEAD"]);
     let base = base.trim();
+    let capability = local_board_caller(&state);
     let stub = stub
         .env("PROVIDER_BASE", base)
         .env("PROVIDER_BASE_REF", "main")
-        .env("DELETED_PRODUCER_ACTIVITY_TO", &aged_text);
+        .env("DELETED_PRODUCER_CAPABILITY", capability.to_string_lossy());
     let args: Vec<_> = recover_args
         .iter()
         .map(|arg| if *arg == OLD { base } else { *arg })
@@ -182,10 +255,21 @@ exit "$result"
         json!(aged_text)
     );
     let board: Value = serde_json::from_slice(&fs::read(&board_output).unwrap()).unwrap();
-    assert_eq!(&board["data"]["board"]["records"][0], &aged_row);
+    assert_eq!(&board["data"]["board"]["retained_for_review"][0], &aged_row);
     let still_retained: Value =
         serde_json::from_slice(&fs::read(state.join("board/closed-ledger.json")).unwrap()).unwrap();
     assert_eq!(still_retained, ledger);
+    set_dependencies(vec![review_state::sha256_digest(b"successor-session")]);
+    let released = board_cmd
+        .env("AGENT_SESSION_ID", "successor-session")
+        .env("AGENT_SESSION_CAPABILITY_FILE", &capability)
+        .output()
+        .unwrap();
+    assert!(released.status.success(), "{released:?}");
+    let released: Value = serde_json::from_slice(&released.stdout).unwrap();
+    assert_eq!(released["data"]["board"]["retained_for_review"], json!([]));
+    let pruned: Value = serde_json::from_slice(&fs::read(&closed_ledger_path).unwrap()).unwrap();
+    assert_eq!(pruned["entries"], json!([]));
     let saved: Vec<String> = serde_json::from_slice(&fs::read(&ledger_path).unwrap()).unwrap();
     let chain =
         review_state::parse_chain(saved.iter().map(String::as_str), "acme/widgets", 7).unwrap();

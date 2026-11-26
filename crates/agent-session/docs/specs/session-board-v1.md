@@ -297,6 +297,7 @@ naming the additive capabilities the producer supports:
 | `unsubmitted_attempt.v1` | Record `unsubmitted_attempt`, the text-free composer occupancy signal. |
 | `runtime_exit.v1` | Record `runtime_exit`, with bounded exit reason and explicit recovery action. |
 | `terminal_activity.v1` | Record `last_terminal_activity_at`, the latest observed terminal activity timestamp. |
+| `review_handoff_retention.v1` | `retained_for_review` on the operator closed feed and authenticated, unfiltered recovery views. |
 | `programs.v1` | The daemon route `GET /board/programs/v1` and the aggregator view `programs` member. Named by the daemon snapshot only. |
 
 A reader feature-detects from this list, never from the presence of a record
@@ -465,15 +466,43 @@ continue normally; ordinary retention still applies.
 
 ### Bound
 
-An entry is retained while both hold: it is at most 7 days old by `closed_at`,
-and it is among the newest 256 entries. Whichever bound is smaller wins.
-Pruning runs on every append and read. Eviction is safe here, unlike
-coordination receipts, because a consumer that missed evicted entries is told
-so by `board-cursor-expired`.
+An ordinary entry is at most 7 days old by `closed_at` and among the newest
+256 entries within that window. Pruning runs on every append and read. A
+consumer that missed evicted ordinary entries receives `board-cursor-expired`.
 
 Closed records keep `role`, `lineage`, and `work`, so a tree view can show
 recently closed children. A ledger entry written before those members existed
 is served with them as `null`.
+
+### Review handoff dependencies
+
+The operator publishes a complete snapshot at
+`<state-dir>/board/review-handoff-coordinators.json`, atomically replaced as a
+private, user-owned regular file with mode `0600`, one link, and a 1 MiB size
+limit. The snapshot contains the unique `sha256:<64 lowercase hex digits>`
+coordinator digests of the latest verified handoffs on open pull requests,
+including handoffs where control has returned to the coordinator. The digest
+hashes the session ID without the machine suffix. A complete scan replaces the
+previous set, including with an empty set. After a failed or incomplete scan,
+the publisher leaves the last complete snapshot in place. PR closure or
+ownership transfer releases an old digest when the last open handoff stops
+referencing it. A missing file means an empty set. An invalid or untrusted
+snapshot returns `board-ledger-unavailable` without pruning the ledger.
+
+```json
+{
+  "schema_version": "agent-session.board-review-handoff-coordinators.v1",
+  "coordinator_digests": []
+}
+```
+
+Pruning preserves an existing matching `deleted` or `archived` closed entry
+with a readable `closed_at`, even when its age or sequence falls outside the
+ordinary bounds. The entry keeps its original sequence, close reason, and
+timestamps. Reads stamp the original serving machine as for ordinary entries.
+The stored ledger still has a 16 MiB byte bound. Once released, an entry is
+eligible for ordinary pruning. A dependency cannot restore a pruned entry or
+authorize a review action.
 
 ### Read
 
@@ -487,22 +516,27 @@ result in `data.board_closed`:
   "schema_version": "agent-session.board-closed.v1",
   "record_schema": "agent-session.board-record.v1",
   "machine": "host-a",
-  "extensions": ["lineage.v1", "work.v1", "context_usage.v1", "launch_env.v1"],
+  "extensions": ["lineage.v1", "work.v1", "context_usage.v1", "launch_env.v1", "review_handoff_retention.v1"],
   "generated_at": "2030-01-01T00:05:00Z",
   "entries": [{"cursor": "opaque", "record": {}}],
-  "next_cursor": "opaque"
+  "next_cursor": "opaque",
+  "retained_for_review": []
 }
 ```
 
 - A cursor is opaque. Consumers store and return it and never parse it. It
   binds `ledger_id` and `seq`.
-- `next_cursor` is the cursor of the last returned entry, or the ledger head
-  when none is returned. It is always valid for the next request, including
-  on an empty ledger.
+- `next_cursor` is the cursor of the last returned ordinary entry, or the
+  ledger head when none is returned. It is always valid for the next request,
+  including on an empty ledger.
 - Order is by `seq` only. `closed_at` is wall-clock time and is not a
   guaranteed ordering key.
-- The retained ledger holds at most 256 entries, so one response always
-  returns the whole tail. There is no pagination in v1.
+- The ordinary `entries` array holds at most 256 entries. There is no
+  pagination in v1.
+- `retained_for_review` is the full current subset of source entries referenced
+  by open handoffs, including ones still within ordinary retention. It uses
+  the same entry shape and sequence order. It is independent of `since` and
+  does not advance the ordinary feed cursor or fill gaps in that feed.
 - A malformed cursor (not one this daemon could have issued) fails with
   `board-cursor-invalid` (HTTP 400). This is the only invalid case.
 - A well-formed cursor fails with `board-cursor-expired` (HTTP 410) when its
@@ -521,6 +555,17 @@ On `board-cursor-expired` the consumer discards its cursor and resynchronizes:
    stopped records;
 3. applying [Vanished records](#vanished-records) to any row it held for that
    machine that is in neither response.
+
+An aggregator serving retained review evidence must consume this complete
+authenticated subset or apply the same complete dependency snapshot to its
+existing authenticated closed rows. It must release records to ordinary
+retention when the last dependency ends, preserve the serving machine and
+original timestamps, and keep the evidence outside the ordinary query window
+and anonymous results. Review evidence in the authenticated board view uses
+`retained_for_review` as an array of records under the same principal and
+source-freshness rules as the rest of the board. Missing or synthetic rows
+cannot supply evidence. Provider and review authorization remain the recovery
+consumer's responsibility.
 
 ## Relay route
 
@@ -781,6 +826,12 @@ takes `machine` as the [list label](#list-machine-label) does and
 always emits `messaging_supported: false`. `machines` has one available entry for the local machine, `retention`
 is `7d` (the ledger bound), and `since` is clamped to it.
 
+An unfiltered local view requested by a verified managed session includes the
+current review-evidence records in `retained_for_review`. The ordinary
+`records` list remains subject to the usual window and limits. Recovery
+checks both lists together so that matching live or contradictory lifecycle
+evidence can still veto takeover.
+
 ### Output
 
 JSON uses the `cli.agent-session.board.v1` envelope:
@@ -820,6 +871,7 @@ in coordination v1.
 | `agent-session.board-closed.v1` | `data.board_closed` of `GET /board/closed/v1` |
 | `agent-session.board-programs.v1` | `data.board_programs` of `GET /board/programs/v1` |
 | `agent-session.board-closed-ledger.v1` | Private ledger file only; never served |
+| `agent-session.board-review-handoff-coordinators.v1` | Private operator dependency snapshot; never served |
 | `agent-session.board-view.v1` | Aggregator query, relay route (raw), and CLI `data.board` |
 | `cli.agent-session.board.v1` | CLI JSON envelope |
 

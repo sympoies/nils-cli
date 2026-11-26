@@ -64,6 +64,16 @@ struct Query {
     root: Option<String>,
 }
 
+impl Query {
+    fn includes_review_evidence(&self) -> bool {
+        self.state == StateFilter::All
+            && self.since_seconds.is_none()
+            && self.repo.is_none()
+            && self.machine.is_none()
+            && self.root.is_none()
+    }
+}
+
 pub(super) fn query_invalid(message: &str) -> CliError {
     CliError::usage("board-query-invalid", message, None)
 }
@@ -132,12 +142,13 @@ fn select_mode(
         if let Some(board) = relay::fetch(context, &caller, &filters)? {
             return Ok((json!({ "mode": "relay", "board": board }), Some(caller)));
         }
-        return local_view(context, query)
+        return local_view(context, query, true)
             .map(|board| (json!({ "mode": "local", "board": board }), Some(caller)));
     }
     // No relay to try. The caller is still marked when its identity verifies.
     let caller = claimed.and_then(|session_id| relay::authenticate(context, &session_id).ok());
-    local_view(context, query).map(|board| (json!({ "mode": "local", "board": board }), caller))
+    local_view(context, query, caller.is_some())
+        .map(|board| (json!({ "mode": "local", "board": board }), caller))
 }
 
 pub(crate) fn run(context: &CliContext, args: BoardArgs) -> i32 {
@@ -204,7 +215,7 @@ fn compare_records(a: &Value, b: &Value) -> Ordering {
         .then_with(|| a["session_id"].as_str().cmp(&b["session_id"].as_str()))
 }
 
-fn local_view(context: &CliContext, query: &Query) -> Result<Value, CliError> {
+fn local_view(context: &CliContext, query: &Query, authenticated: bool) -> Result<Value, CliError> {
     let machine = super::machine_identity(None, context);
     let generated = jiff::Timestamp::now();
     let retention_seconds = super::ledger::MAX_AGE_SECONDS;
@@ -269,7 +280,7 @@ fn local_view(context: &CliContext, query: &Query) -> Result<Value, CliError> {
     let effective_since = jiff::Timestamp::from_second(effective_since)
         .map(|timestamp| timestamp.to_string())
         .unwrap_or_else(|_| generated_at.clone());
-    Ok(json!({
+    let mut view = json!({
         "schema_version": VIEW_SCHEMA,
         "record_schema": super::RECORD_SCHEMA,
         "extensions": super::EXTENSIONS,
@@ -284,7 +295,19 @@ fn local_view(context: &CliContext, query: &Query) -> Result<Value, CliError> {
         }],
         "records": records,
         "truncated": truncated,
-    }))
+    });
+    if authenticated && query.includes_review_evidence() {
+        view["extensions"] = json!(super::ledger::review_evidence_extensions());
+        view["retained_for_review"] = Value::Array(
+            closed["retained_for_review"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|entry| entry["record"].clone())
+                .collect(),
+        );
+    }
+    Ok(view)
 }
 
 /// Whether `record` belongs to the session tree of `root`: it is the root

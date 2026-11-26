@@ -19,8 +19,12 @@ use serde_json::{Value, json};
 
 use crate::{CliContext, CliError};
 
+mod review_dependencies;
+use review_dependencies::ReviewDependencies;
+
 pub(crate) const LEDGER_SCHEMA: &str = "agent-session.board-closed-ledger.v1";
 pub(crate) const CLOSED_SCHEMA: &str = "agent-session.board-closed.v1";
+const REVIEW_RETENTION_EXTENSION: &str = "review_handoff_retention.v1";
 const BOARD_DIR: &str = "board";
 const LEDGER_FILE: &str = "closed-ledger.json";
 const LEDGER_LOCK: &str = "closed-ledger.lock";
@@ -28,10 +32,10 @@ const LEDGER_LOCK: &str = "closed-ledger.lock";
 /// replaced; only the most recent one is kept.
 const LEDGER_MOVED_ASIDE: &str = "closed-ledger.replaced.json";
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
-/// Retention: the newest entries, each at most `MAX_AGE_SECONDS` old.
+/// Ordinary feed retention: the newest entries, each at most `MAX_AGE_SECONDS` old.
 pub(crate) const MAX_ENTRIES: usize = 256;
 pub(crate) const MAX_AGE_SECONDS: i64 = 7 * 24 * 60 * 60;
-/// 256 bounded records fit well within this; a larger file is corrupt.
+/// Bound the ordinary and dependency-retained records in the private ledger.
 const MAX_LEDGER_BYTES: u64 = 16 * 1024 * 1024;
 const CURSOR_PREFIX: &str = "v1";
 
@@ -82,19 +86,34 @@ impl Ledger {
         cursor(&self.ledger_id, self.last_seq)
     }
 
-    /// Keep an entry while it is at most seven days old by `closed_at` and
-    /// among the newest `MAX_ENTRIES`. An entry without a readable `closed_at`
-    /// cannot prove its age and is dropped.
-    fn prune(&mut self, now_epoch: i64) -> bool {
+    fn ordinary_floor(&self, now_epoch: i64) -> u64 {
+        self.entries
+            .iter()
+            .rev()
+            .filter(|entry| within_age(&entry.record, now_epoch))
+            .nth(MAX_ENTRIES - 1)
+            .map_or(0, |entry| entry.seq)
+    }
+
+    fn prune(&mut self, now_epoch: i64, dependencies: &ReviewDependencies) -> bool {
         let before = self.entries.len();
+        let floor = self.ordinary_floor(now_epoch);
         self.entries.retain(|entry| {
-            closed_at_epoch(&entry.record)
-                .is_some_and(|closed| now_epoch.saturating_sub(closed) <= MAX_AGE_SECONDS)
+            ordinary(entry, now_epoch, floor)
+                || (closed_at_epoch(&entry.record).is_some()
+                    && dependencies.references(&entry.record))
         });
-        let excess = self.entries.len().saturating_sub(MAX_ENTRIES);
-        self.entries.drain(..excess);
         self.entries.len() != before
     }
+}
+
+fn ordinary(entry: &Entry, now_epoch: i64, floor: u64) -> bool {
+    entry.seq >= floor && within_age(&entry.record, now_epoch)
+}
+
+fn within_age(record: &Value, now_epoch: i64) -> bool {
+    closed_at_epoch(record)
+        .is_some_and(|closed| now_epoch.saturating_sub(closed) <= MAX_AGE_SECONDS)
 }
 
 fn closed_at_epoch(record: &Value) -> Option<i64> {
@@ -271,6 +290,9 @@ fn read_ledger(path: &Path) -> Result<Loaded, CliError> {
 
 fn write_ledger(path: &Path, ledger: &Ledger) -> Result<(), CliError> {
     let bytes = serde_json::to_vec_pretty(ledger).map_err(|_| unavailable())?;
+    if bytes.len() as u64 > MAX_LEDGER_BYTES {
+        return Err(unavailable());
+    }
     write_atomic(path, &bytes, SECRET_FILE_MODE).map_err(|_| unavailable())
 }
 
@@ -278,10 +300,12 @@ fn write_ledger(path: &Path, ledger: &Ledger) -> Result<(), CliError> {
 /// the file as needed and writing it back when anything changed.
 fn with_ledger<T>(
     context: &CliContext,
-    operate: impl FnOnce(&mut Ledger) -> Result<(T, bool), CliError>,
+    operate: impl FnOnce(&mut Ledger, i64, &ReviewDependencies) -> Result<(T, bool), CliError>,
 ) -> Result<T, CliError> {
     let root = board_root(context)?;
     let _lock = lock(&root)?;
+    let dependencies = ReviewDependencies::load(&root)?;
+    let now = now_epoch();
     let path = root.join(LEDGER_FILE);
     let (mut ledger, mut changed) = match read_ledger(&path)? {
         Loaded::Present(ledger) => (ledger, false),
@@ -291,8 +315,8 @@ fn with_ledger<T>(
             (Ledger::empty(), true)
         }
     };
-    changed |= ledger.prune(now_epoch());
-    let (value, operated) = operate(&mut ledger)?;
+    changed |= ledger.prune(now, &dependencies);
+    let (value, operated) = operate(&mut ledger, now, &dependencies)?;
     if changed || operated {
         write_ledger(&path, &ledger)?;
     }
@@ -302,7 +326,7 @@ fn with_ledger<T>(
 /// Append one closed record. The caller has already committed the removal;
 /// an error here must never fail, delay, or roll it back.
 pub(crate) fn append(context: &CliContext, mut record: Value) -> Result<(), CliError> {
-    with_ledger(context, |ledger| {
+    with_ledger(context, |ledger, now, dependencies| {
         if let Some(object) = record.as_object_mut() {
             object.insert(
                 "closed_at".to_string(),
@@ -314,18 +338,38 @@ pub(crate) fn append(context: &CliContext, mut record: Value) -> Result<(), CliE
             seq: ledger.last_seq,
             record,
         });
-        ledger.prune(now_epoch());
+        ledger.prune(now, dependencies);
         Ok(((), true))
     })
 }
 
 /// The ledger head as an opaque cursor.
 pub(crate) fn head_cursor(context: &CliContext) -> Result<String, CliError> {
-    with_ledger(context, |ledger| Ok((ledger.head(), false)))
+    with_ledger(context, |ledger, _, _| Ok((ledger.head(), false)))
 }
 
-/// Retained entries after `since` (every retained entry when absent), each
-/// stamped with `machine`, as `agent-session.board-closed.v1` data.
+fn project_entry(ledger: &Ledger, entry: &Entry, machine: &str) -> Result<Value, CliError> {
+    let mut record = entry.record.clone();
+    let object = record.as_object_mut().ok_or_else(unavailable)?;
+    if !object.contains_key("launch_env") {
+        return Err(unavailable());
+    }
+    object.insert("machine".to_string(), Value::String(machine.to_string()));
+    for key in ["role", "lineage", "work", "model", "reasoning_effort"] {
+        object.entry(key).or_insert(Value::Null);
+    }
+    Ok(json!({ "cursor": cursor(&ledger.ledger_id, entry.seq), "record": record }))
+}
+
+pub(super) fn review_evidence_extensions() -> Vec<&'static str> {
+    super::EXTENSIONS
+        .into_iter()
+        .chain([REVIEW_RETENTION_EXTENSION])
+        .collect()
+}
+
+/// The ordinary tail and independent review retention snapshot, each stamped
+/// with `machine`, as `agent-session.board-closed.v1` data.
 pub(crate) fn read_since(
     context: &CliContext,
     since: Option<&str>,
@@ -334,7 +378,14 @@ pub(crate) fn read_since(
     let after = since
         .map(|raw| parse_cursor(raw).ok_or_else(cursor_invalid))
         .transpose()?;
-    with_ledger(context, |ledger| {
+    with_ledger(context, |ledger, now, dependencies| {
+        let floor = ledger.ordinary_floor(now);
+        let ordinary_entries = || {
+            ledger
+                .entries
+                .iter()
+                .filter(|entry| ordinary(entry, now, floor))
+        };
         let after_seq = match after {
             None => 0,
             Some((ledger_id, seq)) => {
@@ -342,35 +393,23 @@ pub(crate) fn read_since(
                     return Err(cursor_expired());
                 }
                 // Every seq after the cursor must still be retained.
-                let retained_after = ledger
-                    .entries
-                    .iter()
-                    .filter(|entry| entry.seq > seq)
-                    .count() as u64;
+                let retained_after =
+                    ordinary_entries().filter(|entry| entry.seq > seq).count() as u64;
                 if retained_after != ledger.last_seq - seq {
                     return Err(cursor_expired());
                 }
                 seq
             }
         };
-        let entries: Vec<Value> = ledger
+        let entries: Vec<Value> = ordinary_entries()
+            .filter(|entry| entry.seq > after_seq)
+            .map(|entry| project_entry(ledger, entry, machine))
+            .collect::<Result<_, CliError>>()?;
+        let retained_for_review: Vec<Value> = ledger
             .entries
             .iter()
-            .filter(|entry| entry.seq > after_seq)
-            .map(|entry| {
-                if entry.record.get("launch_env").is_none() {
-                    return Err(unavailable());
-                }
-                let mut record = entry.record.clone();
-                if let Some(object) = record.as_object_mut() {
-                    object.insert("machine".to_string(), Value::String(machine.to_string()));
-                    // An entry closed before these members existed has none.
-                    for key in ["role", "lineage", "work", "model", "reasoning_effort"] {
-                        object.entry(key).or_insert(Value::Null);
-                    }
-                }
-                Ok(json!({ "cursor": cursor(&ledger.ledger_id, entry.seq), "record": record }))
-            })
+            .filter(|entry| dependencies.references(&entry.record))
+            .map(|entry| project_entry(ledger, entry, machine))
             .collect::<Result<_, CliError>>()?;
         let next_cursor = entries
             .last()
@@ -380,10 +419,11 @@ pub(crate) fn read_since(
             json!({
                 "schema_version": CLOSED_SCHEMA,
                 "record_schema": super::RECORD_SCHEMA,
-                "extensions": super::EXTENSIONS,
+                "extensions": review_evidence_extensions(),
                 "machine": machine,
                 "generated_at": jiff::Timestamp::now().to_string(),
                 "entries": entries,
+                "retained_for_review": retained_for_review,
                 "next_cursor": next_cursor,
             }),
             false,
@@ -411,6 +451,30 @@ mod tests {
 
     fn ledger_path(context: &CliContext) -> PathBuf {
         context.state_dir.join("board").join(LEDGER_FILE)
+    }
+
+    fn set_dependencies(context: &CliContext, session_ids: &[&str]) {
+        let digests: Vec<_> = session_ids
+            .iter()
+            .map(|id| {
+                format!(
+                    "sha256:{}",
+                    crate::coordination::digest_bytes(id.as_bytes())
+                )
+            })
+            .collect();
+        write_atomic(
+            &context
+                .state_dir
+                .join("board/review-handoff-coordinators.json"),
+            &serde_json::to_vec(&json!({
+                "schema_version": "agent-session.board-review-handoff-coordinators.v1",
+                "coordinator_digests": digests,
+            }))
+            .unwrap(),
+            SECRET_FILE_MODE,
+        )
+        .expect("write dependency snapshot");
     }
 
     fn read(context: &CliContext, since: Option<&str>) -> Result<Value, CliError> {
@@ -553,6 +617,51 @@ mod tests {
     }
 
     #[test]
+    fn authenticated_feed_retains_an_existing_close_while_a_handoff_depends_on_it() {
+        let (_tmp, context) = fresh();
+        let coordinator = "00000000-0000-4000-8000-000000000007";
+        let unrelated = "00000000-0000-4000-8000-000000000008";
+        let mut row = record(coordinator);
+        row["last_terminal_activity_at"] = json!("2020-01-01T00:00:00Z");
+        append(&context, row).expect("close coordinator");
+        append(&context, record(unrelated)).expect("close unrelated session");
+        let head = head_cursor(&context).expect("head");
+        rewrite(&context, |ledger| {
+            for entry in ledger["entries"].as_array_mut().unwrap() {
+                entry["record"]["closed_at"] = json!("2020-01-02T00:00:00Z");
+            }
+        });
+        set_dependencies(&context, &[coordinator]);
+
+        let closed = read(&context, None).expect("full closed feed");
+        assert_eq!(ids(&closed), Vec::<String>::new());
+        let retained = &closed["retained_for_review"][0];
+        assert_eq!(retained["record"]["session_id"], coordinator);
+        assert_eq!(retained["record"]["closed_at"], "2020-01-02T00:00:00Z");
+        assert_eq!(
+            retained["record"]["last_terminal_activity_at"],
+            "2020-01-01T00:00:00Z"
+        );
+        assert_eq!(retained["record"]["close_reason"], "deleted");
+        assert_eq!(retained["record"]["machine"], "host-a");
+        assert_eq!(closed["next_cursor"], head);
+        let tail = read(&context, Some(&head)).expect("read at head");
+        assert_eq!(tail["retained_for_review"], closed["retained_for_review"]);
+        let stored = fs::read(ledger_path(&context)).expect("pruned ledger");
+        let stored: Ledger = serde_json::from_slice(&stored).unwrap();
+        assert_eq!(stored.entries.len(), 1);
+        assert_eq!(stored.entries[0].seq, 1);
+
+        set_dependencies(&context, &[]);
+        let released = read(&context, None).expect("read after last dependency ends");
+        assert_eq!(released["retained_for_review"], json!([]));
+        assert_eq!(released["entries"], json!([]));
+        set_dependencies(&context, &[coordinator]);
+        let pruned = read(&context, None).expect("read after a new dependency");
+        assert_eq!(pruned["retained_for_review"], json!([]));
+    }
+
+    #[test]
     fn pre_upgrade_closed_records_expose_nullable_model_settings() {
         let (_tmp, context) = fresh();
         append(&context, record("pre-upgrade")).expect("append pre-upgrade");
@@ -617,23 +726,25 @@ mod tests {
     }
 
     #[test]
-    fn the_newest_256_entries_are_kept_and_older_cursors_expire() {
+    fn the_newest_256_ordinary_entries_are_kept_and_older_cursors_expire() {
         let (_tmp, context) = fresh();
         let head = head_cursor(&context).expect("head");
-        for index in 0..(MAX_ENTRIES + 3) {
+        set_dependencies(&context, &["s0"]);
+        for index in 0..=MAX_ENTRIES {
             append(&context, record(&format!("s{index}"))).expect("append");
         }
         let all = read(&context, None).expect("read");
         let ids = ids(&all);
         assert_eq!(ids.len(), MAX_ENTRIES);
-        assert_eq!(ids.first().map(String::as_str), Some("s3"));
+        assert_eq!(ids.first().map(String::as_str), Some("s1"));
+        assert_eq!(all["retained_for_review"][0]["record"]["session_id"], "s0");
         let error = read(&context, Some(&head))
             .expect_err("pruned")
             .into_inner();
         assert_eq!(error.code, "board-cursor-expired");
         // The cursor just before the oldest retained entry is still whole.
         let (ledger_id, _) = parse_cursor(&head).expect("cursor");
-        let edge = read(&context, Some(&cursor(&ledger_id, 3))).expect("edge");
+        let edge = read(&context, Some(&cursor(&ledger_id, 1))).expect("edge");
         assert_eq!(edge["entries"].as_array().map(Vec::len), Some(MAX_ENTRIES));
     }
 
