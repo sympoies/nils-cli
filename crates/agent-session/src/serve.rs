@@ -48,7 +48,7 @@ use axum::body::{Body, Bytes};
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxPath, Query, State};
-use axum::http::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
+use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
@@ -5071,12 +5071,10 @@ async fn console_start_handler(
 }
 
 async fn list_handler(State(state): State<Arc<ServeState>>, headers: HeaderMap) -> Response {
-    let context = state.context.clone();
-    let tmux = state.tmux_bin.clone();
-    let collect = state.session_collector.clone();
-    let launch_profiles = state.launch_profiles.clone();
-    match tokio::task::spawn_blocking(move || {
-        collect(&context, &tmux).map(|mut sessions| {
+    let list = state.clone();
+    let response = match tokio::task::spawn_blocking(move || {
+        let launch_profiles = &list.launch_profiles;
+        (list.session_collector)(&list.context, &list.tmux_bin).map(|mut sessions| {
             // List projection must observe removals and readiness failures on
             // this request. Probe once per configured profile, then reuse that
             // request-local snapshot for every stopped session below.
@@ -5097,7 +5095,7 @@ async fn list_handler(State(state): State<Arc<ServeState>>, headers: HeaderMap) 
                 } else {
                     match &session.profile_resume_context {
                         Ok(Some(durable)) => {
-                            match validate_durable_launch_profile_context(durable, &launch_profiles)
+                            match validate_durable_launch_profile_context(durable, launch_profiles)
                             {
                                 Ok(Some(profile))
                                     if !agent_profiles
@@ -5117,12 +5115,13 @@ async fn list_handler(State(state): State<Arc<ServeState>>, headers: HeaderMap) 
                 let Some(err) = blocked else { continue };
                 session.block_resume(err.code());
             }
-            (sessions, agent_profiles)
+            let resume_move = resume_start::advertised(&list);
+            (sessions, agent_profiles, resume_move)
         })
     })
     .await
     {
-        Ok(Ok((sessions, agent_profiles))) => {
+        Ok(Ok((sessions, agent_profiles, resume_move))) => {
             let sessions = session_previews::enrich_for_list(&state, sessions, &headers).await;
             envelope_ok(json!({
                 "machine": state.machine,
@@ -5130,12 +5129,13 @@ async fn list_handler(State(state): State<Arc<ServeState>>, headers: HeaderMap) 
                 "sessions": sessions,
                 "agent_profiles": agent_profiles,
                 "coordination": {"remote_messaging_supported":state.federation.is_some()},
-                "capabilities": create_body::session_capabilities(resume_start::advertised(&state)),
+                "capabilities": create_body::session_capabilities(resume_move),
             }))
         }
         Ok(Err(err)) => envelope_err(err),
         Err(_) => join_err(),
-    }
+    };
+    ([(CACHE_CONTROL, "no-store")], response).into_response()
 }
 
 async fn history_list_handler(
