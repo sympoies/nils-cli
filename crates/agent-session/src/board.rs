@@ -1180,7 +1180,12 @@ mod tests {
         preexisting["session_id"] = json!("preexisting");
         ledger::append(&context, preexisting).expect("append preexisting");
         let read = super::closed(&context, None, "host-a").expect("closed");
-        assert_eq!(read["extensions"], json!(EXTENSIONS));
+        let extensions: Vec<_> = EXTENSIONS
+            .into_iter()
+            .chain(["review_handoff_retention.v1"])
+            .collect();
+        assert_eq!(read["extensions"], json!(extensions));
+        assert_eq!(read["retained_for_review"], json!([]));
         let entries = read["entries"].as_array().expect("entries");
         assert_eq!(entries[0]["record"]["role"], "coordinator");
         for key in ["role", "lineage", "work"] {

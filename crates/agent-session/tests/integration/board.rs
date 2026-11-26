@@ -1124,8 +1124,13 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
             "terminal_activity.v1",
             "runtime_exit.v1",
             "boot_recovery.v1",
-            "unsubmitted_attempt.v1"
+            "unsubmitted_attempt.v1",
+            "review_handoff_retention.v1"
         ])
+    );
+    assert_eq!(
+        body["data"]["board_closed"]["retained_for_review"],
+        json!([])
     );
 }
 
