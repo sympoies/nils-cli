@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+[ "$1" = -T ]
+[ "$2" = -o ]
+[ "$3" = BatchMode=yes ]
+[ "$4" = -o ]
+[ "$5" = "ConnectTimeout=${EXPECT_CONNECT_TIMEOUT:-6}" ]
+[ "$6" = -o ]
+[ "$7" = "StdinNull=${EXPECT_STDIN_NULL:-yes}" ]
+[ "$8" = -- ]
+[ "$9" = fixture.invalid ]
+shift 9
+[ "$#" -eq 1 ]
+
+if [ "${FAKE_SSH_MODE:-}" = disconnect ]; then
+  printf 'partial transport output'
+  printf 'connection closed' >&2
+  exit 255
+fi
+
+export HOME="$FIXTURE_REMOTE_HOME" SHELL="$FIXTURE_REMOTE_SHELL"
+cd "$HOME"
+exec /bin/sh -c "$1"

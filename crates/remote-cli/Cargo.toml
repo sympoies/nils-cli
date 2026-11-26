@@ -1,0 +1,26 @@
+[package]
+name = "nils-remote-cli"
+version = "1.44.0"
+edition.workspace = true
+license.workspace = true
+description = "CLI crate for nils-remote-cli in the nils-cli workspace."
+repository = "https://github.com/sympoies/nils-cli"
+
+[[bin]]
+name = "remote-cli"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+clap_complete = { workspace = true }
+getrandom = { workspace = true }
+jiff = { workspace = true }
+libc = { workspace = true }
+nils-build-info = { version = "1.44.0", path = "../nils-build-info" }
+nils-common = { version = "1.44.0", path = "../nils-common" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = "3"
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
