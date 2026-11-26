@@ -392,7 +392,7 @@ fn run_options(
 
     if options.dry_run {
         if installation.is_none()
-            && let Err(err) = git_commit::preflight(tmpfile.path(), &options, operation)
+            && let Err(err) = git_commit::preflight_target(options.repo.as_deref())
         {
             eprintln!("{err}");
             return EXIT_ERROR;
@@ -1944,7 +1944,7 @@ fn print_usage(stderr: bool) {
     );
     let _ = writeln!(
         out,
-        "      --dry-run                Check message, staged changes and identity without committing"
+        "      --dry-run                Check message, staged changes and authoring target"
     );
     let _ = writeln!(
         out,

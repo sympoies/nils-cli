@@ -3,8 +3,8 @@
 
 ### Result
 
-- Dry-run and real commits share forge identity admission. Ambiguous remotes
-  report their candidates and selection guidance.
+- Plain commit dry runs use the same remote and URL selection as real commits.
+  Ambiguous remotes report their candidates and selection guidance.
 
 ### Why / context
 
@@ -14,7 +14,8 @@
 ### Evidence
 
 - The regression fixture reproduced the refusal and false dry-run success
-  against the baseline.
+  against the baseline. The repaired dry run leaves provider and identity audit
+  state untouched.
 
 ### Links
 

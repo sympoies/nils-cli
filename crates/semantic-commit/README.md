@@ -77,9 +77,10 @@ Commit operation options:
 - `--message-only` - with `--amend`, update only the `HEAD` message and
   require no staged changes
 - `--allow-empty` - allow a commit operation without staged changes
-- `--dry-run` - validate the message, staged state, and any configured forge
-  identity policy without committing. Identity checks can verify the provider
-  account and record local audit events.
+- `--dry-run` - validate the message and staged state without committing. When
+  forge identity policy is active, use local Git configuration to validate the
+  authoring target. Provider verification, identity audit, and signing checks
+  run during the real commit.
 - `--validate-only` - validate only the message; does not require a git repo
 
 Output and recovery options:

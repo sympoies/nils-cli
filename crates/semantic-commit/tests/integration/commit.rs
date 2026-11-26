@@ -15,6 +15,15 @@ fn commit_dry_run_refuses_ambiguous_identity_in_managed_worktree() {
     fixture.git(&["add", "change"]);
     let head = fixture.git(&["rev-parse", "HEAD"]);
     let staged = fixture.git(&["ls-files", "--stage"]);
+    let audit = fixture
+        .root
+        .path()
+        .join("state/forge-cli/identity-audit.jsonl");
+    let probe_log = fixture.root.path().join("provider-probes");
+    fixture.stubs.write_exe(
+        "gh",
+        "#!/bin/sh\nprintf '%s\\n' probe >> \"$FIXTURE_PROBE_LOG\"\nprintf '%s\\n' '{\"login\":\"replay-agent\"}'\n",
+    );
     let run = |extra: &[&str]| {
         let mut args = vec![
             "commit",
@@ -28,13 +37,16 @@ fn commit_dry_run_refuses_ambiguous_identity_in_managed_worktree() {
         nils_test_support::cmd::run_with(
             Path::new(env!("CARGO_BIN_EXE_semantic-commit")),
             &args,
-            &fixture.options(&fixture.repo),
+            &fixture
+                .options(&fixture.repo)
+                .with_env("FIXTURE_PROBE_LOG", probe_log.to_str().unwrap()),
         )
     };
 
     let actual = run(&[]);
     assert_eq!(actual.code, 1, "{}", actual.stderr_text());
     assert!(actual.stderr_text().contains("identity_target_ambiguous"));
+    let audit_before = fs::read(&audit).unwrap();
     let preview = run(&["--dry-run"]);
     assert_eq!(preview.code, actual.code, "{}", preview.stdout_text());
     assert_eq!(preview.stderr_text(), actual.stderr_text());
@@ -55,9 +67,18 @@ fn commit_dry_run_refuses_ambiguous_identity_in_managed_worktree() {
     assert_eq!(data["ok"], true);
     assert_eq!(fixture.git(&["rev-parse", "HEAD"]), head);
     assert_eq!(fixture.git(&["ls-files", "--stage"]), staged);
+    assert_eq!(
+        (
+            probe_log.exists(),
+            fs::read(&audit).unwrap() == audit_before
+        ),
+        (false, true),
+        "dry runs must skip provider probes and identity audit writes"
+    );
 
     let actual = run(&[]);
     assert_eq!(actual.code, 0, "{}", actual.stderr_text());
+    assert_eq!(fs::read_to_string(&probe_log).unwrap(), "probe\n");
     fixture.git(&["verify-commit", "HEAD"]);
     assert_eq!(
         fixture.git(&["log", "-1", "--format=%s"]),

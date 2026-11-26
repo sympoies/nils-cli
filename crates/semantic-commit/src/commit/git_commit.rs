@@ -1,24 +1,16 @@
-use super::{CAT_PAGER_ENV, CommitOperation, CommitOptions, run_git_output_with_pager};
+use super::{CommitOperation, CommitOptions, run_git_output_with_pager};
 use crate::default_branch::install::Installation;
 use nils_common::forge_identity;
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, ExitStatus};
+use std::process::ExitStatus;
 
-pub(super) fn preflight(
-    message_path: &Path,
-    options: &CommitOptions,
-    operation: CommitOperation,
-) -> forge_identity::Result<()> {
-    let message_path = message_path.to_string_lossy();
-    let args = arguments(&message_path, options, operation);
-    let mut command = Command::new("git");
-    command.args(&args).envs(CAT_PAGER_ENV);
-    let repo = options.repo.as_deref();
-    if let Some(repo) = repo {
-        command.current_dir(repo);
+pub(super) fn preflight_target(repo: Option<&Path>) -> forge_identity::Result<()> {
+    // Target selection is local. The real commit performs forge authorization.
+    if forge_identity::load_ungated()?.is_some() {
+        let remote = forge_identity::authoring_remote(repo)?;
+        forge_identity::target_for_remote(repo, &remote, true)?;
     }
-    forge_identity::prepare_git(&mut command, repo, &args)?;
     Ok(())
 }
 
@@ -32,19 +24,6 @@ pub(super) fn run(
         return installation.commit(message_path, options.signoff, &options.trailers);
     }
     let message_path = message_path.to_string_lossy();
-    let args = arguments(&message_path, options, operation);
-    let output = run_git_output_with_pager(options.repo.as_deref(), &args)?;
-    if !output.stderr.is_empty() {
-        std::io::stderr().write_all(&output.stderr)?;
-    }
-    Ok(output.status)
-}
-
-fn arguments<'a>(
-    message_path: &'a str,
-    options: &'a CommitOptions,
-    operation: CommitOperation,
-) -> Vec<&'a str> {
     let mut args = vec!["commit"];
     if matches!(
         operation,
@@ -64,7 +43,12 @@ fn arguments<'a>(
     if options.no_edit {
         args.push("--no-edit");
     } else {
-        args.extend(["-F", message_path]);
+        args.extend(["-F", message_path.as_ref()]);
     }
-    args
+
+    let output = run_git_output_with_pager(options.repo.as_deref(), &args)?;
+    if !output.stderr.is_empty() {
+        std::io::stderr().write_all(&output.stderr)?;
+    }
+    Ok(output.status)
 }
