@@ -6725,6 +6725,9 @@ where
 
     let registry_fence = SessionRegistryFence::from_record(&record);
     runtime_environment::boot_recovery::mark_stopped(context, &mut record)?;
+    // The pane can exit before its process group empties. Stop orphans proved
+    // by the current runtime's environment first, while close holds the record
+    // lock and can report any attributed survivors against that runtime.
     delete_recovery::prepare_session_close(context, &mut record, tmux_bin, verify_timeout)?;
     let terminate = if recover_split_cgroup {
         terminate_tmux_session_with_split_scope_recovery(
