@@ -12,6 +12,7 @@
 
 #[path = "serve/error_response.rs"]
 mod error_response;
+use error_response::deny_unauthorized;
 pub(crate) use error_response::envelope_err;
 
 #[path = "serve/history_images.rs"]
@@ -218,6 +219,7 @@ struct ServeState {
     context: CliContext,
     machine: String,
     token: Option<String>,
+    attested_create_token: Option<String>,
     /// Session board routes (`board.rs`) answer only when enabled.
     board: bool,
     federation: Option<crate::coordination::remote::Config>,
@@ -972,7 +974,11 @@ async fn serve_binary_replaced_drain_deadline(mut stop: watch::Receiver<Option<S
     eprintln!("warning: serve-binary-replaced: drain deadline elapsed; closing open connections");
 }
 
-pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
+pub fn run_serve(
+    context: &CliContext,
+    args: cli::ServeArgs,
+    attested_create_token: Option<String>,
+) -> i32 {
     // First, while the process is still single-threaded: a check exits here,
     // and an applied config is visible to every environment read below.
     if let Some(config) = args.config.as_deref()
@@ -1122,6 +1128,11 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         let state = Arc::new(ServeState {
             context: context.clone(),
             machine,
+            attested_create_token: create::attested::dedicated_token(
+                attested_create_token,
+                token.as_deref(),
+                federation.as_ref(),
+            ),
             token,
             board,
             federation,
@@ -3225,31 +3236,6 @@ pub(crate) fn constant_time_eq(a: &str, b: &str) -> bool {
         diff |= x ^ y;
     }
     diff == 0
-}
-
-/// Enforce the bearer token on authenticated endpoints. Returns `Some(denial)`
-/// to reject (401), or `Some(503)` when the daemon has no token configured
-/// (fail closed); returns `None` when the request is authorized.
-fn deny_unauthorized(state: &ServeState, headers: &HeaderMap) -> Option<Response> {
-    let Some(expected) = state.token.as_deref() else {
-        return Some(status_json(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "token-not-configured",
-            "server has no token configured; authenticated endpoints are disabled",
-        ));
-    };
-    let provided = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "));
-    match provided {
-        Some(token) if constant_time_eq(token, expected) => None,
-        _ => Some(status_json(
-            StatusCode::UNAUTHORIZED,
-            "unauthorized",
-            "missing or invalid bearer token",
-        )),
-    }
 }
 
 // --- request bodies -----------------------------------------------------------

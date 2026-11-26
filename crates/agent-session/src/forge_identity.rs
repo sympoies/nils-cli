@@ -6,6 +6,8 @@ use nils_common::forge_identity::{
 };
 use serde_json::{Value, json};
 
+pub(crate) const CONSOLE_RELAY_INITIATOR: &str = "console-relay";
+
 pub(crate) fn error(error: identity::Error) -> CliError {
     let message = if error.code == "identity_session_binding_missing" {
         "session has no forge launch binding"

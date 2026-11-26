@@ -140,7 +140,7 @@ async fn create(
     };
     // start_resume owns the journal only after guarded final admission. In particular,
     // do not run the ordinary HTTP wrapper that records pre-engine create failures.
-    super::create::create_handler_inner(State(state), headers, Json(body), origin).await
+    super::create::create_handler_inner(State(state), headers, Json(body), origin, None).await
 }
 
 /// A capability-specific path lets a CLI replay reach the existing receipt

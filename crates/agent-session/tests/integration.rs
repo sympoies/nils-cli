@@ -5,6 +5,8 @@ mod serve_fixture;
 mod activity_setup;
 #[path = "integration/admission.rs"]
 mod admission;
+#[path = "integration/attested_create.rs"]
+mod attested_create;
 #[path = "integration/board.rs"]
 mod board;
 #[path = "integration/broker_retirement.rs"]

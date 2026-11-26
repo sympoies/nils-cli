@@ -1,7 +1,34 @@
 //! Root CLI dispatch, separate from runtime implementation.
 use crate::*;
 
-pub(crate) fn run(context: &CliContext, command: Command) -> i32 {
+pub(crate) fn parsed(cli: Cli, attested_create_token: Option<String>) -> i32 {
+    if let Some(code) = cli::operator_rules::prepare(&cli.command) {
+        return code;
+    }
+    if let Command::Completion(args) = cli.command {
+        return completion::run(args.shell);
+    }
+    let format = coordination_routing::command_format(&cli.command);
+    let context = match CliContext::resolve(cli.state_dir, cli.host) {
+        Ok(context) => context,
+        Err(err) => {
+            return render_error(
+                coordination_routing::command_name(&cli.command).unwrap_or("error"),
+                format,
+                err,
+            );
+        }
+    };
+    if matches!(
+        cli.command,
+        Command::Account(_) | Command::Resume(_) | Command::Restart(_) | Command::AutoResume(_)
+    ) {
+        account_broker::adopt_serve_brokers(&context.state_dir);
+    }
+    run(&context, cli.command, attested_create_token)
+}
+
+fn run(context: &CliContext, command: Command, attested_create_token: Option<String>) -> i32 {
     match command {
         Command::AuthAlert(args) => cli::auth_alert::run(context, args),
         Command::Drafts(args) => cli::drafts::run(context, args),
@@ -48,7 +75,7 @@ pub(crate) fn run(context: &CliContext, command: Command) -> i32 {
         Command::Lineage(args) => lineage::run_lineage(context, args),
         Command::Work(args) => lineage::run_work(context, args),
         Command::Workspace(args) => origin::run(context, args),
-        Command::Serve(args) => serve::run_serve(context, args),
+        Command::Serve(args) => serve::run_serve(context, args, attested_create_token),
         Command::CodexAppServerProxy(args) => codex_app_server::run_proxy(context, args),
         Command::Delete(args) => run_delete(context, args),
         Command::Tmp(args) => runtime_environment::session_tmp::run(context, args),

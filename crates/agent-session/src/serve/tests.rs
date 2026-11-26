@@ -2543,6 +2543,7 @@ fn state_with_dependencies(
         },
         machine: MACHINE.to_string(),
         token: token.map(str::to_string),
+        attested_create_token: None,
         board: false,
         federation: None,
         service_files: Default::default(),
@@ -2571,7 +2572,6 @@ fn state_with_dependencies(
         board_programs: Arc::new(crate::board::ProgramCache::from_environment()),
     })
 }
-
 #[tokio::test]
 async fn clipboard_route_authenticates_and_rejects_invalid_input_before_provider_access() {
     let lock = nils_test_support::GlobalStateLock::new();
