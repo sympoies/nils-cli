@@ -1244,6 +1244,23 @@ pub enum MetadataCommand {
     Attach(MetadataAttachArgs),
     /// Read the bounded public metadata projection for one session.
     Show(MetadataShowArgs),
+    /// Set or rotate a local session's delivery label.
+    SetLabel(MetadataSetLabelArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct MetadataSetLabelArgs {
+    /// Exact canonical session id.
+    #[arg(value_name = "ID")]
+    pub id: String,
+
+    /// Non-secret workflow label assignment.
+    #[arg(value_name = "KEY=VALUE")]
+    pub label: String,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
 }
 
 #[derive(Debug, Args)]
@@ -1468,6 +1485,10 @@ pub struct SendArgs {
     /// Claude approvals require permission answer; this flag cannot bypass it.
     #[arg(long = "allow-blocked")]
     pub allow_blocked: bool,
+
+    /// Require a matching destination label before delivering input.
+    #[arg(long, value_name = "KEY=VALUE")]
+    pub expect_label: Option<String>,
 
     #[command(flatten)]
     pub guards: crate::send_guard::GuardArgs,

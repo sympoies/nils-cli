@@ -226,10 +226,11 @@ pub(super) fn validate_create_accounts(
 }
 
 /// Capabilities of the daemon session list and its related routes.
-pub(super) fn session_capabilities() -> Value {
+pub(super) fn session_capabilities(resume_move_start_v1: bool) -> Value {
     serde_json::json!({
         "profile_resume_import": true,
         "managed_resume_command": false,
+        "resume_move_start_v1": resume_move_start_v1,
         "resume_blocked_reason": true,
         "last_prompt": true,
         "last_message": true,

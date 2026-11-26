@@ -329,12 +329,17 @@ pub(crate) fn run(context: &CliContext, args: MoveArgs) -> i32 {
     }
 }
 
-fn verifier() -> Result<Verifier, CliError> {
+pub(super) fn verifier() -> Result<Verifier, CliError> {
+    let (ssh_keygen, allowlist) = verifier_paths()?;
+    Verifier::new(&ssh_keygen, &allowlist).map_err(cli_refusal)
+}
+
+pub(super) fn verifier_paths() -> Result<(PathBuf, PathBuf), CliError> {
     let ssh_keygen = crate::non_empty_env("AGENT_SESSION_RESUME_MOVE_SSH_KEYGEN")
         .map(PathBuf::from)
         .ok_or_else(|| cli_refusal(Refusal::SshKeygenUnavailable))?;
     let allowlist = configured_path("AGENT_SESSION_RESUME_MOVE_ALLOWED_SIGNERS_FILE")?;
-    Verifier::new(&ssh_keygen, &allowlist).map_err(cli_refusal)
+    Ok((ssh_keygen, allowlist))
 }
 
 fn configured_path(name: &str) -> Result<PathBuf, CliError> {
@@ -372,7 +377,7 @@ fn signing_key() -> Result<PathBuf, CliError> {
     configured_path("AGENT_SESSION_RESUME_MOVE_SIGNING_KEY_FILE")
 }
 
-fn now() -> i64 {
+pub(super) fn now() -> i64 {
     jiff::Timestamp::now().as_second()
 }
 
@@ -510,6 +515,7 @@ pub(crate) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
         resume_args: launch_args.clone(),
         extra: Default::default(),
     };
+    let lineage = unlaunched.lineage();
     let _writer = unlaunched.begin_launch(context)?;
     let view = lifecycle::attempt_created(context, &session_id, "start", || {
         crate::start_session_inner_unjournaled(
@@ -520,6 +526,7 @@ pub(crate) fn start(context: &CliContext, mut args: cli::StartArgs) -> Result<St
             Some(crate::InitialProviderPlan {
                 launch_args,
                 provider_resume: Some(provider_resume),
+                move_lineage: Some(lineage),
             }),
         )
     })

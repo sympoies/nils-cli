@@ -21,6 +21,8 @@ use crate::{
     validate_id, validate_session_ancestor_path_identity, write_private_file_at,
 };
 
+pub(crate) mod send_labels;
+
 const REQUEST_VERSION: &str = "agent-session.metadata-attachment.request.v1";
 const STATE_VERSION: &str = "agent-session.public-metadata.v1";
 const VIEW_VERSION: &str = "agent-session.public-metadata-view.v1";
@@ -128,6 +130,7 @@ pub(crate) fn run_metadata(context: &CliContext, args: MetadataArgs) -> i32 {
             }
             Err(error) => render_error("metadata-show", args.format, error),
         },
+        MetadataCommand::SetLabel(args) => send_labels::run_set(context, args),
     }
 }
 

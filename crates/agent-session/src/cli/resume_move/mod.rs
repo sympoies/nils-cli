@@ -17,6 +17,7 @@ mod ssh;
 mod stop;
 #[cfg(test)]
 mod tests;
+pub(crate) mod transport;
 
 pub use args::MoveArgs;
 pub(crate) use args::{move_preflight, run, start};
@@ -246,12 +247,7 @@ impl Verified<StopProof> {
         if proof.ticket_sha256 != ticket.sha256 {
             return Err(Refusal::MoveMismatch);
         }
-        check_time(observed.now, proof.issued_at, proof.expires_at)?;
-        if proof.issued_at < ticket.record.issued_at.saturating_sub(CLOCK_SKEW_SECONDS)
-            || proof.expires_at > ticket.record.expires_at
-        {
-            return Err(Refusal::ProofExpired);
-        }
+        self.check_time(ticket, observed.now)?;
         if !proof.stopped {
             return Err(Refusal::SourceLive);
         }
@@ -263,6 +259,17 @@ impl Verified<StopProof> {
         }
         if observed.destination_writer_present {
             return Err(Refusal::DestinationWriterPresent);
+        }
+        Ok(())
+    }
+
+    fn check_time(&self, ticket: &Verified<Ticket>, now: i64) -> Result<(), Refusal> {
+        let proof = &self.record;
+        check_time(now, proof.issued_at, proof.expires_at)?;
+        if proof.issued_at < ticket.record.issued_at.saturating_sub(CLOCK_SKEW_SECONDS)
+            || proof.expires_at > ticket.record.expires_at
+        {
+            return Err(Refusal::ProofExpired);
         }
         Ok(())
     }
@@ -382,7 +389,7 @@ fn host_identity(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'))
 }
 
-fn canonical_uuid(value: &str) -> bool {
+pub(crate) fn canonical_uuid(value: &str) -> bool {
     uuid::Uuid::parse_str(value).is_ok_and(|id| !id.is_nil() && id.to_string() == value)
 }
 

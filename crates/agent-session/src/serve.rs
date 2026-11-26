@@ -5056,7 +5056,7 @@ async fn console_start_handler(
     }
 }
 
-async fn list_handler(State(state): State<Arc<ServeState>>) -> Response {
+async fn list_handler(State(state): State<Arc<ServeState>>, headers: HeaderMap) -> Response {
     let context = state.context.clone();
     let tmux = state.tmux_bin.clone();
     let collect = state.session_collector.clone();
@@ -5109,14 +5109,14 @@ async fn list_handler(State(state): State<Arc<ServeState>>) -> Response {
     .await
     {
         Ok(Ok((sessions, agent_profiles))) => {
-            let sessions = session_previews::enrich_for_list(&state, sessions).await;
+            let sessions = session_previews::enrich_for_list(&state, sessions, &headers).await;
             envelope_ok(json!({
                 "machine": state.machine,
                 "observed_at": activity_observed_at(),
                 "sessions": sessions,
                 "agent_profiles": agent_profiles,
                 "coordination": {"remote_messaging_supported":state.federation.is_some()},
-                "capabilities": create_body::session_capabilities(),
+                "capabilities": create_body::session_capabilities(resume_start::advertised(&state)),
             }))
         }
         Ok(Err(err)) => envelope_err(err),

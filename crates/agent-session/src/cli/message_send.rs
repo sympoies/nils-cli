@@ -16,6 +16,9 @@ pub struct MessageSendArgs {
     /// Remote machine; omitted keeps local mailbox behavior.
     #[arg(long, requires = "to_session")]
     pub to_machine: Option<String>,
+    /// Require a matching label on a local session destination before enqueueing.
+    #[arg(long, value_name = "KEY=VALUE")]
+    pub expect_label: Option<String>,
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub body_file: PathBuf,
     /// Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE.

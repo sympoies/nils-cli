@@ -12,6 +12,11 @@ mailbox state, such as `unread`, `read`, or `acknowledged`.
 `--host` continues to control attach-command generation. Omitted `--to-machine`
 retains the local mailbox, and a `--to-machine` naming the sender's own machine
 is delivered through the local mailbox without a federation journal entry.
+
+With `--expect-label`, a different machine is refused before outbox creation
+with `send-label-unsupported` (exit `69`). A target naming the local machine
+uses the [local label check](send-v1.md#workflow-label-precondition).
+
 Recipients apply the [verification guidance](coordination-mailbox-v1.md#recipient-guidance)
 to cooperating-peer messages. Notification, inbox persistence, read/acknowledgement
 and accepting work are separate events.

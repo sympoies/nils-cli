@@ -40,7 +40,7 @@ agent-session broker adopt --session ID --capability-file FILE --proof-file JSON
 agent-session broker reconcile --session ID --capability-file FILE --proof-file JSON --operation UUID --if-revision N --attest-inactive --idempotency-key KEY
 agent-session readiness --format json
 
-agent-session message send --from ID --to ID --body-file FILE [--capability-file FILE] --idempotency-key KEY [--reply-to UUID] [--expires-in DURATION]
+agent-session message send --from ID --to ID --body-file FILE [--capability-file FILE] --idempotency-key KEY [--reply-to UUID] [--expires-in DURATION] [--expect-label KEY=VALUE]
 agent-session message send --from ID --reply-to UUID --body-file FILE [--capability-file FILE] --idempotency-key KEY [--expires-in DURATION]
 agent-session message service-inbox --service ID --service-generation GENERATION --credential-file FILE [--state unread] [--cursor CURSOR] [--limit N]
 agent-session message service-show --service ID --service-generation GENERATION --credential-file FILE --message UUID
@@ -57,6 +57,11 @@ agent-session message reminder --session ID [--capability-file FILE]
 The `send --reply-to` form without an explicit destination requires a
 service-origin parent. It and `message reply` follow the
 [service recipient contract](coordination-mailbox-v1.md#service-recipients).
+For a local session destination, `--expect-label` checks the workflow label
+atomically with enqueueing. A mismatch exits `75` with `send-label-mismatch`.
+Remote destinations and service replies refuse the option with exit `69`
+and `send-label-unsupported`. See the
+[workflow label precondition](send-v1.md#workflow-label-precondition).
 
 JSON uses the existing `cli.agent-session.<command>.v1` success/error envelope
 convention. For `message wait --any-unread`, exit `0` means unread metadata

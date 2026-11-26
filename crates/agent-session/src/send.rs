@@ -135,6 +135,11 @@ fn send_observing(
     if has_printable_key {
         args.guards.require_idle = true;
     }
+    let expected_label = args
+        .expect_label
+        .as_deref()
+        .map(crate::metadata::send_labels::Label::parse)
+        .transpose()?;
     let text = read_send_text(&args.text, args.text_stdin)?;
     if text.is_none() && args.keys.is_empty() {
         return Err(CliError::usage(
@@ -165,6 +170,9 @@ fn send_observing(
         &args.guards,
         ensure_same_session_identity(&observed, &record),
     )?;
+    if let Some(label) = expected_label {
+        label.check(&record)?;
+    }
     preflight(
         &args.guards,
         cli::permission::refuse_terminal(context, &record, text.as_deref(), &args.keys),
@@ -569,6 +577,7 @@ pub(crate) fn unguarded_args(
         text_stdin: false,
         keys,
         allow_blocked,
+        expect_label: None,
         tmux_bin: Some(tmux_bin),
         format: nils_common::cli_contract::OutputFormat::Json,
         guards: send_guard::GuardArgs::default(),

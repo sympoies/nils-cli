@@ -22,6 +22,19 @@ pub struct Verifier {
 impl Verifier {
     /// Both paths come from local configuration. No trust is taken from a proof.
     pub fn new(executable: &Path, allowed_signers: &Path) -> Result<Self, Refusal> {
+        let executable = Self::check_config(executable, allowed_signers)?;
+        let verifier = Self {
+            executable,
+            allowed_signers: allowed_signers.to_path_buf(),
+        };
+        verifier.check_capability()?;
+        Ok(verifier)
+    }
+
+    pub(super) fn check_config(
+        executable: &Path,
+        allowed_signers: &Path,
+    ) -> Result<PathBuf, Refusal> {
         if !executable.is_absolute() {
             return Err(Refusal::SshKeygenUnavailable);
         }
@@ -31,12 +44,7 @@ impl Verifier {
             return Err(Refusal::SshKeygenUnavailable);
         }
         check_allowed_signers(allowed_signers)?;
-        let verifier = Self {
-            executable,
-            allowed_signers: allowed_signers.to_path_buf(),
-        };
-        verifier.check_capability()?;
-        Ok(verifier)
+        Ok(executable)
     }
 
     fn command(&self) -> Command {

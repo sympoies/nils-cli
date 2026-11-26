@@ -177,6 +177,7 @@ pub(crate) fn run(context: &CliContext, mut args: NoticeArgs) -> i32 {
                     text_stdin: false,
                     keys: vec![cli::SpecialKey::Enter],
                     allow_blocked: false,
+                    expect_label: None,
                     guards: args.guards.clone(),
                     tmux_bin: args.tmux_bin.clone(),
                     format,

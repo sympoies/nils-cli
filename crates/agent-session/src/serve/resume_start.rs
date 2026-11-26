@@ -1,6 +1,10 @@
 //! Prompt-free preflight and a versioned create endpoint that older daemons cannot misread.
 use super::*;
+
+#[path = "resume_start/move_routes.rs"]
+mod move_routes;
 use crate::start_resume::{PREFLIGHT_SCHEMA, Request, refusal};
+pub(super) use move_routes::{advertised, has_machine_bearer};
 
 pub(super) fn deserialize_account_consent<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
 where
@@ -15,6 +19,7 @@ pub(super) fn routes() -> Router<Arc<ServeState>> {
         .route("/sessions/{id}/resume-preflight/v1", post(relay_check))
         .route("/sessions/resume/v1", post(create))
         .route("/sessions/{id}/console-resume/v1", post(console_create))
+        .merge(move_routes::routes())
 }
 
 fn response(result: Result<Value, CliError>) -> Response {

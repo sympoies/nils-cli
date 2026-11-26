@@ -214,3 +214,6 @@ mod codex;
 mod stop;
 #[path = "start_resume_move/support.rs"]
 mod support;
+
+#[path = "start_resume_move/console_destination.rs"]
+mod console_destination;

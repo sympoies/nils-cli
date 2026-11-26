@@ -262,6 +262,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 _arguments "${_arguments_options[@]}" : \
 '--text=[Literal text to type into the session. Applied before any --key. Prefer --text-stdin for secrets (--text is visible in this process'\''s arguments)]:TEXT:_default' \
 '*--key=[Named key or one printable character to press (repeatable). Printable keys require verified idle activity; applied in order after any text]:KEY:(enter escape backspace c-c up down left shift-left right tab)' \
+'--expect-label=[Require a matching destination label before delivering input]:KEY=VALUE:_default' \
 '--expect-runtime=[Require the active runtime launch id to match before delivery]:INCARNATION:_default' \
 '--expect-provider-session=[Require the persisted provider session id to match before delivery]:SESSION:_default' \
 '--idempotency-key=[Persist an at-most-once delivery claim, retained on uncertain outcomes]:KEY:_default' \
@@ -1344,6 +1345,7 @@ _arguments "${_arguments_options[@]}" : \
 '--from=[Authenticated managed session id sending the message]:FROM_SESSION:_default' \
 '--to=[Session destination. Omit for a reply to an authenticated service origin]:TO_SESSION:_default' \
 '--to-machine=[Remote machine; omitted keeps local mailbox behavior]:TO_MACHINE:_default' \
+'--expect-label=[Require a matching label on a local session destination before enqueueing]:KEY=VALUE:_default' \
 '--body-file=[]:PATH:_files' \
 '--capability-file=[Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE]:PATH:_files' \
 '--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
@@ -1590,6 +1592,18 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':id -- Exact canonical session id:_default' \
+&& ret=0
+;;
+(set-label)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Exact canonical session id:_default' \
+':label -- Non-secret workflow label assignment:_default' \
 && ret=0
 ;;
         esac
@@ -2213,6 +2227,7 @@ _agent-session__subcmd__metadata_commands() {
     local commands; commands=(
 'attach:Attach one revision-fenced, idempotent public label' \
 'show:Read the bounded public metadata projection for one session' \
+'set-label:Set or rotate a local session'\''s delivery label' \
     )
     _describe -t commands 'agent-session metadata commands' commands "$@"
 }
@@ -2220,6 +2235,11 @@ _agent-session__subcmd__metadata_commands() {
 _agent-session__subcmd__metadata__subcmd__attach_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session metadata attach commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__metadata__subcmd__set-label_commands] )) ||
+_agent-session__subcmd__metadata__subcmd__set-label_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session metadata set-label commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__metadata__subcmd__show_commands] )) ||
 _agent-session__subcmd__metadata__subcmd__show_commands() {

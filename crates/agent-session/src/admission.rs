@@ -288,6 +288,7 @@ pub(crate) fn forward_refusal(error: &Value) -> Option<CliError> {
 pub(super) fn create_record_with_lineage(
     request: RecordRequest<'_>,
     initial_lineage: Option<InitialLineage>,
+    move_lineage: Option<session_record::ResumeMoveLineage>,
     tmux_bin: Option<&Path>,
 ) -> Result<CreatedRecord, CliError> {
     let now = Zoned::now();
@@ -392,6 +393,9 @@ pub(super) fn create_record_with_lineage(
         role: None,
         resume_sidecar_extra: BTreeMap::new(),
     };
+    if let Some(lineage) = move_lineage {
+        record.store_resume_move(lineage);
+    }
     runtime_environment::store_launch(&mut record);
     origin::Fields::default().store(&mut record);
     if let Some(mut initial) = initial_lineage {
