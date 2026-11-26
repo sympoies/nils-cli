@@ -918,6 +918,7 @@ esac
                         text_stdin: false,
                         keys: vec![crate::cli::SpecialKey::Enter],
                         allow_blocked: false,
+                        expect_label: None,
                         guards: crate::send_guard::GuardArgs {
                             require_idle: true,
                             require_empty_composer: true,

@@ -271,6 +271,9 @@ _agent__session() {
             agent__session__metadata,attach)
                 cmd="agent__session__metadata__attach"
                 ;;
+            agent__session__metadata,set-label)
+                cmd="agent__session__metadata__set__label"
+                ;;
             agent__session__metadata,show)
                 cmd="agent__session__metadata__show"
                 ;;
@@ -2811,7 +2814,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__message__send)
-            opts="-h --from --to --to-machine --body-file --capability-file --idempotency-key --reply-to --reply-by --expires-in --format --category --state-dir --host --help"
+            opts="-h --from --to --to-machine --expect-label --body-file --capability-file --idempotency-key --reply-to --reply-by --expires-in --format --category --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2826,6 +2829,10 @@ _agent__session() {
                     return 0
                     ;;
                 --to-machine)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-label)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -3341,7 +3348,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__metadata)
-            opts="-h --state-dir --host --help attach show"
+            opts="-h --state-dir --host --help attach show set-label"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3395,6 +3402,35 @@ _agent__session() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agent__session__metadata__set__label)
+            opts="-h --format --state-dir --host --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0
@@ -4521,7 +4557,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__send)
-            opts="-h --text --text-stdin --key --allow-blocked --expect-runtime --expect-provider-session --require-idle --require-empty-composer --idempotency-key --tmux-bin --format --state-dir --host --help"
+            opts="-h --text --text-stdin --key --allow-blocked --expect-label --expect-runtime --expect-provider-session --require-idle --require-empty-composer --idempotency-key --tmux-bin --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -4533,6 +4569,10 @@ _agent__session() {
                     ;;
                 --key)
                     COMPREPLY=($(compgen -W "enter escape backspace c-c up down left shift-left right tab" -- "${cur}"))
+                    return 0
+                    ;;
+                --expect-label)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 --expect-runtime)

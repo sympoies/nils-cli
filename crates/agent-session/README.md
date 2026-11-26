@@ -105,6 +105,10 @@ prompt submission outcomes, blocked input, clear and rebind, resume, restart,
 verified deletion, startup logs, retained session records, account switching, model
 settings, and secret safety. [Send v1](docs/specs/send-v1.md) defines guarded
 continuation admission and its observation limits.
+To bind a send to a workflow assignment, the workflow sets a value with
+`agent-session metadata set-label <id> assignment=<value>`. Callers then use
+`--expect-label assignment=<value>` with `send` or local `message send`. See the
+[workflow label precondition](docs/specs/send-v1.md#workflow-label-precondition).
 
 With the [notice writer rollout gate](docs/specs/session-notices-v1.md#rollout-and-remaining-work)
 enabled, `notice --summary` adds the shared kind label and a one-line summary

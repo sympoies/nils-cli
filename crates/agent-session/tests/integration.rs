@@ -105,3 +105,6 @@ mod mailbox_sender_relation;
 
 #[path = "integration/start_resume_move.rs"]
 mod start_resume_move;
+
+#[path = "integration/send_labels.rs"]
+mod send_labels;

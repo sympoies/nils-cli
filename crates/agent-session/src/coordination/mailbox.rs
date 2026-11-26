@@ -12,6 +12,7 @@ use crate::cli::{
     MessageAckArgs, MessageCategory, MessageForwardArgs, MessageInboxArgs, MessageReminderArgs,
     MessageReplyArgs, MessageSendArgs, MessageShowArgs, MessageWaitArgs,
 };
+use crate::metadata::send_labels::Label;
 use crate::{CliContext, CliError};
 
 use super::{
@@ -167,7 +168,13 @@ struct MessageBody {
 }
 
 pub(crate) fn send(context: &CliContext, mut args: MessageSendArgs) -> Result<Value, CliError> {
+    // Move the expectation out so it can be borrowed while the rest of args is routed.
+    let expectation = args.expect_label.take();
+    let label = expectation.as_deref().map(Label::parse).transpose()?;
     let Some(recipient) = args.to_session.take() else {
+        if label.is_some() {
+            return Err(label_unsupported());
+        }
         return super::service_reply::cli_send(context, args);
     };
     // A machine that names this host is the local mailbox, never the federation outbox.
@@ -177,15 +184,27 @@ pub(crate) fn send(context: &CliContext, mut args: MessageSendArgs) -> Result<Va
         .as_deref()
         .is_some_and(|machine| machine != local_machine)
     {
+        if label.is_some() {
+            return Err(label_unsupported());
+        }
         return super::remote::cli_send(context, args, &recipient);
     }
-    send_impl(context, args, &recipient)
+    send_impl(context, args, &recipient, label)
+}
+
+fn label_unsupported() -> CliError {
+    CliError::unavailable(
+        "send-label-unsupported",
+        "delivery label expectations require a local session destination",
+        None,
+    )
 }
 
 fn send_impl(
     context: &CliContext,
     args: MessageSendArgs,
     recipient: &str,
+    label: Option<Label<'_>>,
 ) -> Result<Value, CliError> {
     let capability_file = resolve_capability_file(args.capability_file.as_deref())?;
     let machine = crate::board::machine_identity(None, context);
@@ -218,6 +237,7 @@ fn send_impl(
         None,
         args.category,
         None,
+        label,
     )
 }
 
@@ -295,6 +315,7 @@ pub(crate) fn forward(context: &CliContext, args: MessageForwardArgs) -> Result<
         Some(digest),
         None,
         Some(&request),
+        None,
     )
 }
 
@@ -796,6 +817,7 @@ pub(super) fn reply_with_service(
         Some(digest),
         args.category,
         None,
+        None,
     )
 }
 
@@ -929,6 +951,7 @@ fn send_authenticated(
     request_digest_override: Option<String>,
     category: Option<MessageCategory>,
     forward_request: Option<&super::forwarding::Request>,
+    expected_label: Option<Label<'_>>,
 ) -> Result<Value, CliError> {
     if sender_session_id == recipient_session_id && reply_to.is_some() {
         return Err(CliError::data(
@@ -953,6 +976,9 @@ fn send_authenticated(
         }
         if let Some(category) = category {
             input["category"] = json!(category);
+        }
+        if let Some(label) = &expected_label {
+            input["expect_label"] = json!(label);
         }
         request_digest(operation, &input)
     });
@@ -1030,6 +1056,17 @@ fn send_authenticated(
         &digest,
     )? {
         return Ok(replay);
+    }
+    // The recipient record lock in _lifecycle_locks covers both the comparison
+    // and the registry save. Label rotation takes the same lock.
+    if let Some(label) = expected_label {
+        label.check(&recipient)?;
+        #[cfg(test)]
+        AFTER_LABEL_CHECK.with(|hook| {
+            if let Some(hook) = hook.take() {
+                hook();
+            }
+        });
     }
     let broker = locked
         .registry
@@ -1216,6 +1253,12 @@ fn send_authenticated(
     )?;
     locked.save()?;
     Ok(outcome)
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(in crate::coordination) static AFTER_LABEL_CHECK: std::cell::Cell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::Cell::new(None) };
 }
 
 /// Same-session resume continuity (`sympoies/nils-cli#2302`).

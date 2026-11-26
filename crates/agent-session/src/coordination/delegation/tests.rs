@@ -8,6 +8,8 @@ use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
+mod send_label_race;
+
 struct Fixture {
     _temp: tempfile::TempDir,
     context: CliContext,
@@ -120,6 +122,7 @@ fn delegation_scope_and_use_audit_work_for_supported_harnesses() {
                     from_session: "caller".into(),
                     to_session: Some(recipient.into()),
                     to_machine: None,
+                    expect_label: None,
                     body_file: body.clone(),
                     reply_to: None,
                     reply_by: None,
@@ -482,6 +485,7 @@ fn local_receipt_rechecks_expiry_after_preflight_before_commit() {
                 from_session: "caller".into(),
                 to_session: Some("a-recipient".into()),
                 to_machine: None,
+                expect_label: None,
                 body_file: body,
                 reply_to: None,
                 reply_by: None,

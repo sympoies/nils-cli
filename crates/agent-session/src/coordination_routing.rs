@@ -74,6 +74,7 @@ pub(crate) fn command_name(command: &Command) -> Option<&'static str> {
         Command::Metadata(args) => Some(match &args.command {
             cli::MetadataCommand::Attach(_) => "metadata-attach",
             cli::MetadataCommand::Show(_) => "metadata-show",
+            cli::MetadataCommand::SetLabel(_) => "metadata-set-label",
         }),
         Command::Account(args) => Some(match &args.command {
             cli::AccountCommand::Show(_) => "account-show",
@@ -151,6 +152,7 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             ("permission", "list") => Some("permission.list"),
             ("permission", "answer") => Some("permission.answer"),
             ("metadata", "show") => Some("metadata-show"),
+            ("metadata", "set-label") => Some("metadata-set-label"),
             ("account", "show") => Some("account-show"),
             ("account", "switch") => Some("account-switch"),
             _ => None,
@@ -249,6 +251,7 @@ pub(crate) fn command_format(command: &Command) -> OutputFormat {
         Command::Metadata(args) => match &args.command {
             cli::MetadataCommand::Attach(args) => args.format,
             cli::MetadataCommand::Show(args) => args.format,
+            cli::MetadataCommand::SetLabel(args) => args.format,
         },
         Command::Lineage(args) => match &args.command {
             cli::LineageCommand::Adopt(args) => args.format,
