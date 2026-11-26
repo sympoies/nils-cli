@@ -146,7 +146,7 @@ above.
   every provider source, exact plan digest, drift state, and whether apply is
   permitted. Provider hook argv content is omitted.
 - `agent-hook.doctor.v1`: product status (missing, compatibility-only, `dual`,
-  `drifted`, `converged`, `unsupported`, or `unrelated`), owned counts,
+  `migration-needed`, `drifted`, `converged`, `unsupported`, or `unrelated`), owned counts,
   compatibility residue count, digests, policy availability, recovery health,
   registration owner, and whether direct dispatch is supported.
 - `agent-hook.inventory.v1`: ordered public rule metadata and effective mode;

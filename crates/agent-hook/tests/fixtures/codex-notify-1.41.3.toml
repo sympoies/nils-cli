@@ -1,0 +1,37 @@
+notify = ["/bin/sh", "-c", """
+resolve() {
+  target=$1; count=0
+  directory=$(CDPATH= cd -P "${target%/*}" 2>/dev/null && pwd -P) || return 1
+  target=$directory/${target##*/}
+  while [ -L "$target" ]; do
+    count=$((count + 1)); [ "$count" -le 40 ] || return 1
+    link=$(/usr/bin/readlink "$target") || return 1
+    case "$link" in /*) target=$link ;; *) target=${target%/*}/$link ;; esac
+    directory=$(CDPATH= cd -P "${target%/*}" 2>/dev/null && pwd -P) || return 1
+    target=$directory/${target##*/}
+  done
+  printf '%s' "$target"
+}
+configured=${AGENT_SESSION_BIN:-}
+case "$configured" in /*/agent-session) if [ -f "$configured" ] && [ -x "$configured" ]; then selected=${configured%/*}/agent-session; session_real=$(resolve "$configured") && selected_real=$(resolve "$selected") && [ "${session_real%/*}" = "${selected_real%/*}" ] && [ -f "$selected" ] && [ -x "$selected" ] && exec "$selected" "$@"; exit 127; fi ;; esac
+configured_roots=${AGENT_RUNTIME_TRUSTED_CLI_ROOT:-}
+roots=${configured_roots:-/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:${HOME:-/nonexistent}/.local/nils-cli/bin}
+trusted_default() {
+  target=$1; approved=$2
+  approved=$(CDPATH= cd -P "$approved" 2>/dev/null && pwd -P) || return 1
+  target=$(resolve "$target") || return 1
+  case "$approved" in
+    /opt/homebrew/bin|/home/linuxbrew/.linuxbrew/bin)
+      case "$target" in "$approved/agent-session"|"${approved%/bin}/Cellar/nils-cli/"*) return 0 ;; esac ;;
+    *) [ "$target" = "$approved/agent-session" ] && return 0 ;;
+  esac
+  return 1
+}
+set -f
+old_ifs=$IFS; IFS=:
+for root in $roots; do
+  case "$root" in /*) selected=$root/agent-session; if [ -f "$selected" ] && [ -x "$selected" ] && { [ -n "$configured_roots" ] || trusted_default "$selected" "$root"; }; then IFS=$old_ifs; exec "$selected" "$@"; fi ;; esac
+done
+exit 127""", "provider-entrypoint", "activity", "notify", "--agent", "codex"]
+# unrelated comment
+web_search = "cached"
