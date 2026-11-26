@@ -22,7 +22,9 @@ const STORE: &str = "resume-move-origin.v1.json";
 const LOCK: &str = "resume-move-origin.lock";
 const SCHEMA: &str = "agent-session.console-resume-move-origin.v1";
 const MAX_STORE_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_OPERATIONS: usize = 1024;
+// Operation bindings are per caller: a caller that exhausts its own bound
+// evicts only its own oldest binding, never another caller's.
+const MAX_OPERATIONS_PER_CALLER: usize = 32;
 // Bound what one authenticated caller can keep in the shared index. A live
 // receipt retains its request body for reconciliation, so it is limited more
 // tightly than a compacted terminal fence. A repeat of an existing move is
@@ -295,15 +297,19 @@ impl Store {
             operation_key_timestamp_ms(key)
                 .is_some_and(|timestamp| u128::from(timestamp) >= cutoff_ms)
         });
-        // Evict the oldest binding across callers, not the first key.
-        while operations.len() >= MAX_OPERATIONS {
-            let Some(oldest) = operations
-                .keys()
-                .min_by_key(|key| operation_key_timestamp_ms(key))
-                .cloned()
-            else {
-                break;
-            };
+        let prefix = format!("{}/", request.caller_id());
+        while operations
+            .range(prefix.clone()..)
+            .take_while(|(key, _)| key.starts_with(&prefix))
+            .count()
+            >= MAX_OPERATIONS_PER_CALLER
+        {
+            let oldest = operations
+                .range(prefix.clone()..)
+                .take_while(|(key, _)| key.starts_with(&prefix))
+                .min_by_key(|(key, _)| operation_key_timestamp_ms(key))
+                .map(|(key, _)| key.clone())
+                .expect("a bound caller has at least one binding");
             operations.remove(&oldest);
         }
         operations.insert(key, request.session.move_id.clone());

@@ -654,6 +654,11 @@ fn console_origin_rejects_every_unauthorized_caller_before_any_relay_traffic() {
         let daemon = origin.daemon(Some(&relay.url));
         let mut owner = f.request();
         owner["caller"]["owner"] = json!("fixture-owner");
+        let mut other_caller = f.request();
+        other_caller["caller"]["session_id"] = json!("other");
+        let mut other_incarnation = f.request();
+        other_incarnation["caller"]["session_incarnation"] =
+            json!("00000000-0000-4000-8000-000000000031");
         for (name, path_caller, token, headers, body, status, code) in [
             (
                 "wrong token",
@@ -699,6 +704,24 @@ fn console_origin_rejects_every_unauthorized_caller_before_any_relay_traffic() {
                 f.request(),
                 400,
                 "resume-unsupported",
+            ),
+            (
+                "body caller differs from the authenticated caller",
+                "caller",
+                CALLER_TOKEN,
+                vec![],
+                other_caller,
+                403,
+                "resume-move-binding-mismatch",
+            ),
+            (
+                "body incarnation differs from the authenticated incarnation",
+                "caller",
+                CALLER_TOKEN,
+                vec![],
+                other_incarnation,
+                403,
+                "resume-move-binding-mismatch",
             ),
             (
                 "owner assertion",

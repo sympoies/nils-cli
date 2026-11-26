@@ -235,3 +235,86 @@ fn a_caller_cannot_claim_burn_or_probe_another_callers_move() {
     };
     assert_eq!(retained, owner_body);
 }
+
+#[test]
+fn operation_bindings_are_bounded_and_evicted_within_the_same_caller() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(&directory);
+    let operation = uuid::Uuid::now_v7().to_string();
+    let (victim, victim_body) = start_with_operation("victim", 1, "/work", &operation);
+    assert!(first_claim(&context, &victim, &victim_body));
+
+    // A repeat of an existing terminal move binds every fresh operation ID.
+    let first = uuid::Uuid::now_v7().to_string();
+    let (attacker, attacker_body) = start_with_operation("attacker", 1, "/work", &first);
+    assert!(first_claim(&context, &attacker, &attacker_body));
+    Store::open(&context)
+        .and_then(|store| store.record(&attacker, refused(&attacker)))
+        .unwrap_or_else(|_| unreachable!());
+    for _ in 0..40 {
+        let (repeat, _) = start("attacker", 1, "/work");
+        assert!(matches!(
+            Store::open(&context).and_then(|mut store| store.existing(&repeat)),
+            Ok(Some(Retained::Terminal(_)))
+        ));
+    }
+
+    let (reused, _) = start_with_operation("attacker", 2, "/work", &first);
+    assert!(
+        matches!(
+            Store::open(&context).and_then(|mut store| store.existing(&reused)),
+            Ok(None)
+        ),
+        "the caller's oldest binding must be evicted past its bound"
+    );
+    let (reuse, _) = start_with_operation("victim", 2, "/work", &operation);
+    assert!(
+        matches!(
+            Store::open(&context).and_then(|mut store| store.existing(&reuse)),
+            Err(Error::Conflict)
+        ),
+        "another caller's repeats evicted the victim's operation binding"
+    );
+}
+
+#[test]
+fn a_no_create_refusal_must_come_from_a_pre_admission_state() {
+    let (request, _) = start("caller", 1, "/work");
+    let refusal = |state: Option<&str>| {
+        let mut details = json!({
+            "move_id": request.session.move_id,
+            "safe_to_retry": false,
+            "session_created": false,
+            "next_action": "inspect_destination",
+        });
+        if let Some(state) = state {
+            details["state"] = json!(state);
+        }
+        serde_json::from_value::<Reply>(json!({
+            "status": 422,
+            "body": {
+                "schema_version": START_SCHEMA,
+                "ok": false,
+                "error": {"code": "resume-account-mismatch", "details": details},
+            },
+        }))
+        .unwrap()
+    };
+    for state in [
+        None,
+        Some("prepared"),
+        Some("staged"),
+        Some("aborted_no_writer"),
+    ] {
+        assert!(
+            refusal(state).checked_retained(&request).is_some(),
+            "{state:?}"
+        );
+    }
+    for state in ["writer_admitted", "created"] {
+        assert!(
+            refusal(Some(state)).checked_retained(&request).is_none(),
+            "{state}"
+        );
+    }
+}

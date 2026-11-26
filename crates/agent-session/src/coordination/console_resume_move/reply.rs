@@ -128,7 +128,13 @@ impl Reply {
                     None => "reconcile_destination",
                     _ => return None,
                 };
+                // The destination asserts no-create only before writer admission.
+                let pre_admission = matches!(
+                    details.state,
+                    None | Some(Outcome::Prepared | Outcome::Staged | Outcome::AbortedNoWriter)
+                );
                 if details.move_id != *move_id
+                    || (details.session_created == Some(false) && !pre_admission)
                     || details.safe_to_retry
                     || details.next_action != expected_action
                 {
