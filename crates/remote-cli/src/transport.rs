@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use jiff::Timestamp;
 use nils_common::{cli_contract::exit, shell::quote_posix_single as quote};
 
-use crate::{Failure, Remote, Work};
+use crate::{Failure, Remote, Work, interrupt::Interrupts};
 
 const SSH_UNAVAILABLE: Failure = Failure::new(
     exit::UNAVAILABLE,
@@ -28,9 +28,16 @@ const LOCAL_IO: Failure = Failure::new(
     "Could not capture the OpenSSH result",
 );
 
+#[derive(Clone, Copy)]
+pub(super) enum EndReason {
+    Completed,
+    TimedOut,
+    Interrupted(i32),
+}
+
 pub(super) struct Capture {
     pub status: ExitStatus,
-    pub timed_out: bool,
+    pub end_reason: EndReason,
     pub remote_255: bool,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
@@ -57,6 +64,7 @@ pub(super) fn run(remote: &Remote, work: &Work<'_>) -> Result<Capture, Failure> 
     // from a proxy or other helper that outlives the local OpenSSH process.
     let stdout = tempfile::tempfile().map_err(|_| LOCAL_IO)?;
     let stderr = tempfile::tempfile().map_err(|_| LOCAL_IO)?;
+    let interrupts = Interrupts::install().map_err(|_| LOCAL_IO)?;
     let started_at = Timestamp::now();
     let started = Instant::now();
     let mut child = Command::new("ssh")
@@ -76,10 +84,11 @@ pub(super) fn run(remote: &Remote, work: &Work<'_>) -> Result<Capture, Failure> 
         .spawn()
         .map_err(|_| SSH_UNAVAILABLE)?;
 
-    let (status, timed_out) = wait(
+    let (status, end_reason) = wait(
         &mut child,
         started,
         Duration::from_secs(remote.timeout.into()),
+        &interrupts,
     )
     .map_err(|_| LOCAL_IO)?;
     let elapsed_ms = started.elapsed().as_millis();
@@ -88,7 +97,7 @@ pub(super) fn run(remote: &Remote, work: &Work<'_>) -> Result<Capture, Failure> 
     let remote_255 = remove_marker(&mut stderr, &marker);
     Ok(Capture {
         status,
-        timed_out,
+        end_reason,
         remote_255,
         stdout,
         stderr,
@@ -117,24 +126,35 @@ fn captured_bytes(file: &File) -> io::Result<Vec<u8>> {
     Ok(output)
 }
 
-fn wait(child: &mut Child, started: Instant, timeout: Duration) -> io::Result<(ExitStatus, bool)> {
-    if timeout.is_zero() {
-        return child.wait().map(|status| (status, false));
-    }
+fn wait(
+    child: &mut Child,
+    started: Instant,
+    timeout: Duration,
+    interrupts: &Interrupts,
+) -> io::Result<(ExitStatus, EndReason)> {
+    let interval = Duration::from_millis(10);
     loop {
+        if let Some(signal) = interrupts.received() {
+            return stop(child).map(|status| (status, EndReason::Interrupted(signal)));
+        }
         match child.try_wait() {
-            Ok(Some(status)) => return Ok((status, false)),
+            Ok(Some(status)) => return Ok((status, EndReason::Completed)),
             Ok(None) => {}
             Err(error) => {
                 let _ = stop(child);
                 return Err(error);
             }
         }
-        let remaining = timeout.saturating_sub(started.elapsed());
-        if remaining.is_zero() {
-            return stop(child).map(|status| (status, true));
-        }
-        thread::sleep(remaining.min(Duration::from_millis(10)));
+        let pause = if timeout.is_zero() {
+            interval
+        } else {
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return stop(child).map(|status| (status, EndReason::TimedOut));
+            }
+            remaining.min(interval)
+        };
+        thread::sleep(pause);
     }
 }
 

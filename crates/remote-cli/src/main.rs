@@ -1,3 +1,4 @@
+mod interrupt;
 mod transport;
 
 use std::io::{self, Write};
@@ -9,6 +10,8 @@ use nils_common::cli_contract::{
     Envelope, EnvelopeError, OutputFormat, emit_parse_error, exit, schema_version_for,
 };
 use serde::Serialize;
+
+use transport::EndReason;
 
 const BINARY: &str = "remote-cli";
 const EXAMPLES: &str = r#"Examples:
@@ -152,6 +155,8 @@ struct ResultData<'a> {
     ssh_exit_code: Option<i32>,
     timed_out: bool,
     signal: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    interrupted_by_signal: Option<i32>,
     stdout: std::borrow::Cow<'a, str>,
     stderr: std::borrow::Cow<'a, str>,
     remote_outcome: RemoteOutcome,
@@ -202,10 +207,17 @@ fn run(remote: Remote, work: Work<'_>, format: OutputFormat) -> io::Result<i32> 
         }
     };
 
-    let (outcome, failure) = if capture.timed_out {
-        (RemoteOutcome::Unknown, Some(DEADLINE))
-    } else {
-        match capture.status.code() {
+    let (outcome, failure) = match capture.end_reason {
+        EndReason::TimedOut => (RemoteOutcome::Unknown, Some(DEADLINE)),
+        EndReason::Interrupted(signal) => (
+            RemoteOutcome::Unknown,
+            Some(Failure::new(
+                128 + signal,
+                "interrupted",
+                "Local execution was interrupted and OpenSSH was stopped; remote outcome is unknown",
+            )),
+        ),
+        EndReason::Completed => match capture.status.code() {
             Some(0) => (RemoteOutcome::Succeeded, None),
             Some(255) if !capture.remote_255 => (RemoteOutcome::Unknown, Some(SSH_TRANSPORT)),
             Some(code) => (
@@ -222,7 +234,7 @@ fn run(remote: Remote, work: Work<'_>, format: OutputFormat) -> io::Result<i32> 
                     "OpenSSH was terminated by a signal; remote outcome is unknown",
                 )),
             ),
-        }
+        },
     };
 
     if format.is_json() {
@@ -244,8 +256,12 @@ fn run(remote: Remote, work: Work<'_>, format: OutputFormat) -> io::Result<i32> 
             connect_timeout_ms: u64::from(remote.connect_timeout) * 1_000,
             timeout_ms: u64::from(remote.timeout) * 1_000,
             ssh_exit_code: capture.status.code(),
-            timed_out: capture.timed_out,
+            timed_out: matches!(capture.end_reason, EndReason::TimedOut),
             signal: capture.signal(),
+            interrupted_by_signal: match capture.end_reason {
+                EndReason::Interrupted(signal) => Some(signal),
+                _ => None,
+            },
             stdout: String::from_utf8_lossy(&capture.stdout),
             stderr: String::from_utf8_lossy(&capture.stderr),
             remote_outcome: outcome,

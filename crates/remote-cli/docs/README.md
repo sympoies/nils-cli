@@ -34,7 +34,8 @@ Both commands accept the options below.
 `--stdin-file FILE` to feed a local file to the command. Exec without a file
 uses closed input. Input and script files must be regular files. OpenSSH
 always uses `BatchMode=yes` and runs without a pseudo-terminal. Each
-invocation attempts the operation once.
+invocation attempts the operation once. SIGINT, SIGTERM, and SIGHUP stop
+the local SSH process group and preserve captured output.
 
 `remote-cli completion bash` and `remote-cli completion zsh` print completions.
 
@@ -52,23 +53,25 @@ the exit status. `data` carries the fields below.
 | `host`, `requested_cwd`, `argv`, `script_file`, `sudo`, `sudo_user` | Requested inputs. An omitted cwd or sudo user is `null`. Only the applicable one of `argv` and `script_file` is populated. |
 | `started_at`, `elapsed_ms`, `connect_timeout_ms`, `timeout_ms` | UTC start timestamp, monotonic elapsed milliseconds, and configured timeouts. |
 | `ssh_exit_code`, `timed_out`, `signal` | Local OpenSSH exit code or terminating signal, plus whether the local deadline expired. A signaled process has a `null` SSH exit code. |
+| `interrupted_by_signal` | Signal received by remote-cli when it stops local OpenSSH. Omitted outside interruptions. |
 | `stdout`, `stderr` | Captured output, including partial output after failures. Non-UTF-8 bytes are replaced in JSON. |
 | `remote_outcome` | `succeeded`, `failed`, or `unknown`. A connection failure, disconnect, or local deadline can leave the outcome unknown. |
 
 The JSON result contains the supplied argv and command output. Keep
 credentials out of arguments and avoid writing secrets to the captured streams.
 
-| Exit status    | JSON error code                       | Meaning                                                                                    |
-| -------------- | ------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `0`            |                                       | Remote operation succeeded.                                                                |
-| Remote status  | `remote-exit`                         | Remote operation returned a nonzero status, including `124` or `255`.                      |
-| `255`          | `ssh-transport`                       | OpenSSH reported a connection or session error and did not confirm a remote exit of `255`. |
-| `124`          | `deadline-exceeded`                   | The local deadline expired.                                                                |
-| `128 + signal` | `ssh-signaled`                        | The local OpenSSH process was terminated by a signal before the deadline.                  |
-| `64`           | `parse-error` or `unknown-subcommand` | CLI usage error, with schema `cli.remote-cli.error.v1`.                                    |
-| `65`           | `input-file`                          | The input file could not be opened as a regular file.                                      |
-| `69`           | `ssh-unavailable`                     | The local SSH client could not be started.                                                 |
-| `1`            | `local-io`                            | Local setup or capture failed.                                                             |
+| Exit status    | JSON error code                       | Meaning                                                                                               |
+| -------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `0`            |                                       | Remote operation succeeded.                                                                           |
+| Remote status  | `remote-exit`                         | Remote operation returned a nonzero status, including `124` or `255`.                                 |
+| `255`          | `ssh-transport`                       | OpenSSH reported a connection or session error and did not confirm a remote exit of `255`.            |
+| `124`          | `deadline-exceeded`                   | The local deadline expired.                                                                           |
+| `128 + signal` | `interrupted`                         | The CLI received SIGINT, SIGTERM, or SIGHUP and stopped local OpenSSH. The remote outcome is unknown. |
+| `128 + signal` | `ssh-signaled`                        | The local OpenSSH process was terminated by a signal before the deadline.                             |
+| `64`           | `parse-error` or `unknown-subcommand` | CLI usage error, with schema `cli.remote-cli.error.v1`.                                               |
+| `65`           | `input-file`                          | The input file could not be opened as a regular file.                                                 |
+| `69`           | `ssh-unavailable`                     | The local SSH client could not be started.                                                            |
+| `1`            | `local-io`                            | Local setup or capture failed.                                                                        |
 
 A failed JSON envelope includes `error.code` and `error.message`. CLI parsing
 and local setup errors can omit `data`.

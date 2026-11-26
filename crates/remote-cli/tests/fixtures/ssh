@@ -18,6 +18,13 @@ if [ "${FAKE_SSH_MODE:-}" = disconnect ]; then
   exit 255
 fi
 
+if [ "${FAKE_SSH_MODE:-}" = hold ]; then
+  printf 'partial stdout'
+  printf 'partial stderr' >&2
+  printf '%s\n' "$$" > "$FAKE_SSH_PID_FILE"
+  exec /bin/sleep 30
+fi
+
 export HOME="$FIXTURE_REMOTE_HOME" SHELL="$FIXTURE_REMOTE_SHELL"
 cd "$HOME"
 exec /bin/sh -c "$1"

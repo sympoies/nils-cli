@@ -2,7 +2,9 @@ use std::fs::{self, File, Permissions};
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use nils_test_support::hermetic::{self, HermeticHome};
 use pretty_assertions::assert_eq;
@@ -322,6 +324,82 @@ fn deadline_preserves_partial_output_and_differs_from_remote_exit_124() {
     assert_eq!(payload["data"]["timed_out"], false);
     assert_eq!(payload["data"]["ssh_exit_code"], 124);
     assert_eq!(payload["data"]["timeout_ms"], 0);
+}
+
+#[test]
+fn interruption_reaps_ssh_even_without_a_deadline() {
+    for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+        let fixture = Fixture::new();
+        let pid_file = fixture.root.path().join("ssh.pid");
+        let mut cli = fixture
+            .command()
+            .env("FAKE_SSH_MODE", "hold")
+            .env("FAKE_SSH_PID_FILE", &pid_file)
+            .args([
+                "exec",
+                "fixture.invalid",
+                "--format",
+                "json",
+                "--timeout",
+                "0",
+                "--",
+                "true",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let ready_limit = Instant::now() + Duration::from_secs(5);
+        let ssh_pid: i32 = loop {
+            let ready = fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|pid| pid.strip_suffix('\n')?.parse().ok());
+            if let Some(pid) = ready {
+                break pid;
+            }
+            if Instant::now() >= ready_limit {
+                let _ = cli.kill();
+                let _ = cli.wait();
+                panic!("fake ssh did not signal readiness");
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        // SAFETY: The signal target is the CLI child spawned by this test.
+        let signaled = unsafe { libc::kill(cli.id() as i32, signal) };
+
+        let exit_limit = Instant::now() + Duration::from_secs(5);
+        let finished = loop {
+            let exited = cli.try_wait().unwrap().is_some();
+            if exited || Instant::now() >= exit_limit {
+                break exited;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        if !finished {
+            let _ = cli.kill();
+        }
+        let output = cli.wait_with_output().unwrap();
+        // SAFETY: fake ssh published its own PID before the signal was sent.
+        if unsafe { libc::kill(ssh_pid, 0) } == 0 {
+            // Clean up the fake transport on the failing path.
+            let _ = unsafe { libc::kill(ssh_pid, libc::SIGKILL) };
+            panic!("remote-cli left fake ssh running after signal {signal}");
+        }
+        assert_eq!(signaled, 0);
+        assert!(finished, "remote-cli did not exit on signal {signal}");
+
+        let payload = result(&output, 128 + signal, "cli.remote-cli.exec.v1");
+        assert_eq!(payload["error"]["code"], "interrupted");
+        assert_eq!(payload["data"]["interrupted_by_signal"], signal);
+        assert_eq!(payload["data"]["remote_outcome"], "unknown");
+        assert_eq!(payload["data"]["ssh_exit_code"], Value::Null);
+        assert_eq!(payload["data"]["signal"], libc::SIGKILL);
+        assert_eq!(payload["data"]["timed_out"], false);
+        assert_eq!(payload["data"]["stdout"], "partial stdout");
+        assert_eq!(payload["data"]["stderr"], "partial stderr");
+    }
 }
 
 #[test]
