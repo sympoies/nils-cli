@@ -342,6 +342,26 @@ fn console_destination_start_replays_and_reports_read_only_status() {
 }
 
 #[test]
+fn console_destination_session_list_prevents_storage_for_every_bearer() {
+    with_console_fixture(|f| {
+        let daemon = f.daemon(true, Some(&f.signers.allowlist), false);
+        for token in [None, Some("wrong-bearer"), Some(BEARER)] {
+            let mut request = daemon.get("/sessions");
+            if let Some(token) = token {
+                request = request.bearer_auth(token);
+            }
+            let reply = request.send().unwrap();
+            assert_eq!(reply.status(), reqwest::StatusCode::OK);
+            assert_eq!(
+                reply.headers().get(reqwest::header::CACHE_CONTROL),
+                Some(&reqwest::header::HeaderValue::from_static("no-store")),
+                "session listing must prohibit storage for bearer {token:?}"
+            );
+        }
+    });
+}
+
+#[test]
 fn console_destination_capability_requires_ingress_and_native_paths() {
     with_console_fixture(|f| {
         let bad = f.root.join("absent-signers");
