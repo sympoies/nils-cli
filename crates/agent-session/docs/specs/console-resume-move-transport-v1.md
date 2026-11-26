@@ -4,7 +4,9 @@ This document supplements [Console resume-move start v1](console-resume-move-v1.
 frozen by [#4060](https://github.com/sympoies/nils-cli/pull/4060). It adds
 discovery, a destination status read and the authenticated relay binding.
 The v1 start routes, request and reply members, refusal allowlist, launch
-key and no-replay rules are unchanged. No route is enabled by this document.
+key and no-replay rules are unchanged, except that the
+[v1.1 erratum](console-resume-move-v1.md#version-11-erratum) removes
+`caller.owner` from the start request. No route is enabled by this document.
 
 ## Capability discovery
 
@@ -66,7 +68,7 @@ The exact JSON members are:
 | `origin_machine` | Machine authenticated by the relay's origin bearer |
 | `caller_session_id` | Managed ID in the exact caller grant |
 | `caller_session_incarnation` | Canonical UUID in the exact caller grant |
-| `owner` | Owner derived from that grant, not the body's assertion |
+| `owner` | Owner derived from that grant. The request body has no owner member |
 | `destination_machine` | Machine selected and allowed by that grant |
 | `move_id` | Exact move UUID, canonical and non-nil |
 | `scope` | Literal `read` for status GET or `start` for start POST |
@@ -81,8 +83,9 @@ caller-supplied relay ingress or binding headers.
 The destination verifies both credentials before parsing move selectors.
 It validates the request shape, then checks the header schema, scope
 against the method and route, exact local destination and move selector.
-For start it also checks caller ID, caller incarnation, owner, machine,
-operation ID and move ID against the unchanged body. For status it checks
+For start it also checks caller ID, caller incarnation, machine,
+operation ID and move ID against the unchanged body. The owner comes only
+from the binding, since the body has no owner member. For status it checks
 the canonical move ID against the path.
 
 On either route, invalid or missing credentials return HTTP 401 with
