@@ -17,7 +17,7 @@ pub enum ReleaseCommand {
     DeleteAsset(ReleaseDeleteAssetArgs),
     /// Read a release, its resolved target commit and assets.
     View(ReleaseViewArgs),
-    /// Replace notes and optionally the title, then verify readback.
+    /// Edit notes, title, or draft state, then verify readback.
     Edit(ReleaseEditArgs),
     /// Delete a release and optionally its exact tag.
     Delete(ReleaseDeleteArgs),
@@ -64,9 +64,16 @@ pub struct ReleaseEditArgs {
     pub tag: String,
     /// Markdown notes file; use - to read stdin.
     #[arg(long)]
-    pub notes_file: String,
+    pub notes_file: Option<String>,
+    /// Replace the release title.
     #[arg(long)]
     pub title: Option<String>,
+    /// Move the release to draft.
+    #[arg(long, conflicts_with = "publish")]
+    pub draft: bool,
+    /// Publish the release.
+    #[arg(long, conflicts_with = "draft")]
+    pub publish: bool,
 }
 
 #[derive(Args, Debug)]
