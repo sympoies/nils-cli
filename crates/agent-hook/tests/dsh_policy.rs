@@ -249,7 +249,7 @@ fn lifecycle_request(
 }
 
 fn git(fixture: &Fixture, args: &[&str]) {
-    let output = Command::new("git")
+    let output = support::git_command(fixture)
         .arg("-C")
         .arg(&fixture.root)
         .args(args)
