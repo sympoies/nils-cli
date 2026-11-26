@@ -65,7 +65,7 @@ jobs:
           path: diagnostic-source
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@1.120.0
         with:
           components: llvm-tools-preview
 
