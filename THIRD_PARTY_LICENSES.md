@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `826f03f9d6fec4858b56bab8888719788a43848af11403a6030e4b9142509e3e`
+- Cargo.lock SHA256: `60ca5de26b3f180c1b971a4472ac4d572d4290e4531b20afbfb9e78ee3a07b09`
 - Third-party crates (`source != null`): 487
 - Workspace crates (`source == null`, excluded below): 42
 
@@ -267,8 +267,8 @@ This file documents third-party Rust crate licenses used by this workspace.
 | mio | 1.2.1 | MIT | crates.io |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 | crates.io |
 | nix | 0.31.3 | MIT | crates.io |
-| notify | 8.2.2 | CC0-1.0 | crates.io |
-| notify-types | 2.1.0 | MIT OR Apache-2.0 | crates.io |
+| notify | 9.0.0 | CC0-1.0 | crates.io |
+| notify-types | 2.3.1 | MIT OR Apache-2.0 | crates.io |
 | nu-ansi-term | 0.50.3 | MIT | crates.io |
 | num | 0.4.3 | MIT OR Apache-2.0 | crates.io |
 | num-bigint | 0.4.6 | MIT OR Apache-2.0 | crates.io |
