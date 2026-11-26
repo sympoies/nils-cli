@@ -42,6 +42,10 @@ recorded in `sympoies/nils-cli#1409`.
   private. The route stays open, but the `resume_move` lineage field appears only for
   bearer-authenticated requests (see [Console resume-move v1](console-resume-move-v1.md#destination-admission-and-lineage)).
 
+  `data.capabilities.resume_move_start_v1` is true when relay ingress and the
+  native destination move configuration are available. See
+  [Console resume-move discovery](console-resume-move-transport-v1.md#capability-discovery).
+
   `data.capabilities.managed_resume_command` remains false until an unqualified CLI resume can revalidate
   the daemon's active profile registry and readiness contract; consumers must copy the provider session
   ID during that skew. `data.capabilities.managed_account_handoff` advertises that this daemon

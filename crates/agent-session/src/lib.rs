@@ -580,6 +580,7 @@ impl CliContext {
 }
 
 pub use session_record::SessionRecord;
+use session_record::{InitialProviderPlan, initial_provider_resume_plan};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -1231,6 +1232,8 @@ pub struct SessionView {
     agent_profile: Option<String>,
     #[serde(skip)]
     profile_resume_context: Result<Option<DurableProfileResumeContext>, CliError>,
+    #[serde(skip)]
+    resume_move: Option<session_record::ResumeMoveLineage>,
     mode: String,
     coordination_mode: cli::CoordinationMode,
     title: Option<String>,
@@ -1633,6 +1636,7 @@ fn start_session_inner_unjournaled(
             agent_bin: Some(display_path(&agent_bin)),
         },
         initial_lineage,
+        provider_plan.move_lineage,
         Some(&tmux_bin),
     )?;
     created
@@ -1947,6 +1951,7 @@ fn start_run_session_unjournaled(
             agent_bin: None,
         },
         Some(initial_lineage),
+        None,
         Some(&tmux_bin),
     )?;
 
@@ -2141,6 +2146,7 @@ pub(crate) fn start_provider_resume_session_unjournaled(
             Some(InitialProviderPlan {
                 launch_args: provider_resume.resume_args.clone(),
                 provider_resume: Some(provider_resume),
+                move_lineage: None,
             }),
         );
     }
@@ -2175,6 +2181,7 @@ fn start_resolved_provider_resume_session(
             agent_bin: Some(display_path(&agent_bin)),
         },
         Some(initial_lineage),
+        None,
         Some(&tmux_bin),
     )?;
 
@@ -2541,7 +2548,7 @@ struct RecordRequest<'a> {
 
 #[cfg(test)]
 fn create_record(request: RecordRequest<'_>) -> Result<CreatedRecord, CliError> {
-    create_record_with_lineage(request, None, None)
+    create_record_with_lineage(request, None, None, None)
 }
 
 /// The lineage and work a new record is created with
@@ -2610,33 +2617,6 @@ fn write_initial_session_record(
         storage.write_private_file(SESSION_RESUME_FILE, &sidecar_bytes)?;
     }
     storage.write_private_file("session.json", &bytes)
-}
-
-#[derive(Debug, Default)]
-struct InitialProviderPlan {
-    provider_resume: Option<ProviderResume>,
-    launch_args: Vec<String>,
-}
-
-fn initial_provider_resume_plan(agent: AgentKind) -> Result<InitialProviderPlan, CliError> {
-    let plan = match agent {
-        AgentKind::Claude => {
-            let session_id = uuid::Uuid::new_v4().to_string();
-            InitialProviderPlan {
-                provider_resume: Some(ProviderResume {
-                    provider: agent.as_str().to_string(),
-                    session_id: session_id.clone(),
-                    captured_at: Zoned::now().timestamp().to_string(),
-                    capture_method: "claude-explicit-session-id".to_string(),
-                    resume_args: vec!["--resume".to_string(), session_id.clone()],
-                    extra: BTreeMap::new(),
-                }),
-                launch_args: vec!["--session-id".to_string(), session_id],
-            }
-        }
-        AgentKind::Codex | AgentKind::Dsh => InitialProviderPlan::default(),
-    };
-    Ok(plan)
 }
 
 fn validate_agent_args(agent: AgentKind, args: &[String]) -> Result<(), CliError> {
@@ -6011,6 +5991,7 @@ fn session_view_from_parts(
         },
         agent_profile: session_agent_profile(record).map(str::to_string),
         profile_resume_context,
+        resume_move: record.resume_move(),
         mode: record.mode.clone(),
         coordination_mode: record.coordination_mode,
         title: record.title.clone(),

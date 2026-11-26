@@ -332,3 +332,26 @@ mod destination_work;
 mod destination_start;
 
 mod claude_work;
+
+#[test]
+fn console_resume_move_freshness_uses_the_native_time_boundary() {
+    let Some(mut fixture) = Fixture::new(Provider::Claude) else {
+        return;
+    };
+    let project = |fixture: &Fixture, now| {
+        let proof = fixture
+            .verifier
+            .verify_stop_proof(&fixture.signed_proof("host-a"), "host-a")
+            .unwrap();
+        transport::verified_freshness(&fixture.ticket, &proof, now)
+    };
+    let expiry = fixture.proof.expires_at;
+    assert_eq!(project(&fixture, expiry), ("fresh", Some(expiry)));
+    assert_eq!(project(&fixture, expiry + 1), ("expired", Some(expiry)));
+    assert_eq!(
+        project(&fixture, fixture.proof.issued_at - CLOCK_SKEW_SECONDS - 1),
+        ("unverified", None)
+    );
+    fixture.proof.expires_at += 1;
+    assert_eq!(project(&fixture, expiry + 2), ("unverified", None));
+}

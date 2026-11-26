@@ -2326,6 +2326,7 @@ mod tests {
                 agent_bin: None,
             },
             None,
+            None,
             Some(&tmux),
         )
         .unwrap();

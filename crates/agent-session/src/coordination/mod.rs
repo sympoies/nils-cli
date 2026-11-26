@@ -7,6 +7,7 @@ mod capability;
 pub(crate) mod companion;
 pub(crate) use capability::authenticate_token;
 pub mod claims;
+pub(crate) mod console_resume_move;
 pub(crate) mod console_start;
 pub mod context;
 pub(crate) mod delegation;

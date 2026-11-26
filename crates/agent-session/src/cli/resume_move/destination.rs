@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::session_record::ResumeMoveLineage;
 use crate::{AgentKind, CliContext, CliError, coordination, start_resume};
 
 use super::{
@@ -22,9 +23,9 @@ const STORE: &str = "resume-move-destination.v1.json";
 const CONTROL_LOCK: &str = "resume-move-destination.lock";
 const MAX_STORE_BYTES: u64 = 4 * 1024 * 1024;
 
-#[derive(Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum Outcome {
+pub(crate) enum Outcome {
     Prepared,
     Staged,
     WriterAdmitted,
@@ -34,12 +35,12 @@ enum Outcome {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Entry {
+pub(super) struct Entry {
     plan: source::Plan,
     checkout: Checkout,
     ticket: SignedRecord,
-    proof: Option<SignedRecord>,
-    outcome: Outcome,
+    pub(super) proof: Option<SignedRecord>,
+    pub(super) outcome: Outcome,
     created: Option<Created>,
 }
 
@@ -108,10 +109,15 @@ pub(super) enum Admission {
 /// failure. Beginning launch consumes this authority.
 pub(super) struct Unlaunched {
     binding: Binding,
+    source_generation: u64,
     session_id: String,
 }
 
 impl Unlaunched {
+    pub(super) fn lineage(&self) -> ResumeMoveLineage {
+        ResumeMoveLineage::from_move(&self.binding, self.source_generation)
+    }
+
     pub(super) fn begin_launch(self, context: &CliContext) -> Result<File, CliError> {
         let result = (|| {
             let _control = lock(context)?;
@@ -149,7 +155,11 @@ impl Unlaunched {
                 .binding
                 .check(&self.binding)
                 .map_err(cli_refusal)?;
-            entry.validate_proof(verifier, entry.proof.as_ref().ok_or_else(proof_missing)?)?;
+            entry.validate_proof(
+                verifier,
+                &ticket,
+                entry.proof.as_ref().ok_or_else(proof_missing)?,
+            )?;
             ensure_empty_destination(context, &self.binding)?;
             match fs::symlink_metadata(crate::session_dir(context, &self.session_id)) {
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -336,7 +346,8 @@ pub(super) fn stage(
         Outcome::AbortedNoWriter => return Err(aborted()),
         _ => return Err(cli_refusal(Refusal::DestinationWriterPresent)),
     }
-    let signed = entry.validate_proof(verifier, proof)?;
+    let ticket = entry.ticket(verifier)?;
+    let signed = entry.validate_proof(verifier, &ticket, proof)?;
     if entry
         .proof
         .as_ref()
@@ -345,7 +356,6 @@ pub(super) fn stage(
         return Err(cli_refusal(Refusal::MoveMismatch));
     }
     let home = provider_home(context, move_id);
-    let ticket = entry.ticket(verifier)?;
     entry.check_snapshot(context, &ticket, &signed, &home, now)?;
     entry.proof = Some(proof.clone());
     entry.outcome = Outcome::Staged;
@@ -378,10 +388,12 @@ pub(super) fn admit(
             incarnation: created.incarnation.clone(),
         });
     }
-    let history = verified.history.ok_or_else(proof_missing)?;
+    let proof = verified.proof.ok_or_else(proof_missing)?;
+    let history = proof.record().history.clone();
     let claude_target = verified.claude_target;
     let unlaunched = Unlaunched {
         binding: verified.ticket.record().binding.clone(),
+        source_generation: proof.record().source_generation,
         session_id: request.managed_session_id(),
     };
     let entry = entry_mut(&mut moves, request.move_id)?;
@@ -436,7 +448,7 @@ pub(super) fn abort(
     ensure_empty_destination(context, &ticket.record().binding)?;
     let explicit = supplied.or(entry.proof.as_ref());
     let proof = explicit
-        .map(|proof| entry.validate_proof(verifier, proof))
+        .map(|proof| entry.validate_proof(verifier, &ticket, proof))
         .transpose()?;
     if let (Some(prior), Some(proof)) = (&entry.proof, &proof)
         && sha256(prior.payload.as_bytes()) != proof.sha256()
@@ -506,7 +518,7 @@ fn deny_reserved(moves: &Moves, provider: Provider, thread: &str) -> Result<(), 
 struct VerifiedAdmission<'a> {
     entry: &'a Entry,
     ticket: Verified<Ticket>,
-    history: Option<History>,
+    proof: Option<Verified<StopProof>>,
     claude_target: Option<claude::Destination>,
 }
 
@@ -521,6 +533,9 @@ fn verify_admission<'a>(
     entry.check_host(request.destination_host)?;
     let ticket = entry.ticket(verifier)?;
     let binding = &ticket.record().binding;
+    if binding.move_id != request.move_id {
+        return Err(cli_refusal(Refusal::MoveMismatch));
+    }
     if binding.provider_session_id != request.provider_session_id
         || binding.provider != request.provider
     {
@@ -539,7 +554,7 @@ fn verify_admission<'a>(
             return Ok(VerifiedAdmission {
                 entry,
                 ticket,
-                history: None,
+                proof: None,
                 claude_target: None,
             });
         }
@@ -548,7 +563,7 @@ fn verify_admission<'a>(
         Outcome::Staged => {}
     }
     let proof = entry.proof.as_ref().ok_or_else(proof_missing)?;
-    let proof = entry.validate_proof(verifier, proof)?;
+    let proof = entry.validate_proof(verifier, &ticket, proof)?;
     entry.check_snapshot(
         context,
         &ticket,
@@ -578,20 +593,28 @@ fn verify_admission<'a>(
     Ok(VerifiedAdmission {
         entry,
         ticket,
-        history: Some(proof.record().history.clone()),
+        proof: Some(proof),
         claude_target,
     })
 }
 
 impl Entry {
-    fn check_host(&self, host: &str) -> Result<(), CliError> {
+    pub(super) fn created_identity(&self, move_id: &str) -> Option<(&str, &str)> {
+        let created = self.created.as_ref()?;
+        (self.outcome == Outcome::Created
+            && created.session_id.strip_prefix("move-") == Some(move_id)
+            && canonical_uuid(&created.incarnation))
+        .then_some((&created.session_id, &created.incarnation))
+    }
+
+    pub(super) fn check_host(&self, host: &str) -> Result<(), CliError> {
         if host != self.plan.destination_host {
             return Err(cli_refusal(Refusal::TargetMismatch));
         }
         Ok(())
     }
 
-    fn ticket(&self, verifier: &Verifier) -> Result<Verified<Ticket>, CliError> {
+    pub(super) fn ticket(&self, verifier: &Verifier) -> Result<Verified<Ticket>, CliError> {
         let record = verifier
             .verify_ticket(&self.ticket, &self.plan.destination_host)
             .map_err(cli_refusal)?;
@@ -601,15 +624,15 @@ impl Entry {
         Ok(record)
     }
 
-    fn validate_proof(
+    pub(super) fn validate_proof(
         &self,
         verifier: &Verifier,
+        ticket: &Verified<Ticket>,
         proof: &SignedRecord,
     ) -> Result<Verified<StopProof>, CliError> {
         let proof = verifier
             .verify_stop_proof(proof, &self.plan.source_host)
             .map_err(cli_refusal)?;
-        let ticket = self.ticket(verifier)?;
         let record = proof.record();
         record
             .binding
@@ -905,6 +928,12 @@ fn create_provider_home(home: &Path) -> Result<(), CliError> {
         return Err(state_unavailable());
     }
     Ok(())
+}
+
+pub(super) fn read_entry(context: &CliContext, move_id: &str) -> Result<Entry, CliError> {
+    read_moves(context)?
+        .remove(move_id)
+        .ok_or_else(proof_missing)
 }
 
 fn read_moves(context: &CliContext) -> Result<Moves, CliError> {
