@@ -65,6 +65,8 @@ synthetic fixtures under `tests/fixtures/usage-v1/` pin that projection.
 
   A profile-level failure is an `ok: false`, `stale: true` entry with the account nickname, a fixed
   `error` and `note`, and its classified `reason_code`; an unclassified profile failure uses `unknown`. A
+  `rate_limited` failure also carries `backoff_until`, the account's shared provider cooldown deadline in
+  Unix seconds from the helper's `backoff_until`; the field is omitted without an active deadline. A
   successful result without windows remains `ok: true` and stale with a fixed `note`. A successful
   no-window result may use the helper's cached fallback; these cached results are stale and their windows
   are hidden because the helper does not expose the cache timestamp.
@@ -90,10 +92,13 @@ snapshot with a backoff note and retries after one more interval. Windows are hi
 marked stale) once their `updated_at` is 600 seconds old or more than 5 seconds in the future, so a
 persistent outage never pins old numbers.
 
-`?refresh=1` marks the current snapshot stale and waits up to 7 seconds for a refresh that starts after
-the request. If a refresh is already running, one more run starts when it finishes, so a forced read
-never returns numbers from before the request. A cold daemon waits the same bound for its first result.
-Any other query is `400 invalid-query`.
+`?refresh=1` marks the current snapshot stale and waits up to 7 seconds for a refresh. For Codex, a refresh
+that starts after the request runs: if one is already running, one more starts when it finishes, so a
+forced read never returns numbers from before the request. For Claude, concurrent readers share one
+refresh: a forced read joins a running refresh instead of queueing another. No Claude read, forced or
+not, starts a refresh before the retry interval after an unavailable helper has passed or while every
+account in the snapshot is inside its `backoff_until` cooldown; it is served the last snapshot instead.
+A cold daemon waits the same bound for its first result. Any other query is `400 invalid-query`.
 
 **Codex reset.** `POST /codex/reset/v1` takes exactly
 `{"account": "<nickname>", "idempotency_key": "<uuid>"}` and consumes at most

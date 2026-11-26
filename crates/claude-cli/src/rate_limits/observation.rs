@@ -24,14 +24,17 @@ pub(super) fn import_shared_cache(target: &Path, name: &str) {
     }
 }
 
+pub(super) fn retry_deadline(access_token: &str) -> Option<i64> {
+    client::retry_at(access_token).and_then(|epoch| i64::try_from(epoch).ok())
+}
+
 pub(super) fn failure_note(target: &Path, reason: Option<ProviderUsageReason>) -> Option<String> {
     let reason = reason?;
     if reason != ProviderUsageReason::RateLimited {
         return Some(reason.as_str().to_string());
     }
     let login = read_target_login(target).ok()?;
-    let mut note = client::retry_at(&login.access_token)
-        .and_then(|epoch| i64::try_from(epoch).ok())
+    let mut note = retry_deadline(&login.access_token)
         .and_then(format_local_with_offset)
         .map(|until| format!("rate limited until {until}"))
         .unwrap_or_else(|| "rate limited".to_string());
