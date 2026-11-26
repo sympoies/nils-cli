@@ -151,6 +151,7 @@ fn malformed_paragraph_is_rejected_by_preview() {
         ],
     );
     assert_refusal(&preview, 65, "test_changes_undeclared");
+    assert!(preview.stdout.contains("- tests/test_sample.py | assertion-change |"), "{}", preview.stdout);
     assert!(
         preview.stdout.contains("- path | kind | reason"),
         "{}",
@@ -446,4 +447,16 @@ fn stale_and_retired_declarations_reach_each_warning_surface() {
         assert!(text.stdout.contains(&line), "{}", text.stdout);
         assert!(admission.stderr.contains(&line), "{}", admission.stderr);
     }
+}
+
+#[test]
+fn emit_declaration_uses_findings_even_when_body_is_free_form() {
+    let stub = integrity_fixture("## Test changes\nChanged some tests.\n", "", "contributor");
+    let out = run_forge_cli(&stub, &["--provider", "github", "--repo", "acme/widgets", "pr", "review-handoff", "test-changes", "7", "--expected-head", HEAD, "--emit-declaration"]);
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    assert!(out.stdout.contains("## Test changes\n\n"), "{}", out.stdout);
+    assert!(out.stdout.contains("- tests/test_sample.py | assertion-change | <reason>"), "{}", out.stdout);
+    assert!(out.stdout.contains("- tests/test_sample.py | new-skip | <reason>"), "{}", out.stdout);
+    let invalid = integrity_fixture(&out.stdout, "", "contributor");
+    assert_refusal(&check(&invalid, HEAD), 65, "test_changes_undeclared");
 }

@@ -1140,7 +1140,7 @@ pub fn run(
         ));
     }
     if let PrReviewHandoffCommand::TestChanges(a) = &args.command {
-        return test_integrity::preview(&runner, &ctx, a.id, &a.expected_head, format);
+        return test_integrity::preview(&runner, &ctx, a.id, &a.expected_head, format, a.emit_declaration);
     }
     let id = match &args.command {
         PrReviewHandoffCommand::TestChanges(_) => unreachable!("preview returned above"),

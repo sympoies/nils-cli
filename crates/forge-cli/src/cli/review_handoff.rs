@@ -30,6 +30,9 @@ pub struct PrReviewHandoffTestChangesArgs {
     /// Exact provider head SHA for the immutable comparison.
     #[arg(long)]
     pub expected_head: String,
+    /// Print a declaration populated from the detected changes.
+    #[arg(long)]
+    pub emit_declaration: bool,
 }
 
 #[derive(Args, Debug, Clone)]

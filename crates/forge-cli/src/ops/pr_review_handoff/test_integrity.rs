@@ -126,9 +126,14 @@ pub(super) fn preview<R: BackendRunner>(
     number: u64,
     head: &str,
     format: nils_common::cli_contract::OutputFormat,
+    emit_declaration: bool,
 ) -> Result<i32, ForgeError> {
     let (subject, patch, findings) = comparison(runner, ctx, number, head)?;
-    validate_declarations(&subject.body)?;
+    let declaration = expected_declaration(&findings);
+    if emit_declaration {
+        return Ok(crate::envelope::emit_success(super::schema(), serde_json::json!({"declaration": declaration}), format, |p| println!("{}", p["declaration"].as_str().unwrap())));
+    }
+    validate_with_findings(&subject.body, &findings)?;
     let digest = digest(&subject, &patch);
     let confirmation = format!("Test changes confirmed: {digest}");
     let warnings = row_warnings(&findings, &declared_rows(&declarations(&subject.body)));
@@ -170,7 +175,7 @@ pub(super) fn ensure<R: BackendRunner>(
     report: &str,
 ) -> Result<(), ForgeError> {
     let (subject, patch, findings) = comparison(runner, ctx, number, head)?;
-    validate_declarations(&subject.body)?;
+    validate_with_findings(&subject.body, &findings)?;
     let declarations = declarations(&subject.body);
     let rows = declared_rows(&declarations);
     if findings.is_empty() && provenance::summary(&patch).is_none() {
@@ -186,11 +191,7 @@ pub(super) fn ensure<R: BackendRunner>(
         })
         .collect();
     if !missing.is_empty() {
-        let files = findings
-            .iter()
-            .map(|f| format!("- {} | {} | <reason and retained coverage>", f.path, f.kind))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let files = expected_declaration(&findings);
         let notes = row_warnings(&findings, &rows)
             .iter()
             .map(|w| format!("\n{w}"))
@@ -218,6 +219,15 @@ pub(super) fn ensure<R: BackendRunner>(
         ));
     }
     Ok(())
+}
+
+fn expected_declaration(findings: &[diff::Finding]) -> String {
+    let rows = findings.iter().map(|f| format!("- {} | {} | <reason>", f.path, f.kind)).collect::<Vec<_>>().join("\n");
+    if rows.is_empty() { "## Test changes\n\nNone.".to_string() } else { format!("## Test changes\n\n{rows}") }
+}
+
+fn validate_with_findings(body: &str, findings: &[diff::Finding]) -> Result<(), ForgeError> {
+    validate_declarations(body).map_err(|_| error("test_changes_undeclared", "invalid ## Test changes declaration; use - path | kind | reason with a reason of at least 12 characters", Some(expected_declaration(findings))))
 }
 
 pub(crate) fn validate_declarations(body: &str) -> Result<(), ForgeError> {
