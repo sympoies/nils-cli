@@ -24,23 +24,21 @@ pub(super) fn deny_unauthorized(state: &ServeState, headers: &HeaderMap) -> Opti
     }
 }
 
-pub(crate) fn envelope_err(err: CliError) -> Response {
-    let session_id = err
-        .details()
-        .and_then(|d| d["session_id"].as_str())
-        .map(str::to_owned);
-    let retained_error = err.clone();
-    let data = err.into_inner();
-    let status = match data.code.as_str() {
+pub(crate) fn status_for(error: &CliError) -> StatusCode {
+    match error.code() {
         "session-not-found"
         | "draft-not-found"
         | "message-not-found"
         | "retitle-v3-operation-not-found"
         | "history-session-not-found" => StatusCode::NOT_FOUND,
-        "mailbox-service-forbidden" => StatusCode::FORBIDDEN,
+        "mailbox-service-forbidden"
+        | "console-create-attestation-forbidden"
+        | "console-create-binding-mismatch"
+        | "console-create-role-forbidden" => StatusCode::FORBIDDEN,
         "coordination-unauthorized"
         | "mailbox-service-unauthorized"
-        | "console-start-service-unauthorized" => StatusCode::UNAUTHORIZED,
+        | "console-start-service-unauthorized"
+        | "unauthorized" => StatusCode::UNAUTHORIZED,
         "rate-limited" | "retitle-provider-rate-limited" => StatusCode::TOO_MANY_REQUESTS,
         "wait-timeout" | "retitle-provider-timeout" => StatusCode::REQUEST_TIMEOUT,
         "session-capacity-exceeded"
@@ -90,22 +88,34 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         "board-relay-unavailable" | "board-relay-unauthorized" | "console-start-unavailable" => {
             StatusCode::BAD_GATEWAY
         }
-        "console-start-busy" | "retitle-v3-history-unavailable" | "retitle-v3-history-degraded" => {
-            StatusCode::SERVICE_UNAVAILABLE
-        }
+        "console-start-busy"
+        | "retitle-v3-history-unavailable"
+        | "retitle-v3-history-degraded"
+        | "console-create-attestation-unavailable"
+        | "token-not-configured" => StatusCode::SERVICE_UNAVAILABLE,
         // Provider account conditions share one status across providers.
         code if code.ends_with("-account-session-incarnation-conflict")
             || code.ends_with("-account-unsupported") =>
         {
             StatusCode::CONFLICT
         }
-        _ => match data.exit_code {
+        _ => match error.0.exit_code {
             exit::USAGE => StatusCode::BAD_REQUEST,
             exit::DATA => StatusCode::UNPROCESSABLE_ENTITY,
             exit::UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         },
-    };
+    }
+}
+
+pub(crate) fn envelope_err(err: CliError) -> Response {
+    let session_id = err
+        .details()
+        .and_then(|d| d["session_id"].as_str())
+        .map(str::to_owned);
+    let retained_error = err.clone();
+    let status = status_for(&err);
+    let data = err.into_inner();
     let mut error = json!({ "code": data.code, "message": data.message });
     if let Some(details) = data.details
         && let Some(map) = error.as_object_mut()

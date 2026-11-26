@@ -1730,3 +1730,6 @@ mod service_console_start;
 
 #[path = "board_relay/operator_rules.rs"]
 mod operator_rules;
+
+#[path = "board_relay/console_attestation.rs"]
+mod console_attestation;

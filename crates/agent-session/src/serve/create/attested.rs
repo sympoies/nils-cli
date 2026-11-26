@@ -4,7 +4,7 @@ use axum::http::header::AsHeaderName;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use nils_common::forge_identity::session::{CONTEXT_KEY, LaunchContext};
 
-mod strict_json;
+use crate::serve::strict_json;
 
 const MEDIA_TYPE: &str = "application/vnd.agent-session.console-attested-create.v1";
 const TOKEN_HEADER: &str = "x-agent-session-attested-create-token";

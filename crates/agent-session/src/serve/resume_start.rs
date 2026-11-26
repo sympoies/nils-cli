@@ -165,7 +165,13 @@ async fn console_create(
     if body["session"]["resume"].as_str().is_none() && body["reconcile"] != true {
         return envelope_err(refusal("resume-unsupported"));
     }
-    super::console_start_handler(State(state), headers, AxPath(id), Ok(Json(body))).await
+    super::console_start::handler(
+        State(state),
+        headers,
+        AxPath(id),
+        Ok(Json(super::strict_json::Unique(body))),
+    )
+    .await
 }
 
 /// Resolve the retained account before ordinary create decides whether to defer
