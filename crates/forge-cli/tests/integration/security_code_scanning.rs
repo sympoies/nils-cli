@@ -596,7 +596,10 @@ fn security_code_scanning_preserves_typed_backend_errors() {
 fn security_code_scanning_rejects_unsafe_or_oversized_comment_before_request() {
     let stub = StubEnv::new().gh_stub("#!/bin/sh\necho unexpected >&2\nexit 97\n");
     let comment = stub.tempdir.path().join("comment");
-    for text in ["x".repeat(65537), "/home/example/project/file.txt".to_string()] {
+    for text in [
+        "x".repeat(65537),
+        "/home/example/project/file.txt".to_string(),
+    ] {
         std::fs::write(&comment, text).unwrap();
         let out = run_forge_cli(
             &stub,
