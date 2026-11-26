@@ -77,9 +77,23 @@ fn sample_files(stub: &StubEnv) {
 }
 
 fn integrity_fixture(body: &str, confirmation: &str, author: &str) -> StubEnv {
+    integrity_fixture_with_ledger(body, confirmation, author, true)
+}
+
+fn integrity_fixture_with_ledger(
+    body: &str,
+    confirmation: &str,
+    author: &str,
+    ledger: bool,
+) -> StubEnv {
     let mut r = review(HEAD, "pass");
     r["body"] = json!(format!("{}\n{confirmation}\n", r["body"].as_str().unwrap()));
-    let stub = fixture(HEAD, &records(handoff(None), Some(HEAD)), vec![r]);
+    let state = if ledger {
+        records(handoff(None), Some(HEAD))
+    } else {
+        vec![]
+    };
+    let stub = fixture(HEAD, &state, vec![r]);
     let diff = stub.tempdir.path().join("integrity.diff");
     let metadata = stub.tempdir.path().join("integrity.json");
     fs::write(&diff, DIFF).unwrap();
@@ -151,7 +165,13 @@ fn malformed_paragraph_is_rejected_by_preview() {
         ],
     );
     assert_refusal(&preview, 65, "test_changes_undeclared");
-    assert!(preview.stdout.contains("- tests/test_sample.py | assertion-change |"), "{}", preview.stdout);
+    assert!(
+        preview
+            .stdout
+            .contains("- tests/test_sample.py | assertion-change |"),
+        "{}",
+        preview.stdout
+    );
     assert!(
         preview.stdout.contains("- path | kind | reason"),
         "{}",
@@ -162,14 +182,15 @@ fn malformed_paragraph_is_rejected_by_preview() {
 #[test]
 fn malformed_paragraph_is_rejected_before_missing_ledger() {
     let body = "## Test changes\ntests/test_sample.py | assertion-change | Broader assertion retains the supported result contract.\n";
-    let empty = fixture(HEAD, &[], vec![]);
-    let view = empty.tempdir.path().join("view.json");
+    let stub = integrity_fixture_with_ledger(body, "", "contributor", false);
+    let view = stub.tempdir.path().join("view.json");
     fs::write(&view, json!({"number":7,"url":"https://github.com/acme/widgets/pull/7","state":"OPEN", "isDraft":false,"title":"example","headRefName":"feat/example","headRefOid":HEAD, "headRepository":{"name":"widgets"},"baseRefName":"main","mergeable":"MERGEABLE", "mergedAt":"","mergeCommit":null,"labels":[],"body":body,"closingIssuesReferences":[]}).to_string()).unwrap();
-    let empty = empty.env("TEST_PR_VIEW", view.to_string_lossy());
-    let out = check(&empty, HEAD);
+    let stub = stub.env("TEST_PR_VIEW", view.to_string_lossy());
+    let out = check(&stub, HEAD);
     assert_refusal(&out, 65, "test_changes_undeclared");
     assert!(
-        out.stdout.contains("- path | kind | reason"),
+        out.stdout
+            .contains("- tests/test_sample.py | assertion-change | <reason>"),
         "{}",
         out.stdout
     );
@@ -452,11 +473,53 @@ fn stale_and_retired_declarations_reach_each_warning_surface() {
 #[test]
 fn emit_declaration_uses_findings_even_when_body_is_free_form() {
     let stub = integrity_fixture("## Test changes\nChanged some tests.\n", "", "contributor");
-    let out = run_forge_cli(&stub, &["--provider", "github", "--repo", "acme/widgets", "pr", "review-handoff", "test-changes", "7", "--expected-head", HEAD, "--emit-declaration"]);
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "pr",
+            "review-handoff",
+            "test-changes",
+            "7",
+            "--expected-head",
+            HEAD,
+            "--emit-declaration",
+        ],
+    );
     assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
     assert!(out.stdout.contains("## Test changes\n\n"), "{}", out.stdout);
-    assert!(out.stdout.contains("- tests/test_sample.py | assertion-change | <reason>"), "{}", out.stdout);
-    assert!(out.stdout.contains("- tests/test_sample.py | new-skip | <reason>"), "{}", out.stdout);
+    assert!(
+        out.stdout
+            .contains("- tests/test_sample.py | assertion-change | <reason>"),
+        "{}",
+        out.stdout
+    );
+    assert!(
+        out.stdout
+            .contains("- tests/test_sample.py | new-skip | <reason>"),
+        "{}",
+        out.stdout
+    );
     let invalid = integrity_fixture(&out.stdout, "", "contributor");
     assert_refusal(&check(&invalid, HEAD), 65, "test_changes_undeclared");
+}
+
+#[test]
+fn mismatched_declaration_reports_exact_expected_rows() {
+    let stub = integrity_fixture(
+        "## Test changes\n- tests/test_sample.py | wrong-kind | A concrete reason for the change.\n",
+        "",
+        "contributor",
+    );
+    let out = check(&stub, HEAD);
+    assert_refusal(&out, 65, "test_changes_undeclared");
+    for row in [
+        "- tests/test_sample.py | assertion-change | <reason>",
+        "- tests/test_sample.py | new-skip | <reason>",
+    ] {
+        assert!(out.stdout.contains(row), "{}", out.stdout);
+    }
 }

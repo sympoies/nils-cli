@@ -131,7 +131,12 @@ pub(super) fn preview<R: BackendRunner>(
     let (subject, patch, findings) = comparison(runner, ctx, number, head)?;
     let declaration = expected_declaration(&findings);
     if emit_declaration {
-        return Ok(crate::envelope::emit_success(super::schema(), serde_json::json!({"declaration": declaration}), format, |p| println!("{}", p["declaration"].as_str().unwrap())));
+        return Ok(crate::envelope::emit_success(
+            super::schema(),
+            serde_json::json!({"declaration": declaration}),
+            format,
+            |p| println!("{}", p["declaration"].as_str().unwrap()),
+        ));
     }
     validate_with_findings(&subject.body, &findings)?;
     let digest = digest(&subject, &patch);
@@ -163,6 +168,21 @@ pub(super) fn preview<R: BackendRunner>(
             }
         },
     ))
+}
+
+/// Validate a malformed declaration against the immutable provider comparison.
+pub(super) fn validate_for_check<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    number: u64,
+    head: &str,
+    body: &str,
+) -> Result<(), ForgeError> {
+    if validate_declarations(body).is_ok() {
+        return Ok(());
+    }
+    let (subject, _, findings) = comparison(runner, ctx, number, head)?;
+    validate_with_findings(&subject.body, &findings)
 }
 
 /// Runs only after ordinary designated-review identity, interval and PASS checks.
@@ -222,8 +242,16 @@ pub(super) fn ensure<R: BackendRunner>(
 }
 
 fn expected_declaration(findings: &[diff::Finding]) -> String {
-    let rows = findings.iter().map(|f| format!("- {} | {} | <reason>", f.path, f.kind)).collect::<Vec<_>>().join("\n");
-    if rows.is_empty() { "## Test changes\n\nNone.".to_string() } else { format!("## Test changes\n\n{rows}") }
+    let rows = findings
+        .iter()
+        .map(|f| format!("- {} | {} | <reason>", f.path, f.kind))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if rows.is_empty() {
+        "## Test changes\n\nNone.".to_string()
+    } else {
+        format!("## Test changes\n\n{rows}")
+    }
 }
 
 fn validate_with_findings(body: &str, findings: &[diff::Finding]) -> Result<(), ForgeError> {

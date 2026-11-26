@@ -168,7 +168,8 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
 
 - `test-changes <id> --expected-head <sha>` is a read-only pre-review preview
   that needs no assignment or review. It prints test-change findings and the
-  declaration-bound confirmation digest; it never admits a review. See
+  declaration-bound confirmation digest; `--emit-declaration` instead prints a
+  copyable Markdown section with reason placeholders. It never admits a review. See
   [test-change admission](test-change-admission-v1.md) for declarations, output
   fields, deterministic limits and recovery.
 - `assign <id> --reviewer-session <session-id>[@machine] --review-author <login>
