@@ -183,11 +183,16 @@ fn alpha_result(source: &str) -> Value {
     result
 }
 
-/// Removes `limit_resets_checked_at` from one result or a list of results.
-/// It must accompany `limit_resets` and be the epoch of a recent read.
+/// Removes `limit_resets_checked_at` (which must accompany `limit_resets` and
+/// be the epoch of a recent read) and a rate-limited `backoff_until` (which
+/// must be in the future) from one result or a list of results.
 fn without_checked_at(mut value: Value) -> Value {
     fn strip(result: &mut Value) {
         let object = result.as_object_mut().expect("result");
+        if let Some(until) = object.remove("backoff_until") {
+            assert_eq!(object["reason_code"], "rate_limited");
+            assert!(until.as_i64().expect("retry deadline") > epoch_now());
+        }
         let checked_at = object.remove("limit_resets_checked_at");
         assert_eq!(
             checked_at.is_some(),
@@ -1152,6 +1157,41 @@ fn read_alpha_resets(fx: &Fixture) -> (Value, i64) {
         .expect("checked_at");
     assert!((checked_at - epoch_now()).abs() < 600, "{checked_at}");
     (result["limit_resets"].clone(), checked_at)
+}
+
+#[test]
+fn diag_rate_limits_reports_the_shared_retry_deadline_of_a_rate_limited_account() {
+    let fx = Fixture::new();
+    fx.write_profile("alpha", "access-alpha", FUTURE_MS);
+    let limited = TestServer::new(|_request: &RecordedRequest| {
+        HttpResponse::new(429, r#"{"error":{"message":"slow down"}}"#)
+            .with_header("Retry-After", "120")
+    })
+    .expect("server");
+    let since = epoch_now();
+
+    let output = run(
+        &["diag", "rate-limits", "--async", "--format", "json"],
+        &resets_options(&fx, &limited, ""),
+    );
+
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    let result = &payload["results"][0];
+    assert_eq!(result["reason_code"], "rate_limited");
+    let until = result["backoff_until"].as_i64().expect("retry deadline");
+    assert!(
+        (since + 120..=epoch_now() + 120).contains(&until),
+        "{until}"
+    );
+
+    // Another read reports the same deadline without a new request.
+    let again = run(
+        &["diag", "rate-limits", "--async", "--format", "json"],
+        &resets_options(&fx, &limited, ""),
+    );
+    let payload: Value = serde_json::from_str(&stdout(&again)).expect("json");
+    assert_eq!(payload["results"][0]["backoff_until"], json!(until));
+    assert_eq!(limited.take_requests().len(), 1);
 }
 
 #[test]

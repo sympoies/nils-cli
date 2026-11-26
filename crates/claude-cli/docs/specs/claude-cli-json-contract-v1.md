@@ -372,6 +372,10 @@ fresh quota authority. Text tables show the throttle deadline and available
 cache age even when cached windows are too old to display. See the
 [usage consumer runbook](../runbooks/usage-consumer.md) for shared fetch ownership.
 
+A result with `reason_code: rate_limited` also carries `backoff_until`, the
+account's shared cooldown deadline in Unix seconds, when one is active. Other
+results omit it.
+
 Live `--async --format json` collection normally falls back to stale cached
 windows after a profile request fails. A machine consumer that needs each
 profile's live failure and reason can set

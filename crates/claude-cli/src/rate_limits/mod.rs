@@ -517,7 +517,8 @@ fn json_result(
         let mut result = from_cache(identity, "cache", &name, true);
         if let Ok(login) = read_target_login(target) {
             result.plan = login.plan.map(str::to_string);
-            if crate::prompt_segment::client::backoff_active(&login.access_token) {
+            result.backoff_until = observation::retry_deadline(&login.access_token);
+            if result.backoff_until.is_some() {
                 result.reason_code = Some(ProviderUsageReason::RateLimited);
             }
         }
@@ -577,16 +578,28 @@ fn json_result(
                 if fallback_result.ok {
                     if reason == Some(ProviderUsageReason::RateLimited) {
                         fallback_result.reason_code = reason;
+                        fallback_result.backoff_until = rate_limit_deadline(target);
                     }
                     fallback_result.plan = plan.map(str::to_string);
                     return fallback_result;
                 }
             }
-            RateLimitResult::error(identity, "network", code, message, None, reason)
+            let mut result =
+                RateLimitResult::error(identity, "network", code, message, None, reason);
+            if reason == Some(ProviderUsageReason::RateLimited) {
+                result.backoff_until = rate_limit_deadline(target);
+            }
+            result
         }
     };
     result.plan = plan.map(str::to_string);
     result
+}
+
+/// The target account's shared provider cooldown deadline, in Unix seconds.
+fn rate_limit_deadline(target: &Path) -> Option<i64> {
+    let login = read_target_login(target).ok()?;
+    observation::retry_deadline(&login.access_token)
 }
 
 fn reset_credits(status: &Value) -> Option<ResetCredits> {

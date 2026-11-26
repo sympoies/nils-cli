@@ -173,9 +173,15 @@ are optional: omit the whole section rather than leaving a placeholder in it.
 
 <!-- devlog-pending-index -->
 
-- [2026-11-25-agent-session-guarded-long-paste](pending/2026-11-25-agent-session-guarded-long-paste.md)
-- [2026-11-25-forge-review-loop-dry-run-fixture](pending/2026-11-25-forge-review-loop-dry-run-fixture.md)
-- [2026-11-25-issue-4021-queue-validation-retry-proof](pending/2026-11-25-issue-4021-queue-validation-retry-proof.md)
-- [2026-11-25-issue-4026-session-test-teardown](pending/2026-11-25-issue-4026-session-test-teardown.md)
-- [2026-11-25-issue-4037-admission-liveness](pending/2026-11-25-issue-4037-admission-liveness.md)
-- [2026-11-25-native-notice-ledger-capacity](pending/2026-11-25-native-notice-ledger-capacity.md)
+- [2026-11-26-claude-prompt-account-layout](pending/2026-11-26-claude-prompt-account-layout.md)
+- [2026-11-26-codex-skill-fixture-path](pending/2026-11-26-codex-skill-fixture-path.md)
+- [2026-11-26-issue-3863-fold-pr-none-declaration](pending/2026-11-26-issue-3863-fold-pr-none-declaration.md)
+- [2026-11-26-issue-3978-claude-usage-share](pending/2026-11-26-issue-3978-claude-usage-share.md)
+- [2026-11-26-issue-4050-mailbox-wake-recovery](pending/2026-11-26-issue-4050-mailbox-wake-recovery.md)
+- [2026-11-26-issue-4058-resume-move-stop](pending/2026-11-26-issue-4058-resume-move-stop.md)
+- [2026-11-26-issue-4059-console-resume-move](pending/2026-11-26-issue-4059-console-resume-move.md)
+- [2026-11-26-issue-4059-console-resume-move-transport](pending/2026-11-26-issue-4059-console-resume-move-transport.md)
+- [2026-11-26-issue-4059-console-resume-move-v1-1-erratum](pending/2026-11-26-issue-4059-console-resume-move-v1-1-erratum.md)
+- [2026-11-26-issue-4067-account-apply-fixture-cleanup](pending/2026-11-26-issue-4067-account-apply-fixture-cleanup.md)
+- [2026-11-26-issue-4070-release-fold-regeneration](pending/2026-11-26-issue-4070-release-fold-regeneration.md)
+- [2026-11-26-stranded-unkeyed-prompts](pending/2026-11-26-stranded-unkeyed-prompts.md)

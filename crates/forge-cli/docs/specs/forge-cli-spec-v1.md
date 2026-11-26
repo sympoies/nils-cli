@@ -1438,11 +1438,12 @@ Read `.forge-cli.toml` at the exact provider base; require the selected remote h
 and base-ref commit to match, and reject invalid explicit `stale_after`.
 `supervisors` is an empty-by-default allow-list of `sha256:` digests for
 canonical agent-session UUIDs or `role:<attested-role>` entries. Role entries
-match only the authenticated broker binding's operator-attested `attested_role`,
-not ordinary launch roles or board labels. The trusted operator launcher requests
-`--attest-role` for each replacement supervisor; managed children cannot inherit
-or self-assign this provenance. Digest-only policies need no migration and do
-not require a role binding.
+match the authenticated broker binding's `attested_role`. Ordinary launch
+roles and board labels confer no role authority. Each replacement supervisor
+needs its own trusted operator `--attest-role` launch or
+[attested Console root](../../../agent-session/docs/specs/console-attested-create-v1.md).
+Managed children cannot inherit or self-assign this provenance. Digest-only
+policies need no migration and require no role binding.
 
 `stale_after` defaults to `2h` (range `60s` to
 `30d`). Takeover requires `--reason coordinator-retired` and a fresh board
