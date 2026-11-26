@@ -1825,6 +1825,7 @@ fn receive_admitted(
 pub(crate) fn write_endpoint(
     context: &CliContext,
     address: std::net::SocketAddr,
+    machine: &str,
 ) -> Result<(), CliError> {
     drop(lock_registry(context)?);
     let address = if address.ip().is_unspecified() {
@@ -1834,7 +1835,7 @@ pub(crate) fn write_endpoint(
     };
     write_atomic(
         &context.state_dir.join("coordination/daemon-endpoint.json"),
-        &serde_json::to_vec(&json!({"url":format!("http://{address}")}))
+        &serde_json::to_vec(&json!({"url":format!("http://{address}"),"machine":machine}))
             .map_err(|_| unavailable())?,
         SECRET_FILE_MODE,
     )
@@ -1843,6 +1844,12 @@ pub(crate) fn write_endpoint(
 /// The loopback URL the local daemon published in
 /// `coordination/daemon-endpoint.json`.
 pub(crate) fn daemon_url(context: &CliContext) -> Result<reqwest::Url, CliError> {
+    daemon_endpoint(context).map(|(url, _)| url)
+}
+
+pub(crate) fn daemon_endpoint(
+    context: &CliContext,
+) -> Result<(reqwest::Url, Option<String>), CliError> {
     let endpoint: Value = serde_json::from_slice(
         &super::read_private_file(
             &context.state_dir.join("coordination/daemon-endpoint.json"),
@@ -1860,7 +1867,7 @@ pub(crate) fn daemon_url(context: &CliContext) -> Result<reqwest::Url, CliError>
     {
         return Err(unavailable());
     }
-    Ok(url)
+    Ok((url, endpoint["machine"].as_str().map(str::to_owned)))
 }
 fn envelope_version(origin: &Origin, extended: bool) -> &str {
     if !extended {
