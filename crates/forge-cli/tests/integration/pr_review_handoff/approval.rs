@@ -81,6 +81,72 @@ fn final_approved_report_satisfies_strict_check() {
 }
 
 #[test]
+fn same_head_reassignment_requires_current_bound_approval() {
+    let mut ledger = records(handoff(None), None);
+    for (generation, surrendered) in [(1, true), (2, false)] {
+        let mut owner = handoff(None);
+        owner.assignment_generation = generation;
+        owner.surrendered = surrendered;
+        ledger.push(
+            ReviewStateRecord::new(
+                "acme/widgets",
+                7,
+                HEAD,
+                ledger.len() as u64,
+                Some(ledger.last().unwrap().record_digest.clone()),
+                ReviewStatePayload::ReviewHandoff { handoff: owner },
+            )
+            .unwrap(),
+        );
+    }
+    let current = ledger[2].record_digest.clone();
+    let state = review_state::observe_review_loop(None, HEAD, &[])
+        .unwrap()
+        .state;
+    ledger.push(
+        ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            HEAD,
+            3,
+            Some(current.clone()),
+            ReviewStatePayload::ReviewLoop { state },
+        )
+        .unwrap()
+        .with_assignment_generation(Some(2))
+        .unwrap(),
+    );
+
+    // The fixture gives the handoff comment a timestamp at this whole second.
+    let reassigned_at = "2026-07-20T12:00:00Z";
+    let unknown = review_state::sha256_digest(b"unknown handoff");
+    for (binding, submitted_at, reviewed_head, accepted) in [
+        (&current, "2026-07-20T12:00:02Z", HEAD, true),
+        (&ledger[0].record_digest, reassigned_at, HEAD, false),
+        (&unknown, reassigned_at, HEAD, false),
+        (&current, reassigned_at, OLD, false),
+        (&current, "2026-07-20T11:59:59Z", HEAD, false),
+        (&current, reassigned_at, HEAD, true),
+    ] {
+        let mut report = bound_publication(1, submitted_at, "pass", binding);
+        report["state"] = json!("APPROVED");
+        report["commit"]["oid"] = json!(reviewed_head);
+        let stub =
+            fixture(HEAD, &ledger, vec![report]).env("AGENT_REVIEW_ASSIGNMENT_GENERATION", "2");
+        let out = check(&stub, HEAD);
+        if accepted {
+            assert_eq!(out.code, 0, "{submitted_at}: {} {}", out.stdout, out.stderr);
+            let data = &parse_envelope(&out.stdout)["data"];
+            assert_eq!(data["handoff"]["assignment_generation"], 2);
+            assert_eq!(data["handoff_digest"], current);
+            assert_eq!(data["approval"]["state"], "finally-approved");
+        } else {
+            assert_refusal(&out, 65, "awaiting_designated_review");
+        }
+    }
+}
+
+#[test]
 fn strict_check_never_reuses_superseded_or_stale_approval() {
     for (head, verdict) in [(HEAD, "blocked"), (HEAD, "pass"), (OLD, "pass")] {
         let mut approval = approved();

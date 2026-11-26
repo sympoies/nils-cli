@@ -861,7 +861,7 @@ fn admit_published<R: BackendRunner>(
             "provider head changed during designated review admission",
         ));
     }
-    let after = handoff_created_at
+    let assigned_at = handoff_created_at
         .and_then(|s| s.parse::<jiff::Timestamp>().ok())
         .ok_or_else(|| {
             fail(
@@ -929,9 +929,12 @@ fn admit_published<R: BackendRunner>(
         }
         let pass = pr_review::validate_specialist_review_report(&body).is_ok()
             && matches!(r.state.as_str(), "APPROVED" | "COMMENTED")
-            && r.submitted_at
-                .parse::<jiff::Timestamp>()
-                .is_ok_and(|t| t > after)
+            && r.submitted_at.parse::<jiff::Timestamp>().is_ok_and(|t| {
+                // Provider timestamps can tie within a second. The verified
+                // handoff binding identifies the current approval's generation.
+                t > assigned_at
+                    || (t == assigned_at && r.state == "APPROVED" && r.commit_sha == head)
+            })
             && body.lines().any(|l| {
                 matches!(
                     l.trim(),
