@@ -679,6 +679,15 @@ The normative endpoint surface is in [Serve API v1](../specs/serve-api-v1.md).
 Wire-level activity, coordination, turn-state, and maintenance contracts are
 indexed in the crate [documentation map](../README.md).
 
+## Console resume-move destination
+
+A destination can advertise `data.capabilities.resume_move_start_v1` on
+`GET /sessions` after a daemon restart with relay ingress and the native
+resume-move host and verifier configured. The edge uses both the machine
+bearer and relay ingress token for the move start and read-only status routes.
+The origin CLI still requires direct local start for moves. See
+[Console resume-move transport](../specs/console-resume-move-transport-v1.md).
+
 ## Companion inbox producer
 
 `agent-session message send-companion --body-file PATH` uses the same

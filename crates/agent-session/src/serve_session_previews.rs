@@ -23,6 +23,8 @@ pub(super) struct ListEntry {
     #[serde(flatten)]
     session: SessionView,
     #[serde(skip_serializing_if = "Option::is_none")]
+    resume_move: Option<crate::session_record::ResumeMoveLineage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     idle_ready_boundary: Option<super::prompt_receipts::idle_boundary::Boundary>,
 }
 
@@ -35,6 +37,7 @@ struct Readiness {
 pub(super) async fn enrich_for_list(
     state: &ServeState,
     mut sessions: Vec<SessionView>,
+    headers: &HeaderMap,
 ) -> Vec<ListEntry> {
     let mut readiness = Readiness::default();
     enrich(
@@ -49,9 +52,11 @@ pub(super) async fn enrich_for_list(
         state.tmux_bin.clone(),
         readiness.candidates,
     );
+    let authenticated = super::resume_start::has_machine_bearer(state, headers);
     sessions
         .into_iter()
-        .map(|session| ListEntry {
+        .map(|mut session| ListEntry {
+            resume_move: session.resume_move.take().filter(|_| authenticated),
             idle_ready_boundary: readiness.boundaries.remove(&session.id),
             session,
         })

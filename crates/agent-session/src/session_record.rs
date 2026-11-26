@@ -1,4 +1,7 @@
-use crate::{ProviderResume, RuntimeInfo, SessionTitleState, cli, lineage, metadata};
+use crate::{
+    AgentKind, CliError, ProviderResume, RuntimeInfo, SessionTitleState, cli, lineage, metadata,
+};
+use jiff::Zoned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -48,4 +51,78 @@ pub struct SessionRecord {
     pub extra: BTreeMap<String, Value>,
     #[serde(skip)]
     pub resume_sidecar_extra: BTreeMap<String, Value>,
+}
+
+const RESUME_MOVE_LINEAGE_SCHEMA: &str = "agent-session.resume-move-lineage.v1";
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ResumeMoveLineage {
+    schema_version: String,
+    move_id: String,
+    source_host: String,
+    source_session_id: String,
+    source_incarnation: String,
+    source_generation: u64,
+    provider: cli::resume_move::Provider,
+    provider_session_id: String,
+}
+
+impl ResumeMoveLineage {
+    pub(crate) fn from_move(binding: &cli::resume_move::Binding, source_generation: u64) -> Self {
+        Self {
+            schema_version: RESUME_MOVE_LINEAGE_SCHEMA.into(),
+            move_id: binding.move_id.clone(),
+            source_host: binding.source_host.clone(),
+            source_session_id: binding.source_session_id.clone(),
+            source_incarnation: binding.source_incarnation.clone(),
+            source_generation,
+            provider: binding.provider,
+            provider_session_id: binding.provider_session_id.clone(),
+        }
+    }
+}
+
+impl SessionRecord {
+    pub(crate) fn store_resume_move(&mut self, lineage: ResumeMoveLineage) {
+        self.extra
+            .insert("resume_move".into(), serde_json::json!(lineage));
+    }
+
+    pub(crate) fn resume_move(&self) -> Option<ResumeMoveLineage> {
+        let lineage: ResumeMoveLineage =
+            serde_json::from_value(self.extra.get("resume_move")?.clone()).ok()?;
+        (lineage.schema_version == RESUME_MOVE_LINEAGE_SCHEMA).then_some(lineage)
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct InitialProviderPlan {
+    pub(crate) provider_resume: Option<ProviderResume>,
+    pub(crate) launch_args: Vec<String>,
+    pub(crate) move_lineage: Option<ResumeMoveLineage>,
+}
+
+pub(crate) fn initial_provider_resume_plan(
+    agent: AgentKind,
+) -> Result<InitialProviderPlan, CliError> {
+    let plan = match agent {
+        AgentKind::Claude => {
+            let session_id = uuid::Uuid::new_v4().to_string();
+            InitialProviderPlan {
+                provider_resume: Some(ProviderResume {
+                    provider: agent.as_str().to_string(),
+                    session_id: session_id.clone(),
+                    captured_at: Zoned::now().timestamp().to_string(),
+                    capture_method: "claude-explicit-session-id".to_string(),
+                    resume_args: vec!["--resume".to_string(), session_id.clone()],
+                    extra: BTreeMap::new(),
+                }),
+                launch_args: vec!["--session-id".to_string(), session_id],
+                move_lineage: None,
+            }
+        }
+        AgentKind::Codex | AgentKind::Dsh => InitialProviderPlan::default(),
+    };
+    Ok(plan)
 }

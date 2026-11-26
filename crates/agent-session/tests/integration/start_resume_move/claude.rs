@@ -17,7 +17,7 @@ const SOURCE_INCARNATION: &str = "00000000-0000-4000-8000-000000000020";
 
 #[test]
 fn staged_claude_move_creates_one_native_session_after_verified_admission() {
-    staged_claude_move(None);
+    staged_claude_move(None, None);
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -72,17 +72,24 @@ fn write_stopped_source(root: &Path, state: &Path, cwd: &Path, transcript: &str)
 
 #[test]
 fn claude_move_recovers_after_writer_free_preparation_failure() {
-    staged_claude_move(Some(Failure::Materialization));
-    staged_claude_move(Some(Failure::BeforePublication));
+    staged_claude_move(Some(Failure::Materialization), None);
+    staged_claude_move(Some(Failure::BeforePublication), None);
 }
 
 #[test]
 fn claude_move_keeps_uncertain_publication_and_launch_fenced() {
-    staged_claude_move(Some(Failure::PublicationCollision));
-    staged_claude_move(Some(Failure::Launch));
+    staged_claude_move(Some(Failure::PublicationCollision), None);
+    staged_claude_move(Some(Failure::Launch), None);
 }
 
-fn staged_claude_move(failure: Option<Failure>) {
+pub(super) fn with_console_fixture(test: fn(super::console_destination::Fixture<'_>)) {
+    staged_claude_move(None, Some(test));
+}
+
+fn staged_claude_move(
+    failure: Option<Failure>,
+    console: Option<fn(super::console_destination::Fixture<'_>)>,
+) {
     let ssh_keygen = Path::new("/usr/bin/ssh-keygen");
     if !ssh_keygen.is_file() {
         eprintln!("skipping Claude move fixture: ssh-keygen unavailable");
@@ -284,6 +291,22 @@ fn staged_claude_move(failure: Option<Failure>) {
     write_private(&staged, transcript.as_bytes());
     let staged_result = stage();
     assert_eq!(staged_result.code, 0, "{}", staged_result.stderr_text());
+
+    if let Some(test) = console {
+        test(super::console_destination::Fixture {
+            root: &root,
+            state: &state,
+            cwd: &cwd,
+            tmux: &tmux,
+            tmux_log: &tmux_log,
+            broker: &broker,
+            provider_bin: &provider_bin,
+            signers: &signers,
+            proof: &proof,
+            ssh_keygen,
+        });
+        return;
+    }
 
     let start_as = |id: &str, account: &str, check: bool| {
         let mut args = vec![
