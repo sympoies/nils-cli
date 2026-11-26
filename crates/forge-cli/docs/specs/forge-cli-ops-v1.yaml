@@ -328,12 +328,14 @@ operations:
 
   - id: release.edit
     schema_version: cli.forge-cli.release.edit.v1
-    summary: Replace guarded release notes and optional title, then verify readback.
+    summary: Edit release notes, title, or draft state and verify readback.
     inputs:
       - { name: tag, type: string, required: true }
-      - { name: --notes-file, type: path-or-stdin, required: true }
+      - { name: --notes-file, type: path-or-stdin, optional: true }
       - { name: --title, type: string, optional: true }
-    validations: [release_tag_invalid, no_local_path, no_agent_attribution]
+      - { name: --draft, type: bool, default: false, conflicts_with: --publish }
+      - { name: --publish, type: bool, default: false, conflicts_with: --draft }
+    validations: [release_tag_invalid, release_edit_empty, no_local_path, no_agent_attribution]
     backends:
       github: [api, "repos/<repo>/releases/<release-id>", --method, PATCH, --input, <payload-file>]
     output:

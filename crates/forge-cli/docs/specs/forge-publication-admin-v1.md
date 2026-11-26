@@ -65,14 +65,18 @@ are refused with `release_tag_invalid` before provider calls.
   `target_commitish` through the commit API. A branch name is never reported as
   a commit SHA. A published release without a resolvable tag fails with
   `release_target_unresolved`.
-- `release edit <tag> --notes-file <path|-> [--title <title>]` replaces notes
-  and optionally the title. It returns the same fields under
+- `release edit <tag> [--notes-file <path|->] [--title <title>] [--draft|--publish]`
+  requires at least one edit flag. Use `--draft` to move the release to draft or
+  `--publish` to publish it. It returns the same fields under
   `cli.forge-cli.release.edit.v1` after independent readback. Guarded UTF-8
   notes and title travel literally in a scoped JSON file using `gh api --input`;
   stdin is supported and content stays out of argv and dry-run plans. PATCH
-  includes only `body` and, when requested, `name`. Readback verifies release
-  identity, notes/title, target, draft/prerelease state and assets. It also
-  resolves the tag again and refuses a changed target. Omitted title is preserved.
+  includes only the requested `body`, `name`, and `draft` fields. When a state
+  flag is given and all requested fields already match, the command verifies
+  the release without PATCH. Readback checks the same release ID and tag,
+  requested fields, omitted notes and title, prerelease state, assets, and the
+  resolved target. A dry run with a state flag reports the requested `draft`
+  value without contacting the provider.
 - `release delete <tag> [--cleanup-tag] [--allow-version-tag]` deletes the
   selected release by its verified database ID. It verifies absence at both
   that ID and the exact tag's release lookup. Only `--cleanup-tag` permits a

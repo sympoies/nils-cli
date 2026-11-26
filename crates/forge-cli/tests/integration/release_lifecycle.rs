@@ -4,6 +4,7 @@ use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::fs;
 
+mod edit_state;
 mod guards;
 
 const NOTES: &str = "## Reviewed notes\n\nLiteral `code`, $(echo unchanged), @value, café.\n";

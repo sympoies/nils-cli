@@ -57,9 +57,13 @@ if path.startswith('repos/example/widget/releases/'):
     if mode == 'wrong-release':
         state['release']['tag_name'] = 'other-tag'
     if method == 'PATCH':
+        assert suffix == '17', path
         payload = json.loads(Path(args[args.index('--input') + 1]).read_text())
         (root / 'payload.json').write_text(json.dumps(payload, ensure_ascii=False))
-        assert set(payload) <= {'body', 'name'}, payload
+        assert set(payload) <= {'body', 'name', 'draft'}, payload
+        if state['release']['draft'] and payload.get('draft') is False:
+            state['tag_created'] = not state['tag_exists']
+            state['tag_exists'] = True
         if mode != 'edit-mismatch':
             state['release'].update(payload)
         if mode == 'edit-state-changed':
@@ -79,6 +83,10 @@ if path.startswith('repos/example/widget/releases/'):
         if mode == 'release-recreated' and suffix.startswith('tags/'):
             reply(200, dict(state['release'], id=18))
         reply(404, {'message': 'Not Found'})
+    if mode == 'edit-draft-readback-mismatch' and state['mutated']:
+        reply(200, dict(state['release'], draft=not state['release']['draft']))
+    if mode == 'edit-id-readback-mismatch' and state['mutated']:
+        reply(200, dict(state['release'], id=18))
     reply(200, state['release'])
 if path.startswith('repos/example/widget/git/ref'):
     prefix = 'repos/example/widget/git/refs/tags/' if method == 'DELETE' else 'repos/example/widget/git/ref/tags/'
@@ -94,9 +102,14 @@ if path.startswith('repos/example/widget/git/ref'):
     if not state['tag_exists']:
         reply(404, {'message': 'Not Found'})
     tag = state['release']['tag_name']
+    object_type = 'tag' if mode == 'annotated' else 'commit'
+    sha = 'b' if mode == 'annotated' else 'a'
+    if state.get('tag_created'):
+        sha = 'c'
+    if mode == 'tag-moved' and state['mutated']:
+        sha = 'd'
     reply(200, {'ref': 'refs/tags/' + ('other-tag' if mode == 'wrong-ref' else tag),
-                'object': {'type': 'tag' if mode == 'annotated' else 'commit',
-                           'sha': ('d' if mode == 'tag-moved' and state['mutated'] else ('b' if mode == 'annotated' else 'a')) * 40}})
+                'object': {'type': object_type, 'sha': sha * 40}})
 if path == 'repos/example/widget/git/tags/' + 'b' * 40:
     reply(200, {'sha': 'b' * 40, 'object': {'type': 'commit', 'sha': 'a' * 40}})
 if path == 'repos/example/widget/commits/main':
