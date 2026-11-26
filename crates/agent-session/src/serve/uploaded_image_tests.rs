@@ -361,7 +361,7 @@ async fn upload_original_names_are_safe_and_match_history_parts_on_reload() {
     fs::remove_file(metadata(&missing)).unwrap();
     fs::write(
         metadata(&unsafe_name),
-        serde_json::to_vec("../fixture-unsafe-filename-parent\\safe\r\n.png").unwrap(),
+        serde_json::to_vec("../private\\safe\r\n.png").unwrap(),
     )
     .unwrap();
     fixture.append(json!([{"type":"input_text","text":format!("\"{}\" \"{}\" \"{}\"", named.display(), missing.display(), unsafe_name.display())}]));
@@ -387,11 +387,7 @@ async fn upload_original_names_are_safe_and_match_history_parts_on_reload() {
             assert_eq!(image["upload_path"], path.to_str().unwrap());
             assert_eq!(part["upload_path"], image["upload_path"]);
         }
-        assert!(
-            !serde_json::to_string(message)
-                .unwrap()
-                .contains("fixture-unsafe-filename-parent")
-        );
+        assert!(!serde_json::to_string(message).unwrap().contains("private"));
     }
     let page = fixture
         .state
