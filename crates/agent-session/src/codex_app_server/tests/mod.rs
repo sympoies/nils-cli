@@ -4821,84 +4821,84 @@ async fn proxy_times_out_unanswered_turn_and_releases_account_gate() {
     let _ = server.await;
 }
 
-#[tokio::test]
-async fn proxy_rejects_failed_account_apply_without_upstream_forwarding() {
-    let env_lock = GlobalStateLock::new();
-    let _broker = EnvGuard::set(
-        &env_lock,
-        "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
-        r#"["/configured/broker"]"#,
-    );
-    let tmp = tempfile::TempDir::new().unwrap();
-    let (_socket_dir, upstream) = nils_test_support::short_socket_path("failed-turn.sock");
-    let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
-    let context = CliContext {
-        state_dir: tmp.path().join("state"),
-        host: None,
-    };
-    let record = record_with_runtime("failed-turn", &upstream);
-    fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
-    crate::write_session_record(&context, &record).unwrap();
-    bind_thread(&record, "thread-a").unwrap();
-    let launch_id = &record.runtime.as_ref().unwrap().launch_id;
-    crate::codex_account::queue_next_account_with_unbound(&context, &record.id, launch_id, "omega")
-        .unwrap();
-    let applying = crate::codex_account::begin_next_apply(&context, &record.id, launch_id)
-        .unwrap()
-        .expect("the queued account should become applying");
-    crate::codex_account::finish_next_apply(
-        &context,
-        &record.id,
-        launch_id,
-        &applying.account,
-        applying.revision,
-        applying.intent_id.as_deref().unwrap(),
-        Err("credential_rejected"),
-    )
-    .unwrap();
-
-    let server = tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.unwrap();
-        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
-        assert!(
-            tokio::time::timeout(Duration::from_millis(250), receive_json(&mut socket))
-                .await
-                .is_err(),
-            "a failed account apply must not forward turn/start"
+#[test]
+fn proxy_rejects_failed_account_apply_without_upstream_forwarding() {
+    control_fixture::run(async |root| {
+        let env_lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(
+            &env_lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/configured/broker"]"#,
         );
+        let (_socket_dir, upstream) = nils_test_support::short_socket_path("failed-turn.sock");
+        let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
+        let ctx = CliContext {
+            state_dir: root.join("state"),
+            host: None,
+        };
+        let record = record_with_runtime("failed-turn", &upstream);
+        fs::create_dir_all(crate::session_dir(&ctx, &record.id)).unwrap();
+        crate::write_session_record(&ctx, &record).unwrap();
+        bind_thread(&record, "thread-a").unwrap();
+        let launch_id = &record.runtime.as_ref().unwrap().launch_id;
+        crate::codex_account::queue_next_account_with_unbound(&ctx, &record.id, launch_id, "omega")
+            .unwrap();
+        let applying = crate::codex_account::begin_next_apply(&ctx, &record.id, launch_id)
+            .unwrap()
+            .expect("the queued account should become applying");
+        crate::codex_account::finish_next_apply(
+            &ctx,
+            &record.id,
+            launch_id,
+            &applying.account,
+            applying.revision,
+            applying.intent_id.as_deref().unwrap(),
+            Err("credential_rejected"),
+        )
+        .unwrap();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(250), receive_json(&mut socket))
+                    .await
+                    .is_err(),
+                "a failed account apply must not forward turn/start"
+            );
+        });
+        let proxy_args = crate::cli::CodexAppServerProxyArgs {
+            id: record.id.clone(),
+            upstream: upstream.clone(),
+            listen: upstream.with_extension("proxy"),
+        };
+        let proxy = tokio::spawn(async move { run_proxy_session(ctx, proxy_args).await });
+        let proxy_stream = connect_socket(&upstream.with_extension("proxy"))
+            .await
+            .unwrap();
+        let (mut tui, _) = tokio_tungstenite::client_async("ws://localhost", proxy_stream)
+            .await
+            .unwrap();
+        tui.send(Message::Text(
+            json!({
+                "id": 1,
+                "method": "turn/start",
+                "params": { "threadId": "thread-a", "input": [] }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+        let rejected = tokio::time::timeout(Duration::from_secs(1), receive_json(&mut tui))
+            .await
+            .expect("failed account apply should reject promptly");
+        assert_eq!(rejected["id"], 1);
+        assert_eq!(rejected["error"]["code"], -32001);
+        server.await.unwrap();
+        proxy.abort();
+        let _ = proxy.await;
     });
-    let proxy_args = crate::cli::CodexAppServerProxyArgs {
-        id: record.id.clone(),
-        upstream: upstream.clone(),
-        listen: upstream.with_extension("proxy"),
-    };
-    let proxy_context = context.clone();
-    let proxy = tokio::spawn(async move { run_proxy_session(proxy_context, proxy_args).await });
-    let proxy_stream = connect_socket(&upstream.with_extension("proxy"))
-        .await
-        .unwrap();
-    let (mut tui, _) = tokio_tungstenite::client_async("ws://localhost", proxy_stream)
-        .await
-        .unwrap();
-    tui.send(Message::Text(
-        json!({
-            "id": 1,
-            "method": "turn/start",
-            "params": { "threadId": "thread-a", "input": [] }
-        })
-        .to_string()
-        .into(),
-    ))
-    .await
-    .unwrap();
-    let rejected = tokio::time::timeout(Duration::from_secs(1), receive_json(&mut tui))
-        .await
-        .expect("failed account apply should reject promptly");
-    assert_eq!(rejected["id"], 1);
-    assert_eq!(rejected["error"]["code"], -32001);
-    server.await.unwrap();
-    proxy.abort();
-    let _ = proxy.await;
 }
 
 #[tokio::test]
