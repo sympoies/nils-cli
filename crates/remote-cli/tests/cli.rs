@@ -199,28 +199,26 @@ fn shell_reads_the_local_script_via_stdin_in_the_selected_login_environment() {
 
 #[test]
 fn sudo_refuses_a_password_prompt_as_a_remote_failure() {
-    let output = Fixture::new()
-        .command()
-        .args([
-            "exec",
-            "fixture.invalid",
-            "--sudo",
-            "--sudo-user",
-            "fixture-user",
-            "--format",
-            "json",
-            "--",
-            "echo",
-            "must not run",
-        ])
-        .output()
-        .unwrap();
-    let payload = result(&output, 1, "cli.remote-cli.exec.v1");
-    assert_eq!(payload["error"]["code"], "remote-exit");
-    assert_eq!(payload["data"]["remote_outcome"], "failed");
-    assert_eq!(payload["data"]["sudo_user"], "fixture-user");
-    assert_eq!(payload["data"]["stdout"], "");
-    assert_eq!(payload["data"]["stderr"], "sudo: a password is required\n");
+    let fixture = Fixture::new();
+    for sudo_user in [None, Some("fixture-user")] {
+        let mut command = fixture.command();
+        command.args(["exec", "fixture.invalid", "--sudo", "--format", "json"]);
+        if let Some(user) = sudo_user {
+            command
+                .env("EXPECT_SUDO_USER", user)
+                .args(["--sudo-user", user]);
+        }
+        let output = command
+            .args(["--", "echo", "must not run"])
+            .output()
+            .unwrap();
+        let payload = result(&output, 1, "cli.remote-cli.exec.v1");
+        assert_eq!(payload["error"]["code"], "remote-exit");
+        assert_eq!(payload["data"]["remote_outcome"], "failed");
+        assert_eq!(payload["data"]["sudo_user"], serde_json::json!(sudo_user));
+        assert_eq!(payload["data"]["stdout"], "");
+        assert_eq!(payload["data"]["stderr"], "sudo: a password is required\n");
+    }
 }
 
 #[test]

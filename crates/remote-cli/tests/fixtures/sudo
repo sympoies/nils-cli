@@ -1,5 +1,12 @@
 #!/bin/sh
 set -eu
-[ "$1" = -n ] && [ "$2" = -u ] && [ "$3" = fixture-user ] && [ "$4" = -- ]
+[ "$1" = -n ]
+shift
+if [ -n "${EXPECT_SUDO_USER:-}" ]; then
+  [ "$1" = -u ]
+  [ "$2" = "$EXPECT_SUDO_USER" ]
+  shift 2
+fi
+[ "$1" = -- ]
 printf 'sudo: a password is required\n' >&2
 exit 1
