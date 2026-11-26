@@ -176,7 +176,7 @@ test("App commit transfers the exact fold diff and opens exactly one date PR", a
   assert.equal(writes.ref.ref, `refs/heads/${f.branch}`);
   assert.equal(writes.pr.base, "main");
   assert.equal(writes.pr.head, f.branch);
-  assert.match(writes.pr.body, /^## Test changes\n\n## Test plan\n\nThe generated maintenance PR moves devlog fragments/m);
+  assert.match(writes.pr.body, /^## Test changes\n\nNone\.\n\n## Test plan\n\nThe generated maintenance PR moves devlog fragments and regenerates the index; it touches no test source\.\n/m);
   assert.equal(writes.pr.title, subject);
   const tree = writes.tree.tree;
   assert.deepEqual(tree.map(item => item.path).sort(), [
@@ -622,7 +622,7 @@ test("release preparation and replay reuse the signed head and never open a dupl
     release: { ...options.release, runId: 54321 }, preparationRunId: receipt.release.runId,
   })).number, 1);
   assert.deepEqual(f.state.writes.map(([stage]) => stage), ["tree", "commit", "pr"]);
-  assert.match(pr.body, /^## Test changes\n\n## Test plan\n\nThe generated maintenance PR moves devlog fragments/m);
+  assert.match(pr.body, /^## Test changes\n\nNone\.\n\n## Test plan\n\nThe generated maintenance PR moves devlog fragments and regenerates the index; it touches no test source\.\n/m);
 });
 
 test("an empty release retains a no-op receipt and never creates a ref or PR on replay", async () => {

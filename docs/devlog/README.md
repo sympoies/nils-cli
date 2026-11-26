@@ -82,8 +82,9 @@ fresh CI for the replacement head. An empty fold creates no PR. If a
 never-queued App PR becomes empty because the entries were already folded,
 the workflow closes it without enqueueing. A conflicting ref or PR on the
 release branch still requires steward reconciliation. Publication uses one
-concurrency group. Dry runs use their own group. Generated PRs leave
-`Test changes` empty and describe the fold validation under `Test plan`.
+concurrency group. Dry runs use their own group. Generated PRs
+declare `Test changes` as `None.` and describe the fold validation under
+`Test plan`.
 
 See [Devlog fold review admission and recovery](../runbooks/delivery-and-releases.md#devlog-fold-review-admission-and-recovery)
 for queue checks, receipts and intervention. To prepare a backlog fold,
