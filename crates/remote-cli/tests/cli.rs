@@ -4,6 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use nils_test_support::hermetic::{self, HermeticHome};
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -11,6 +12,7 @@ use tempfile::TempDir;
 struct Fixture {
     root: TempDir,
     remote_home: PathBuf,
+    local_home: HermeticHome,
 }
 
 impl Fixture {
@@ -27,11 +29,16 @@ impl Fixture {
             fs::write(&executable, body).unwrap();
             fs::set_permissions(executable, Permissions::from_mode(0o700)).unwrap();
         }
-        Self { root, remote_home }
+        Self {
+            root,
+            remote_home,
+            local_home: HermeticHome::new(),
+        }
     }
 
     fn command(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_remote-cli"));
+        hermetic::apply(&mut command, &self.local_home, &[]);
         command
             .env(
                 "PATH",
