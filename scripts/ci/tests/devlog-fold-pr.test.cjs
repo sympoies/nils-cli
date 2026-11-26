@@ -66,6 +66,7 @@ function fixture({ pending = true, entryDate = "2020-01-02", pulls = [],
   const date = now.toISOString().slice(0, 10);
   const branch = `chore/devlog-fold-${date}`;
   const state = { pulls, writes: [], verified: true, base, occupied: false, moved: false };
+  const commits = new Map();
   const repo = { owner: "example", repo: "project" };
   const fullName = "example/project";
   const rest = {
@@ -82,7 +83,7 @@ function fixture({ pending = true, entryDate = "2020-01-02", pulls = [],
           html_url: `https://github.com/example/project/pull/${number}`,
           state: "open", user: { login: "fold-app[bot]" },
           base: { ref: args.base, sha: state.base, repo: { full_name: fullName } },
-          head: { ref: args.head, sha: head, repo: { full_name: fullName } } };
+          head: { ref: args.head, sha: state.occupied, repo: { full_name: fullName } } };
         state.pulls.push(pr);
         return { data: pr };
       },
@@ -100,7 +101,9 @@ function fixture({ pending = true, entryDate = "2020-01-02", pulls = [],
       createTree: async args => { state.writes.push(["tree", args]); return { data: { sha: git("write-tree") } }; },
       createCommit: async args => {
         state.writes.push(["commit", args]);
-        return { data: { sha: head, verification: { verified: state.verified } } };
+        const sha = state.nextHead ?? head;
+        commits.set(sha, args);
+        return { data: { sha, verification: { verified: state.verified } } };
       },
       createRef: async args => {
         state.writes.push(["ref", args]);
@@ -111,9 +114,10 @@ function fixture({ pending = true, entryDate = "2020-01-02", pulls = [],
     repos: {
       getReleaseByTag: async () => ({ data: { id: Number(releaseId), tag_name: tag, published_at: `${date}T00:00:00Z`,
         draft: false, prerelease: false, author: { login: "github-actions[bot]" } } }),
-      getCommit: async () => {
-        const signed = state.writes.find(([stage]) => stage === "commit")[1];
-        return { data: { sha: head, parents: signed.parents.map(sha => ({ sha })),
+      getCommit: async ({ ref }) => {
+        const signed = commits.get(ref);
+        if (!signed) throw new Error("Canonical release branch has moved from the trusted head");
+        return { data: { sha: ref, parents: signed.parents.map(sha => ({ sha })),
           author: { type: "Bot", login: state.author ?? "fold-app[bot]" }, committer: { login: "web-flow" },
           commit: { message: signed.message, tree: { sha: signed.tree },
             verification: { verified: state.verified, reason: "valid" } } } };
@@ -238,9 +242,10 @@ test("manual dry runs cannot displace queued fold publication", () => {
     "Manual dry runs must use a separate concurrency group");
 });
 
-const { findReleasePreparation, readPublication, prepareReleaseFold, publishReleaseFold } =
+const { findReleasePreparation, readPublication, prepareReleaseFold, publishReleaseFold: publish } =
   require("../../../.github/scripts/devlog-fold-release.cjs");
 const { admitReleaseFold } = require("../../../.github/scripts/devlog-fold-admission.cjs");
+const publishReleaseFold = async options => (await publish(options)).candidate;
 
 function withRelease(f, source = f.state.base) {
   const ref = `refs/tags/${f.tag}`;
@@ -663,10 +668,8 @@ async function queueFixture({ mergeGroupHead = { oid: "e".repeat(40) } } = {}) {
   const state = { reads: 0, runs: 0, queued: false, merged: false, mutations: [] };
   const entry = { id: "QUEUE", state: "QUEUED", headCommit: mergeGroupHead,
     pullRequest: { id: candidate.node_id, headRefOid: receipt.head } };
-  const attempts = { number: 1, base: { sha: receipt.base, ref: "main" },
-    head: { sha: receipt.head, ref: receipt.branch } };
   const pr = { id: candidate.node_id, state: "OPEN", isDraft: false, isCrossRepository: false,
-    author: { __typename: "Bot", login: "fold-app" }, baseRefName: "main", baseRefOid: receipt.base,
+    author: { __typename: "Bot", login: "fold-app" }, baseRefName: "main",
     headRefName: receipt.branch, headRefOid: receipt.head,
     labels: { pageInfo: { hasNextPage: false }, nodes: [] },
     queueHistory: { nodes: [] }, lastEnqueue: { nodes: [] } };
@@ -675,9 +678,22 @@ async function queueFixture({ mergeGroupHead = { oid: "e".repeat(40) } } = {}) {
   f.git("branch", "--force", "main", mergedSha);
   f.git("remote", "add", "origin", f.dir);
   f.github.graphql = async (query, vars) => {
+    if (query.includes("mutation ReplaceReleaseFold")) {
+      const { base, head, tree } = state.replacement;
+      const [stage, signed] = f.state.writes.at(-1);
+      assert.equal(stage, "commit");
+      assert.deepEqual(signed.parents, [base]);
+      assert.equal(signed.tree, tree);
+      assert.deepEqual(vars, { repositoryId: "REPO", updates: [{
+        name: `refs/heads/${receipt.branch}`, beforeOid: f.state.occupied, afterOid: head, force: true,
+      }] });
+      f.state.occupied = candidate.head.sha = pr.headRefOid = entry.pullRequest.headRefOid = head;
+      state.active = state.replacement;
+      return { updateRefs: {} };
+    }
     if (query.includes("mutation FoldEnqueue")) {
       state.mutations.push(vars);
-      assert.deepEqual(vars, { id: candidate.node_id, head: receipt.head });
+      assert.deepEqual(vars, { id: candidate.node_id, head: (state.active ?? receipt).head });
       state.queued = true;
       return { enqueuePullRequest: { mergeQueueEntry: entry } };
     }
@@ -693,16 +709,28 @@ async function queueFixture({ mergeGroupHead = { oid: "e".repeat(40) } } = {}) {
     }
     if (state.merged) {
       current.state = "MERGED";
-      current.mergeCommit = { oid: mergedSha };
+      current.mergeCommit = { oid: state.active?.mergedSha ?? mergedSha };
     } else if (state.queued) current.mergeQueueEntry = entry;
     return { repository: { main: { target: { oid: state.main ?? receipt.base } },
       freezes: { totalCount: state.freeze ?? 0 }, pullRequest: current } };
   };
+  f.github.rest.repos.get = async () => ({ data: { node_id: "REPO" } });
+  f.github.rest.pulls.update = async ({ pull_number, state: next }) => {
+    assert.equal(pull_number, candidate.number);
+    assert.equal(next, "closed");
+    candidate.state = next;
+  };
+  const getRef = f.github.rest.git.getRef;
+  f.github.rest.git.getRef = args => args.ref === "heads/main" && state.main
+    ? { data: { object: { sha: state.main } } } : getRef(args);
   f.github.rest.actions = {
     listWorkflowRuns: async ({ event, head_sha }) => {
       assert.equal(event, "pull_request");
-      assert.equal(head_sha, receipt.head);
+      const active = state.active ?? receipt;
+      assert.equal(head_sha, active.head);
       state.runs++;
+      const attempts = { number: candidate.number, base: { sha: active.base, ref: "main" },
+        head: { sha: active.head, ref: receipt.branch } };
       return { data: [{ id: 24, head_sha, event, path: ".github/workflows/ci.yml",
         head_repository: { full_name: f.fullName }, pull_requests: [attempts],
         status: "completed", conclusion: "success", run_attempt: 1,
@@ -711,7 +739,7 @@ async function queueFixture({ mergeGroupHead = { oid: "e".repeat(40) } } = {}) {
     listJobsForWorkflowRunAttempt: async ({ run_id, attempt_number }) => {
       assert.equal(run_id, 24);
       assert.equal(attempt_number, 1);
-      return { data: checkNames.map(name => ({ name, head_sha: receipt.head, status: "completed",
+      return { data: checkNames.map(name => ({ name, head_sha: (state.active ?? receipt).head, status: "completed",
         conclusion: name === state.failedCheck ? "failure" : "success" })) };
     },
   };
@@ -723,8 +751,15 @@ async function queueFixture({ mergeGroupHead = { oid: "e".repeat(40) } } = {}) {
       } },
       { type: "merge_queue", parameters: { merge_method: state.mergeMethod ?? "SQUASH" } },
     ] : paginate(method, args);
-  const run = () => admitReleaseFold({ ...options, candidate, pause: async () => { state.merged = !state.evicted; } });
-  return { state, run, receipt, events, mergedSha, entry, git: f.git };
+  const run = () => admitReleaseFold({ ...options, pause: async () => {
+    if (!state.queued) return;
+    state.merged = !state.evicted;
+    if (state.merged && state.active) {
+      state.main = state.active.mergedSha;
+      f.git("branch", "--force", "main", state.main);
+    }
+  } });
+  return { ...f, provider: f.state, state, run, receipt, events, mergedSha, entry };
 }
 
 function forbiddenCandidateRead(path) {
@@ -805,6 +840,72 @@ test("queued replay accepts the exact PR with or without a merge-group head", as
   }
 });
 
+function advanceMainForFold(f, receipt) {
+  f.git("switch", "--detach", receipt.base);
+  fs.writeFileSync(path.join(f.dir, "accepted-change.txt"), "An unrelated accepted change.\n");
+  execFileSync("devlog", ["new", "--date", "2020-01-03", "--slug", "new-on-main",
+    "--title", "Newly accepted outcome", "--result", "An outcome.", "--why", "A reason.",
+    "--evidence", "A check."], { cwd: f.dir, env: f.options.env });
+  f.git("add", ".");
+  f.git("commit", "-qm", "Advance protected main");
+  const base = f.git("rev-parse", "HEAD");
+  f.git("branch", "--force", "main", base);
+  execFileSync("devlog", ["fold", "--before", receipt.release.publishedAt.slice(0, 10)],
+    { cwd: f.dir, env: f.options.env });
+  f.git("add", "docs/devlog");
+  const tree = f.git("write-tree");
+  f.git("commit", "-qm", "Protected squash of the regenerated fold");
+  return { base, head: "c".repeat(40), tree, mergedSha: f.git("rev-parse", "HEAD") };
+}
+
+test("main advancement before enqueue regenerates the fold and admits only the replacement head", async () => {
+  const f = await queueFixture();
+  const replacement = advanceMainForFold(f, f.receipt);
+  f.state.replacement = replacement;
+  f.provider.nextHead = replacement.head;
+  f.state.onRead = () => { if (f.state.reads === 2) f.state.main = replacement.base; };
+  await f.run();
+
+  const enqueued = [{ id: "PR-1", head: replacement.head }];
+  assert.deepEqual(f.state.mutations, enqueued);
+  assert.equal(f.state.runs, 4, "require fresh exact CI for the replacement");
+  assert.equal(f.provider.pulls.length, 1, "keep the same canonical PR");
+  assert.equal(f.events.at(-1).status, "merged");
+  assert.equal(f.events.at(-1).mergeSha, replacement.mergedSha);
+  assert.deepEqual(f.events.at(-1).capturedPaths,
+    [...f.receipt.removed, "docs/devlog/pending/2020-01-03-new-on-main.md"]);
+  await f.run();
+  assert.deepEqual(f.state.mutations, enqueued, "rerun adopts the verified replacement");
+});
+
+test("a stale unpublished preparation opens a PR only for the verified current-main fold", async () => {
+  const f = fixture();
+  const { options, receipt } = await production(f);
+  const replacement = advanceMainForFold(f, receipt);
+  f.git("remote", "add", "origin", f.dir);
+  f.state.base = replacement.base;
+  f.state.nextHead = replacement.head;
+  const published = await publish(options);
+
+  assert.equal(published.receipt.base, replacement.base);
+  assert.equal(published.receipt.tree, replacement.tree);
+  assert.equal(published.candidate.head.sha, replacement.head);
+  assert.deepEqual(f.state.writes.filter(([stage]) => stage === "ref").map(([, ref]) => ref.sha),
+    [replacement.head]);
+});
+
+test("an already satisfied stale fold closes its never-queued PR without enqueueing", async () => {
+  const f = await queueFixture();
+  f.state.main = f.mergedSha; // Another fold has already landed these entries on main.
+  await f.run();
+
+  assert.equal(f.provider.pulls[0].state, "closed");
+  assert.equal(f.events.at(-1).status, "empty");
+  assert.deepEqual(f.state.mutations, []);
+  await f.run();
+  assert.equal(f.events.at(-1).status, "empty");
+});
+
 for (const [field, wrong] of [["id", "OTHER_PR"], ["headRefOid", "f".repeat(40)]]) {
   test(`a mismatched ${field} in a queue receipt is rejected`, async () => {
     for (const replay of [false, true]) {
@@ -818,21 +919,19 @@ for (const [field, wrong] of [["id", "OTHER_PR"], ["headRefOid", "f".repeat(40)]
   });
 }
 
-for (const variation of ["PR replaced", "base advanced", "head moved", "late hold", "freeze", "failed required check"]) {
+for (const variation of ["PR replaced", "head moved", "late hold", "freeze", "failed required check"]) {
   test(`${variation} prevents unattended enqueue`, async () => {
     const f = await queueFixture();
     const { state } = f;
     const onFinalRead = change => { state.onRead = pr => { if (state.reads === 2) change(pr); }; };
     const expected = {
       "PR replaced": /PR identity, recorded base or exact head changed/,
-      "base advanced": /recorded fold base is stale/,
       "head moved": /exact head changed/,
       "late hold": /PR hold/,
       freeze: /repository freeze/,
       "failed required check": /Current required check did not pass/,
     };
     if (variation === "PR replaced") onFinalRead(pr => { pr.id = "OTHER_PR"; });
-    if (variation === "base advanced") onFinalRead(() => { state.main = "f".repeat(40); });
     if (variation === "head moved") onFinalRead(pr => { pr.headRefOid = "f".repeat(40); });
     if (variation === "late hold") onFinalRead(pr => { pr.labels = { ...pr.labels, nodes: [{ name: "review::paused" }] }; });
     if (variation === "freeze") state.freeze = 1;

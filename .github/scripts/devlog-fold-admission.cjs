@@ -1,7 +1,7 @@
 "use strict";
 const { execFileSync } = require("node:child_process");
 const { checkoutGit } = require("./devlog-fold-pr.cjs");
-const { oid } = require("./devlog-fold-release.cjs");
+const { FoldBaseMoved, oid, publishReleaseFold, refreshPublishedFold } = require("./devlog-fold-release.cjs");
 
 const READ = `query FoldAdmission($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
@@ -9,7 +9,7 @@ const READ = `query FoldAdmission($owner: String!, $repo: String!, $number: Int!
     freezes: issues(first: 1, states: OPEN, labels: ["merge-freeze"]) { totalCount }
     pullRequest(number: $number) {
       id state url isDraft isCrossRepository isInMergeQueue reviewDecision
-      author { __typename login } baseRefName baseRefOid headRefName headRefOid
+      author { __typename login } baseRefName headRefName headRefOid
       labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
       mergeCommit { oid }
       mergeQueueEntry { id state pullRequest { id headRefOid } }
@@ -60,28 +60,28 @@ print(json.dumps(tomllib.loads(sys.stdin.read()).get("merge", {}).get("hold_labe
   if (!Array.isArray(labels) || labels.some(label => typeof label !== "string" ||
       !label.trim() || Buffer.byteLength(label.trim()) > 128 || /[\p{Cc}]/u.test(label)))
     throw new Error("Invalid base hold-label policy");
-  return new Set(["state::do-not-merge", "do-not-merge", "control::hold", ...labels.map(label => label.trim())]);
+  return ["state::do-not-merge", "do-not-merge", "control::hold", ...labels.map(label => label.trim())];
 }
 
-async function readCandidate({ github, repo, number, id, receipt, app, holdLabels, beforeEnqueue }) {
+async function readCandidate({ github, repo, number, id, receipt, app, holdLabels }) {
   const { repository } = await github.graphql(READ, { ...repo, number })
     .catch(error => { throw candidateReadError(error); });
   const pr = repository?.pullRequest;
   if (pr?.id !== id || pr.isCrossRepository !== false ||
       pr.author?.__typename !== "Bot" || pr.author.login !== app ||
       pr.headRefName !== receipt.branch || pr.headRefOid !== receipt.head ||
-      pr.baseRefName !== "main" || pr.baseRefOid !== receipt.base)
+      pr.baseRefName !== "main")
     throw new Error("PR identity, recorded base or exact head changed");
-  if (pr.state === "MERGED") return pr;
+  const main = repository.main?.target?.oid;
+  if (!oid(main)) throw new Error("Cannot resolve protected main for fold admission");
+  if (pr.state === "MERGED") return { pr, main };
   if (pr.state !== "OPEN" || pr.isDraft !== false ||
       pr.reviewDecision === "CHANGES_REQUESTED" || pr.reviewDecision === "REVIEW_REQUIRED")
     throw new Error("PR is closed, draft or has a blocking review decision");
   if (repository.freezes.totalCount !== 0 || pr.labels.pageInfo.hasNextPage !== false ||
-      pr.labels.nodes.some(({ name }) => holdLabels.has(name)))
+      pr.labels.nodes.some(({ name }) => holdLabels.includes(name)))
     throw new Error("PR hold, repository freeze or incomplete hold evidence");
-  if (beforeEnqueue && !pr.isInMergeQueue && repository.main?.target?.oid !== receipt.base)
-    throw new Error("main moved; the recorded fold base is stale");
-  return pr;
+  return { pr, main };
 }
 
 async function readProtectedSquashRules(github, repo) {
@@ -147,21 +147,28 @@ function readMerge({ git, receipt, pr }) {
   return { status: "merged", mergeSha: merge, main, capturedPaths: receipt.removed };
 }
 
-async function admitReleaseFold({ github, writer, repo, candidate, receipt, app, root, env, note,
-  git = checkoutGit(root, env), pause = ms => new Promise(resolve => setTimeout(resolve, ms)),
-  clock = Date.now }) {
+async function admitExactFold({ github, writer, repo, candidate, receipt, app, root, env, note,
+  git = checkoutGit(root, env), pause, clock, admissionDeadline }) {
   if (receipt.status === "empty") {
-    await note("empty", { status: "empty" });
+    await note("empty", { status: "empty", base: receipt.base, head: null,
+      tree: receipt.tree, capturedPaths: [] });
     return;
   }
   if (!Number.isSafeInteger(candidate?.number) || !candidate.node_id)
     throw new Error("Missing provider PR identity");
   const { number, node_id: id } = candidate;
   const prUrl = `https://github.com/${repo.owner}/${repo.repo}/pull/${number}`;
-  await note("admission", { pr: prUrl });
+  await note("admission", { pr: prUrl, base: receipt.base, head: receipt.head,
+    tree: receipt.tree, capturedPaths: receipt.removed });
   const holdLabels = readHoldLabels(git, receipt.base);
-  const read = (beforeEnqueue = true) =>
-    readCandidate({ github, repo, number, id, receipt, app, holdLabels, beforeEnqueue });
+  const read = async (beforeEnqueue = true) => {
+    const { pr, main } = await readCandidate({ github, repo, number, id, receipt, app, holdLabels });
+    if (beforeEnqueue && pr.state === "OPEN" && !pr.isInMergeQueue) {
+      if (pr.queueHistory.nodes.length) throw new Error("Fold already left the merge queue");
+      if (main !== receipt.base) throw new FoldBaseMoved();
+    }
+    return pr;
+  };
   const readWithQueuePolicy = async (beforeEnqueue = true) => {
     const pr = await read(beforeEnqueue);
     if (pr.state === "OPEN") await readProtectedSquashRules(github, repo);
@@ -171,11 +178,9 @@ async function admitReleaseFold({ github, writer, repo, candidate, receipt, app,
   let submitted = false;
 
   if (pr.state === "OPEN" && !pr.isInMergeQueue) {
-    if (pr.queueHistory.nodes.length) throw new Error("Fold already left the merge queue");
     await note("required-checks");
-    const deadline = clock() + 30 * 60_000;
     while (!await currentRequiredChecks({ github, repo, number, receipt })) {
-      if (clock() >= deadline) throw new Error("Required PR CI did not finish within 30 minutes");
+      if (clock() >= admissionDeadline) throw new Error("Required PR CI did not finish within 30 minutes");
       await pause(15_000);
       pr = await readWithQueuePolicy();
       if (pr.state !== "OPEN" || pr.isInMergeQueue)
@@ -225,6 +230,37 @@ async function admitReleaseFold({ github, writer, repo, candidate, receipt, app,
     }
     if (clock() >= deadline) throw new Error("Protected queue did not yield a merge receipt within 95 minutes");
     await pause(15_000);
+  }
+}
+
+async function admitReleaseFold({ clock = Date.now,
+  pause = ms => new Promise(resolve => setTimeout(resolve, ms)), ...options }) {
+  const { github, repo, app, root, env } = options;
+  const admissionDeadline = clock() + 30 * 60_000;
+  for (;;) {
+    try {
+      const { candidate, receipt } = await publishReleaseFold(options);
+      try {
+        await admitExactFold({ ...options, candidate, receipt, pause, clock, admissionDeadline });
+        return;
+      } catch (error) {
+        if (!(error instanceof FoldBaseMoved)) throw error;
+        if (clock() >= admissionDeadline) throw error;
+        await refreshPublishedFold(options, receipt, candidate, async base => {
+          const git = checkoutGit(root, env);
+          const holdLabels = [...readHoldLabels(git, receipt.base), ...readHoldLabels(git, base)];
+          await readProtectedSquashRules(github, repo);
+          const { pr, main } = await readCandidate({ github, repo, number: candidate.number,
+            id: candidate.node_id, receipt, app, holdLabels });
+          if (main !== base) throw new FoldBaseMoved();
+          if (pr.state !== "OPEN" || pr.isInMergeQueue || pr.queueHistory.nodes.length)
+            throw new Error("PR queue state changed before exact-head fold replacement");
+        });
+      }
+    } catch (error) {
+      if (!(error instanceof FoldBaseMoved) || clock() >= admissionDeadline) throw error;
+      await pause(15_000);
+    }
   }
 }
 

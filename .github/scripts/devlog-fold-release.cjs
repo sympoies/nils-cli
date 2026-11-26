@@ -110,6 +110,20 @@ async function readPublication({ github, context, workflowRef, releaseId, git })
 const releaseBranch = release => `chore/devlog-fold-release-${release.id}`;
 const receiptName = release => `devlog-fold-preparation-${release.id}`;
 
+class FoldBaseMoved extends Error {
+  constructor() {
+    super("main moved; the recorded fold base is stale");
+  }
+}
+
+async function requireFoldBase(github, repo, base) {
+  if (await getRef(github, repo, "heads/main") !== base) throw new FoldBaseMoved();
+}
+
+const REPLACE = `mutation ReplaceReleaseFold($repositoryId: ID!, $updates: [RefUpdate!]!) {
+  updateRefs(input: {repositoryId: $repositoryId, refUpdates: $updates}) { clientMutationId }
+}`;
+
 async function findReleasePreparation(github, repo, release) {
   const runs = await github.paginate(github.rest.actions.listWorkflowRuns,
     { ...repo, workflow_id: "release.yml", head_sha: release.source, per_page: 100 });
@@ -160,34 +174,35 @@ async function prepareReleaseFold({ github, writer, repo, release, root, env, no
   await requireUnusedReleaseBranch(github, repo, branch, note, "prepare");
   await requireMain(github, repo, base);
   const plan = prepareFold({ root, env, branch, cutoff });
-  await requireMain(github, repo, base);
+  // This only signs an unreferenced commit. Publication refreshes a stale base
+  // after the immutable preparation is retained.
   const head = plan.removed.length
     ? await signFold({ github: writer, repo, root, plan, message: foldMessage(release) }) : null;
   return { release, branch, base, head, tree: plan.tree, removed: plan.removed,
     status: head ? "prepared" : "empty" };
 }
 
-function reproduceFold({ root, env, receipt }) {
+async function withFoldReplay({ root, env, receipt, main = "HEAD" }, use) {
   const git = checkoutGit(root, env);
   // Only the recorded base, reachable from protected main, is ever checked out.
-  git("merge-base", "--is-ancestor", receipt.base, "HEAD");
+  git("merge-base", "--is-ancestor", receipt.base, main);
   git("merge-base", "--is-ancestor", receipt.release.mainAnchor, receipt.base);
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "devlog-fold-replay-"));
   try {
     git("clone", "-q", "--shared", "--no-checkout", "--single-branch", "--branch", "main",
       "--", root, temporary);
     checkoutGit(temporary, env)("switch", "--detach", receipt.base);
-    return prepareFold({ root: temporary, env, branch: receipt.branch,
+    const plan = prepareFold({ root: temporary, env, branch: receipt.branch,
       cutoff: receipt.release.publishedAt.slice(0, 10),
       script: path.join(root, "scripts/ci/fold-devlog.sh") });
+    return await use(plan, temporary);
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
 }
 
-async function verifyHead(github, repo, receipt, app) {
-  const head = (await github.rest.repos.getCommit({ ...repo, ref: receipt.head })).data;
-  if (head.sha !== receipt.head || head.parents.length !== 1 || head.parents[0].sha !== receipt.base ||
+function verifyHead(head, receipt, app) {
+  if (head?.sha !== receipt.head || head.parents?.length !== 1 || head.parents[0].sha !== receipt.base ||
       head.author?.type !== "Bot" || head.author.login !== `${app}[bot]` ||
       head.committer?.login !== "web-flow" || !verified(head.commit.verification) ||
       head.commit.message !== foldMessage(receipt.release) ||
@@ -201,42 +216,144 @@ function verifyPR(pr, receipt, app) {
       pr.head?.repo?.full_name !== receipt.release.repository ||
       pr.base?.repo?.full_name !== receipt.release.repository ||
       pr.head.ref !== receipt.branch || pr.head.sha !== receipt.head ||
-      pr.base.ref !== "main" || pr.base.sha !== receipt.base ||
-      !(pr.state === "open" || (pr.state === "closed" && pr.merged_at)))
+      pr.base.ref !== "main" || !["open", "closed"].includes(pr.state))
     throw new Error("PR identity, recorded base or exact head changed");
   return pr;
 }
 
-async function publishReleaseFold({ github, writer, repo, release, root, env, receipt, app, note,
-  preparationRunId = release.runId }) {
-  validateReceipt(receipt, { ...release, runId: preparationRunId });
+async function verifyReplay(options, receipt, main) {
+  const replay = await withFoldReplay({ ...options, receipt, main }, plan => plan);
+  if (replay.base !== receipt.base || replay.tree !== receipt.tree ||
+      JSON.stringify(replay.removed) !== JSON.stringify(receipt.removed))
+    throw new Error("Complete fold tree differs from trusted replay of the recorded base");
+}
+
+async function readFoldHead(options, head) {
+  const { github, repo } = options;
+  return (await github.rest.repos.getCommit({ ...repo, ref: head })).data;
+}
+
+function fetchMain(git, receipt, expected) {
+  if (!oid(expected)) throw new Error("Cannot resolve current protected main for fold replay");
+  git("fetch", "--no-tags", "origin", "refs/heads/main");
+  const main = git("rev-parse", "FETCH_HEAD");
+  if (main !== expected) throw new FoldBaseMoved();
+  if (!isAncestor(git, receipt.base, main))
+    throw new Error("Current protected main does not descend from the recorded fold base");
+  return main;
+}
+
+async function regenerate(options, receipt, base) {
+  const { github, writer, repo, root, env, app } = options;
+  const main = fetchMain(checkoutGit(root, env), receipt, base);
+  const updated = await withFoldReplay({ ...options, main, receipt: { ...receipt, base } },
+    async (plan, temporary) => {
+      const { tree, removed } = plan;
+      const head = removed.length ? await signFold({ github: writer, repo, root: temporary,
+        plan, message: foldMessage(receipt.release) }) : null;
+      return { ...receipt, base, head, tree, removed, status: head ? "prepared" : "empty" };
+    });
+  await verifyReplay(options, updated, main);
+  if (updated.head) verifyHead(await readFoldHead(options, updated.head), updated, app);
+  return updated;
+}
+
+async function replaceFoldRef({ github, writer, repo }, receipt, previous) {
+  const { data } = await github.rest.repos.get(repo);
+  if (typeof data?.node_id !== "string" || !data.node_id)
+    throw new Error("Missing repository identity for exact-head fold replacement");
+  // Only the canonical fold branch is written. Do not replace intervening edits.
+  await writer.graphql(REPLACE, { repositoryId: data.node_id, updates: [{
+    name: `refs/heads/${receipt.branch}`, beforeOid: previous, afterOid: receipt.head, force: true,
+  }] });
+}
+
+async function refreshPublishedFold(options, receipt, candidate, checkBeforeWrite) {
+  const { github, writer, repo, note } = options;
+  const base = await getRef(github, repo, "heads/main");
+  if (!oid(base) || base === receipt.base) throw new Error("Cannot resolve an advanced fold base");
+  const updated = await regenerate(options, receipt, base);
+  await note("regenerate", { base, head: updated.head, tree: updated.tree, capturedPaths: updated.removed });
+  await requireFoldBase(github, repo, base);
+  await checkBeforeWrite(base);
+  if (updated.head) {
+    await replaceFoldRef(options, updated, receipt.head);
+  } else {
+    // Current main already contains all eligible entries. Retire only the
+    // exact, never-queued App PR that was just checked by admission.
+    if (await getRef(github, repo, `heads/${receipt.branch}`) !== receipt.head)
+      throw new Error("Canonical release branch has moved from the trusted head");
+    await writer.rest.pulls.update({ ...repo, pull_number: candidate.number, state: "closed" });
+  }
+}
+
+async function publishReleaseFold(options) {
+  const { github, writer, repo, release, root, env, app, note,
+    preparationRunId = release.runId } = options;
+  const original = options.receipt;
+  validateReceipt(original, { ...release, runId: preparationRunId });
+  let receipt = original;
   const { branch, base, head, tree, removed } = receipt;
   await note("reproduce", { branch, base, head, tree, preparationRunId, capturedPaths: removed });
-  const replay = reproduceFold({ root, env, receipt });
-  if (replay.base !== base || replay.tree !== tree ||
-      JSON.stringify(replay.removed) !== JSON.stringify(removed))
-    throw new Error("Complete fold tree differs from trusted replay of the recorded base");
-  if (receipt.status === "empty") {
-    await requireUnusedReleaseBranch(github, repo, branch, note, "reproduce");
-    return null;
-  }
-  await verifyHead(github, repo, receipt, app);
+  await verifyReplay(options, original);
   await note("publish");
   const existing = await findFoldPR(github, repo, branch);
+  const branchHead = await getRef(github, repo, `heads/${branch}`);
+  const activeHead = existing?.head?.sha ?? branchHead;
+  if (existing && activeHead !== branchHead && (branchHead !== null || existing.state !== "closed"))
+    throw new Error("PR identity, recorded base or exact head changed");
+  if (activeHead && activeHead === head) {
+    verifyHead(await readFoldHead(options, head), original, app);
+  } else if (activeHead) {
+    if (!oid(activeHead)) throw new Error("Canonical release branch has moved from the trusted head");
+    const commit = await readFoldHead(options, activeHead);
+    const parent = commit.parents?.[0]?.sha;
+    if (!oid(parent) || parent === base)
+      throw new Error("Canonical release branch has moved from the trusted head");
+    const git = checkoutGit(root, env);
+    const current = await getRef(github, repo, "heads/main");
+    const main = fetchMain(git, original, current);
+    if (!isAncestor(git, base, parent))
+      throw new Error("Replacement fold base does not descend from the recorded base");
+    const replay = await withFoldReplay({ ...options, main, receipt: { ...original, base: parent } }, plan => plan);
+    if (!replay.removed.length)
+      throw new Error("Replacement fold head has no eligible fragments");
+    receipt = { ...original, base: parent, head: activeHead, tree: replay.tree,
+      removed: replay.removed, status: "prepared" };
+    verifyHead(commit, receipt, app);
+  }
   if (existing) {
     await note("publish", { pr: existing.html_url });
-    return verifyPR(existing, receipt, app);
+    verifyPR(existing, receipt, app);
+    if (existing.state === "open" || existing.merged_at) return { candidate: existing, receipt };
+    const current = await getRef(github, repo, "heads/main");
+    if (oid(current) && current !== receipt.base) {
+      const main = fetchMain(checkoutGit(root, env), receipt, current);
+      const empty = await withFoldReplay({ ...options, main, receipt: { ...receipt, base: current } }, plan => plan);
+      if (!empty.removed.length)
+        return { candidate: null, receipt: { ...receipt, base: current, tree: empty.tree,
+          removed: [], head: null, status: "empty" } };
+    }
+    throw new Error("Canonical release PR is closed without a merge");
   }
-  await requireMain(github, repo, base);
-  const branchHead = await getRef(github, repo, `heads/${branch}`);
+  const current = await getRef(github, repo, "heads/main");
+  if (!oid(current)) throw new Error("Cannot resolve current protected main for fold publication");
+  if (current !== receipt.base) {
+    receipt = await regenerate(options, receipt, current);
+    await note("regenerate", { base: current, head: receipt.head, tree: receipt.tree, capturedPaths: receipt.removed });
+  } else if (receipt.head && !activeHead) {
+    verifyHead(await readFoldHead(options, receipt.head), receipt, app);
+  }
+  if (!receipt.head) return { candidate: null, receipt };
+  await requireFoldBase(github, repo, receipt.base);
   if (branchHead === null)
-    await writer.rest.git.createRef({ ...repo, ref: `refs/heads/${branch}`, sha: head });
-  else if (branchHead !== head)
-    throw new Error("Canonical release branch has moved from the trusted head");
-  await requireMain(github, repo, base);
+    await writer.rest.git.createRef({ ...repo, ref: `refs/heads/${branch}`, sha: receipt.head });
+  else if (branchHead !== receipt.head)
+    await replaceFoldRef(options, receipt, branchHead);
+  await requireFoldBase(github, repo, receipt.base);
   const created = await openFoldPR(writer, repo, branch, release.publishedAt.slice(0, 10));
   await note("publish", { pr: created.html_url });
-  return verifyPR(created, receipt, app);
+  return { candidate: verifyPR(created, receipt, app), receipt };
 }
 
 function tracker({ context, core, file }) {
@@ -250,5 +367,5 @@ function tracker({ context, core, file }) {
   };
 }
 
-module.exports = { findReleasePreparation, oid, prepareReleaseFold, publishReleaseFold,
-  readPublication, receiptName, tracker };
+module.exports = { findReleasePreparation, FoldBaseMoved, oid, prepareReleaseFold, publishReleaseFold,
+  readPublication, receiptName, refreshPublishedFold, tracker };

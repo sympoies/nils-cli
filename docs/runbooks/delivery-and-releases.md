@@ -211,6 +211,17 @@ base's history. Admission verifies App authorship and GitHub's verified
 signature and independently reruns the fold from that base. The full tree must
 match, including the generated devlog index.
 
+If `main` advances before enqueue, the workflow fetches the latest protected
+tip and requires it to descend from the verified fold base. It regenerates
+with the same UTC cutoff, verifies the complete replacement tree and signature,
+and waits for CI on the replacement head and base. For an existing open,
+never-queued App PR, it uses GitHub's [exact-ref update](https://docs.github.com/en/graphql/reference/git#updaterefs)
+to replace only the previously verified head on the canonical fold branch.
+Holds, freezes and queue state still apply. If no eligible fragments remain,
+the workflow skips the fold and closes any verified never-queued App PR for
+it. The preparation artifact is never overwritten. Reruns independently
+replay and verify any replacement already published to the canonical branch.
+
 The Actions read client verifies the squash queue and required-check policy
 through GitHub's effective branch rules endpoint. That endpoint requires
 [Metadata read](https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch).
@@ -231,9 +242,11 @@ PR and queue before retrying. If a hold is placed on a PR already in the queue,
 the steward removes it from the queue.
 
 Rerun the original Release run's failed job after resolving a transient
-provider error, using its recorded preparation. If the base or head changed,
-the release branch conflicts, the queue removed the entry, or the receipt is
-unavailable, the steward reconciles the exact PR through designated review.
+provider error or if repeated advances exhaust the 30-minute admission window.
+The job uses the original preparation to verify or regenerate the fold. If
+the head cannot be verified, the release branch conflicts, the queue removed
+the entry, or the receipt is unavailable, the steward reconciles the exact PR
+through designated review.
 
 For an authorization failure, record the run, PR, client role, and denied
 operation. An Actions read failure in `FoldAdmission` reports `FORBIDDEN`
