@@ -393,7 +393,7 @@ fn relay_operation(
         let (receipt, _) =
             operation::Receipt::begin(context, &origin, operation_id, body, &config.machine)?;
         if receipt.is_attested() && super::delegation::is_delegation(token) {
-            return Err(super::unauthorized());
+            return Err(super::delegation::scope_denied());
         }
         return receipt.reconcile(config, &scope);
     }

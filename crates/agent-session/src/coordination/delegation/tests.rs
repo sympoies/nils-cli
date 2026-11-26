@@ -797,6 +797,6 @@ fn ordinary_console_start_delegation_cannot_request_attestation() {
         &request,
     )
     .unwrap_err();
-    assert_eq!(error.code(), "coordination-unauthorized");
+    assert_eq!(error.code(), "delegation-scope-denied");
     assert!(server.take_requests().is_empty());
 }
