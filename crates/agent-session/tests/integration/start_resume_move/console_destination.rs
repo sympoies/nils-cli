@@ -31,6 +31,7 @@ pub(super) struct Fixture<'a> {
     pub tmux: &'a Path,
     pub tmux_log: &'a Path,
     pub broker: &'a Path,
+    pub staged_history: &'a Path,
     pub provider_bin: &'a Path,
     pub signers: &'a Signers,
     pub proof: &'a StopProof,
@@ -528,5 +529,30 @@ fn console_destination_unknown_outcome_never_launches_again() {
         assert_eq!(response(start(&daemon), 502), unknown);
         assert_eq!(f.ledger(), admitted);
         assert_eq!(f.launch_count(), 1);
+    });
+}
+
+#[test]
+fn console_destination_preserves_missing_staged_history_refusal() {
+    with_console_fixture(|f| {
+        let daemon = f.daemon(true, Some(&f.signers.allowlist), false);
+        let before = f.ledger();
+        fs::rename(f.staged_history, f.root.join("withheld-history")).unwrap();
+        let request = daemon.start(serde_json::to_vec(&f.request()).unwrap());
+        let refused = bind(request, &f.binding("start")).send().unwrap();
+        assert_eq!(
+            response(refused, 422),
+            refusal(
+                SCHEMA,
+                "resume-history-missing",
+                json!({
+                    "move_id":f.move_id(),"state":"staged",
+                    "next_action":"inspect_destination","safe_to_retry":false,
+                    "session_created":false
+                })
+            )
+        );
+        assert_eq!(f.ledger(), before);
+        assert_eq!(f.launch_count(), 0);
     });
 }

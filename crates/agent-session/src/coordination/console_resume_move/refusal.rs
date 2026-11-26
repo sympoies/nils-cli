@@ -94,6 +94,7 @@ fn pre_admission_status(code: &str) -> Option<StatusCode> {
             Http::CONFLICT
         }
         "resume-account-mismatch"
+        | "resume-history-missing"
         | "resume-source-live"
         | "resume-move-session-mismatch"
         | "resume-move-proof-invalid"

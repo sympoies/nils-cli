@@ -300,6 +300,7 @@ fn staged_claude_move(
             tmux: &tmux,
             tmux_log: &tmux_log,
             broker: &broker,
+            staged_history: &staged,
             provider_bin: &provider_bin,
             signers: &signers,
             proof: &proof,
