@@ -21,3 +21,5 @@ mod identity_fixture;
 mod rebase;
 #[path = "integration/staged_context.rs"]
 mod staged_context;
+#[path = "integration/target_parity.rs"]
+mod target_parity;
