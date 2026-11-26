@@ -22,7 +22,7 @@ Each finding names an exact repository-relative file and one of:
 | Kind | Signal |
 | --- | --- |
 | `deleted-test` | Deleted test source file or rename of an old test source path |
-| `deleted-test:<name>` | One removed recognizable test signature or Rust test-module declaration, in any source file including inline `#[cfg(test)]` modules; `<name>` is the function name (for example `deleted-test:extend_applies_one_increment`) or, for other syntaxes, the compacted signature (JavaScript cases: the quoted title, which may start on a later line and may contain escaped quotes). A Rust test inside inline `mod` blocks is named by its module path, for example `deleted-test:outer::inner::same_name`, so same-named tests in different modules need separate rows. The path comes from `mod name {` lines visible in the diff hunk; a module opened outside the hunk context cannot be named. A JavaScript `it.each`/`test.each` table is one row named by the table's title (`deleted-test:it.each('adds%i'`); removing a single case from a surviving table is not flagged |
+| `deleted-test:<name>` | One removed recognizable test signature or Rust test-module declaration. The name includes enclosing scopes where supported |
 | `assertion-change` | Removed or edited assertion, including potential weakening |
 | `new-skip` | Added skip, ignore or expected-failure marker |
 | `import-addition` | A declared new mapped file has no upstream counterpart; inspect its complete ordinary patch |
@@ -33,23 +33,43 @@ implication or a language parser. Assertion strengthening and test renames can
 also be flagged. Identical assertions moved within a file and whitespace-only
 assertion edits are canceled; new assertions alone are permitted.
 
-Detection covers common Rust, Python, JavaScript/TypeScript, Go and Java test syntax,
-including Rust inline `#[test]`, Python `test_` functions, JavaScript `it`/`test`,
-Go `Test` functions, and common `assert`/`expect` calls. Skip signals include
-Rust `#[ignore]`, `#[cfg(any())]`, `#![cfg(any())]` and `#[cfg_attr(..., ignore)]`,
-pytest skip/skipif/xfail, unittest skip, JavaScript skip calls,
-Go `Skip`, and Java `Ignore`/`Disabled`. Source extensions include Rust, Python,
-JavaScript/TypeScript (`.js`, `.jsx`, `.ts`, `.tsx`, `.cjs`, `.mjs`, `.cts`, `.mts`),
-Go, Java/Kotlin, shell, Ruby, C#, and C/C++.
+For changed Rust, JavaScript/TypeScript, Python and Java files, the detector
+compares test names and enclosing scopes in the complete pre-image at the
+three-dot merge base and the complete post-image at the PR head. Declarations
+distinguish same-named tests in different scopes. Each enclosing scope is joined
+with `::`:
 
-A rename uses the old test source
-path for its `deleted-test` declaration, even if the destination is still a test
-path or has a disabled extension. Removing `#[cfg(test)] mod tests;` (including
-an attribute on the preceding line) also requires a declaration.
+| Language | Enclosing scopes | Example finding kind |
+| --- | --- | --- |
+| Rust | Inline modules and `impl` headers | `deleted-test:outer::Fixture::contract` |
+| JavaScript/TypeScript | Statically titled `describe` suites | `deleted-test:describe('group'::test('contract'` |
+| Python | Classes | `deleted-test:Suite::test_contract` |
+| Java | Classes | `deleted-test:Suite::contract` |
 
-Custom frameworks, dynamically generated tests, and changes outside the visible
-hunk context can require manual review. Existing test-first, CI, review ledger,
-identity and merge gates continue to apply.
+Go tests use their function name. Test and skip markers are recognized in their
+own source language outside comments and string literals. Rust detection includes
+recognizable named declarations inside macro input and declarations annotated
+with `#[rstest]` or `#[test_case(...)]`. Macro expansion and runtime generation
+require manual review. Removing `#[cfg(test)] mod tests;` also requires a
+declaration, including when the attribute is on the preceding line.
+
+JavaScript case titles can start on a later line and contain escaped quotes.
+An `it.each` or `test.each` table has one row keyed by its title, for example
+`deleted-test:it.each('adds%i'`. Individual case removals from a surviving
+table remain a manual review item.
+
+Skip signals include Rust `#[ignore]`, `#[cfg(any())]`, `#![cfg(any())]`
+and `#[cfg_attr(..., ignore)]`, pytest skip/skipif/xfail, unittest skip,
+JavaScript skip calls, Go `Skip`, and Java `Ignore`/`Disabled`.
+Source extensions include Rust, Python, JavaScript/TypeScript (`.js`, `.jsx`,
+`.ts`, `.tsx`, `.cjs`, `.mjs`, `.cts`, `.mts`), Go, Java/Kotlin, shell, Ruby,
+C#, and C/C++.
+
+A rename uses the old test source path for its file-level `deleted-test`
+declaration, including when the destination has a disabled extension. A
+content-changing rename compares each image using that image's source language.
+Custom frameworks and dynamically generated tests can require manual review.
+Existing test-first, CI, review ledger, identity and merge gates continue to apply.
 
 ## Author declarations and intentional-change allowlist
 
@@ -65,8 +85,9 @@ With `--format json`, `data` contains `number`, `head_sha`, `base_sha`, `finding
 (`path`/`kind` objects), `warnings` (strings), `digest`, `confirmation` and nullable `provenance_import`.
 The latter contains the upstream source, mappings, adaptation and addition paths, complete
 file count, verified-file count, manifest digest, comparison digest and declaration
-digest when the mode below is active. Reconstructed old sides also expose their
-`merge_base` SHA and bind it into the confirmation digest. This is inspection evidence,
+digest when the mode below is active. When scoped inspection or patch reconstruction
+resolves a merge base, the confirmation digest binds its SHA. Provenance summaries
+also expose it as `merge_base`. This is inspection evidence,
 not review admission. It uses the same complete comparison, metadata re-read
 and digest calculation as admission.
 
@@ -231,6 +252,11 @@ modes. Ordinary inspection reads 100-file metadata pages with patches removed,
 then requests a bounded single-file patch only when either the old or new path
 has a supported source extension. Missing source patches are reconstructed from
 verified immutable blobs using the same procedure as residual provenance patches.
+
+Scoped inspection of modified files reads verified UTF-8 blobs by immutable
+merge-base and head, even when the provider supplies a patch. Whole-file
+additions and removals can use their complete patches. The backend response
+ceiling also applies to these image reads.
 File metadata is rechecked before accepting each patch; the confirmation binds
 all enumerated file metadata, inspected patches and any resolved merge base.
 Unrelated assets consume neither the 4 MiB patch budget nor the 300-source-path

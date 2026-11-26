@@ -271,7 +271,46 @@ const BODY: &str = "## Test changes\n- tests/sample.rs | assertion-change | Repl
 
 struct ComparisonRunner {
     subjects: std::cell::RefCell<std::collections::VecDeque<serde_json::Value>>,
-    patch: String,
+    files: Vec<serde_json::Value>,
+    images: ordinary_tests::Images,
+}
+
+fn context() -> ProviderContext {
+    ProviderContext {
+        provider: crate::provider::Provider::GitHub,
+        host: "github.com".into(),
+        source: crate::provider::DetectionSource::Flag,
+        repo: Some("acme/widgets".into()),
+    }
+}
+
+impl ComparisonRunner {
+    fn new(patch: &str, subjects: [serde_json::Value; 2]) -> Self {
+        let mut files = ordinary_tests::files(patch);
+        let mut images = ordinary_tests::Images::default();
+        for file in &mut files {
+            if file["status"] != "modified" {
+                continue;
+            }
+            let Some(patch) = file["patch"].as_str() else {
+                continue;
+            };
+            let side = |prefix| {
+                patch
+                    .lines()
+                    .filter_map(|line| line.strip_prefix(prefix).or_else(|| line.strip_prefix(' ')))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            let (before, after) = (side('-'), side('+'));
+            images.add(file, &before, &after);
+        }
+        Self {
+            subjects: std::cell::RefCell::new(subjects.into()),
+            files,
+            images,
+        }
+    }
 }
 
 fn subject(head: &str, base: &str, body: &str) -> serde_json::Value {
@@ -281,16 +320,18 @@ fn subject(head: &str, base: &str, body: &str) -> serde_json::Value {
 impl BackendRunner for ComparisonRunner {
     fn run(&self, call: &BackendCall) -> Result<crate::backend::BackendSuccess, ForgeError> {
         let argv = call.plan_argv();
-        let files = ordinary_tests::files(&self.patch);
-        let stdout = if let Some(endpoint) = argv.iter().find(|s| s.contains("/files?")) {
-            ordinary_tests::page(&files, endpoint, &argv).to_string()
+        let endpoint = argv.iter().find(|s| s.starts_with("repos/")).unwrap();
+        let stdout = if endpoint.contains("/files?") {
+            ordinary_tests::page(&self.files, endpoint, &argv).to_string()
+        } else if let Some(response) = self.images.response(endpoint) {
+            response.to_string()
         } else {
             let mut subject = self
                 .subjects
                 .borrow_mut()
                 .pop_front()
                 .expect("unexpected metadata read");
-            subject["changed_files"] = serde_json::json!(files.len());
+            subject["changed_files"] = serde_json::json!(self.files.len());
             subject.to_string()
         };
         Ok(crate::backend::BackendSuccess {
@@ -306,17 +347,8 @@ fn admit(
     patch: &str,
     report: &str,
 ) -> Result<(), ForgeError> {
-    let runner = ComparisonRunner {
-        subjects: std::cell::RefCell::new([first, second].into()),
-        patch: patch.into(),
-    };
-    let ctx = crate::provider::ProviderContext {
-        provider: crate::provider::Provider::GitHub,
-        host: "github.com".into(),
-        source: crate::provider::DetectionSource::Flag,
-        repo: Some("acme/widgets".into()),
-    };
-    ensure(&runner, &ctx, 7, HEAD, "independent-reviewer", report)
+    let runner = ComparisonRunner::new(patch, [first, second]);
+    ensure(&runner, &context(), 7, HEAD, "independent-reviewer", report)
 }
 
 fn assertion_patch() -> String {
@@ -328,19 +360,11 @@ fn assertion_patch() -> String {
 }
 
 fn confirmation(patch: &str, base: &str, head: &str, body: &str) -> String {
-    let runner = ComparisonRunner {
-        subjects: std::cell::RefCell::new(
-            [subject(HEAD, BASE, body), subject(HEAD, BASE, body)].into(),
-        ),
-        patch: patch.into(),
-    };
-    let ctx = crate::provider::ProviderContext {
-        provider: crate::provider::Provider::GitHub,
-        host: "github.com".into(),
-        source: crate::provider::DetectionSource::Flag,
-        repo: Some("acme/widgets".into()),
-    };
-    let (_, patch, _) = comparison(&runner, &ctx, 7, HEAD).unwrap();
+    let runner = ComparisonRunner::new(
+        patch,
+        [subject(HEAD, BASE, body), subject(HEAD, BASE, body)],
+    );
+    let (_, patch, _) = comparison(&runner, &context(), 7, HEAD).unwrap();
     format!(
         "Test changes confirmed: {}",
         sha256_digest(format!("{base}\n{head}\n{patch}\n{}", declarations(body)).as_bytes())

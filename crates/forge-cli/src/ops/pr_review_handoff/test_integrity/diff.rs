@@ -6,7 +6,11 @@ use super::{ForgeError, incomplete, limit};
 
 mod cases;
 mod coverage;
+mod scopes;
 mod skip_calls;
+mod syntax;
+
+use syntax::Language;
 
 #[derive(Debug, serde::Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Finding {
@@ -25,21 +29,45 @@ struct File {
     after: Vec<String>,
 }
 
+#[cfg(test)]
 pub(crate) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
-    inspect(patch, |_| {})
+    detect_with_images(patch, |_| Ok(None))
+}
+
+pub(crate) fn scoped_source(path: &str) -> bool {
+    Language::of(path).has_scopes()
+}
+
+pub(super) fn detect_with_images(
+    patch: &str,
+    mut images: impl FnMut(&str) -> Result<Option<(String, String)>, ForgeError>,
+) -> Result<Vec<Finding>, ForgeError> {
+    let mut findings = BTreeSet::new();
+    inspect(patch, |file| {
+        let images = images(&file.new)?;
+        finish(file, images.as_ref(), &mut findings);
+        Ok(())
+    })?;
+    Ok(findings.into_iter().collect())
 }
 
 pub(crate) fn additive_coverage(patch: &str) -> Result<bool, ForgeError> {
     let mut all_additive = !patch.trim().is_empty();
-    let findings = inspect(patch, |file| {
+    let mut findings = BTreeSet::new();
+    inspect(patch, |file| {
         all_additive &= !file.change_is_non_additive && coverage::file_adds_coverage(file);
+        finish(file, None, &mut findings);
+        Ok(())
     })?;
     Ok(all_additive && findings.is_empty())
 }
 
-fn inspect(patch: &str, mut inspect_file: impl FnMut(&File)) -> Result<Vec<Finding>, ForgeError> {
+fn inspect(
+    patch: &str,
+    mut inspect_file: impl FnMut(&File) -> Result<(), ForgeError>,
+) -> Result<(), ForgeError> {
     if patch.trim().is_empty() {
-        return Ok(Vec::new());
+        return Ok(());
     }
     if patch.len() > 4 * 1024 * 1024 {
         return Err(limit("diff_bytes", "diff exceeds 4 MiB"));
@@ -47,7 +75,6 @@ fn inspect(patch: &str, mut inspect_file: impl FnMut(&File)) -> Result<Vec<Findi
     if !patch.starts_with("diff --git ") {
         return Err(incomplete());
     }
-    let mut findings = BTreeSet::new();
     let mut file = File::default();
     let mut remaining = (0usize, 0usize);
     let mut count = 0;
@@ -60,8 +87,7 @@ fn inspect(patch: &str, mut inspect_file: impl FnMut(&File)) -> Result<Vec<Findi
                 return Err(limit("path_bytes", "Git-quoted paths are unsupported"));
             }
             if count > 0 {
-                finish(&file, &mut findings);
-                inspect_file(&file);
+                inspect_file(&file)?;
             }
             let names = line
                 .strip_prefix("diff --git a/")
@@ -142,9 +168,7 @@ fn inspect(patch: &str, mut inspect_file: impl FnMut(&File)) -> Result<Vec<Findi
     if remaining != (0, 0) {
         return Err(incomplete());
     }
-    finish(&file, &mut findings);
-    inspect_file(&file);
-    Ok(findings.into_iter().collect())
+    inspect_file(&file)
 }
 
 fn path_name(path: &str, prefix: &str) -> Result<String, ForgeError> {
@@ -193,7 +217,7 @@ pub(crate) fn source(path: &str) -> bool {
         .is_some_and(|ext| SOURCE_EXTENSIONS.contains(&ext))
 }
 
-fn finish(file: &File, found: &mut BTreeSet<Finding>) {
+fn finish(file: &File, images: Option<&(String, String)>, found: &mut BTreeSet<Finding>) {
     let renamed_test =
         !file.deleted && file.old != file.new && source(&file.old) && test_path(&file.old);
     if renamed_test {
@@ -211,8 +235,20 @@ fn finish(file: &File, found: &mut BTreeSet<Finding>) {
         return;
     }
     let test = test_path(&file.old) || test_path(&file.new);
-    let before = signals(&file.before, test);
-    let after = signals(&file.after, test);
+    let old_language = Language::of(&file.old);
+    let new_language = Language::of(&file.new);
+    let before = signals(file.before.iter().map(String::as_str), old_language, test);
+    let after = signals(file.after.iter().map(String::as_str), new_language, test);
+    let full = images.map(|(before, after)| {
+        (
+            signals(before.lines(), old_language, test),
+            signals(after.lines(), new_language, test),
+        )
+    });
+    let (old_cases, new_cases, old_skips, new_skips) = match &full {
+        Some((old, new)) => (&old.0, &new.0, &old.2, &new.2),
+        None => (&before.0, &after.0, &before.2, &after.2),
+    };
     let mut add = |kind: String| {
         found.insert(Finding {
             path: path.clone(),
@@ -223,14 +259,14 @@ fn finish(file: &File, found: &mut BTreeSet<Finding>) {
         add("deleted-test".into());
     } else {
         // One row per removed test, so a declaration cannot cover its siblings.
-        for key in removed_keys(&before.0, &after.0) {
-            add(format!("deleted-test:{}", case_name(key)));
+        for key in removed_keys(old_cases, new_cases) {
+            add(format!("deleted-test:{key}"));
         }
     }
     if removed(&before.1, &after.1) {
         add("assertion-change".into());
     }
-    if removed(&after.2, &before.2) {
+    if removed(new_skips, old_skips) {
         add("new-skip".into());
     }
 }
@@ -246,157 +282,97 @@ fn removed(old: &Counts, new: &Counts) -> bool {
     removed_keys(old, new).next().is_some()
 }
 
-/// Count key for a non-JavaScript case. A one-line `#[test] fn name() {}` is
-/// keyed from its `fn` so attribute colons cannot merge siblings; `prefix` is
-/// the enclosing Rust module path.
-fn case_key(line: &str, compact: &str, prefix: &str) -> String {
-    let inline_fn = line
-        .starts_with("#[")
-        .then(|| {
-            line.match_indices("fn ")
-                .find(|(i, _)| line[..*i].ends_with(' '))
-        })
-        .flatten();
-    let compact_fn;
-    let source = match inline_fn {
-        Some((index, _)) => {
-            compact_fn = line[index..]
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect::<String>();
-            compact_fn.as_str()
-        }
-        None => compact,
-    };
-    // Python decorators can inject parameters without replacing the test.
-    // Compare Python declarations by name, as reported in deletion rows.
-    let name = if source.starts_with("deftest_") || source.starts_with("asyncdeftest_") {
-        source.split('(').next().unwrap_or(source)
-    } else {
-        source.split(['{', ':']).next().unwrap_or(source)
-    };
-    format!("{prefix}{name}")
-}
-
-/// Whitespace-free test label for a case key: the declared function name when
-/// the key starts with a compacted Rust, Python or Go declaration keyword,
-/// preceded by its Rust module path.
-fn case_name(key: &str) -> String {
-    // JavaScript titles may contain `::`; only Rust keys carry a module path.
-    if ["it(", "it.", "test(", "test."]
-        .iter()
-        .any(|call| key.starts_with(call))
-    {
-        return key.to_string();
-    }
-    let (path, rest) = key.split_at(key.rfind("::").map_or(0, |i| i + 2));
-    let rest = rest.strip_prefix("#[cfg(test)]").unwrap_or(rest);
-    let name = ["asyncfn", "pubfn", "fn", "asyncdef", "def", "func"]
-        .iter()
-        .find_map(|prefix| rest.strip_prefix(prefix));
-    match name {
-        Some(name) => format!("{path}{}", name.split(['(', '<']).next().unwrap_or(name)),
-        None => format!("{path}{rest}"),
-    }
-}
-
-fn signals(lines: &[String], test_path: bool) -> (Counts, Counts, Counts) {
-    let mut cases = Counts::new();
+fn signals<'a>(
+    lines: impl IntoIterator<Item = &'a str>,
+    language: Language,
+    test_path: bool,
+) -> (Counts, Counts, Counts) {
+    let mut tests = Counts::new();
     let mut assertions = Counts::new();
     let mut skips = Counts::new();
     let mut test_attribute = false;
     let mut assertion = String::new();
     let mut depth = 0i32;
-    let mut modules = cases::Modules::default();
+    let mut scopes = scopes::Scopes::default();
+    let mut lexical = syntax::LexicalState::default();
     let mut pending: Option<cases::Pending> = None;
     for raw in lines {
         if raw == cases::HUNK {
             if let Some(open) = pending.take() {
-                *cases.entry(open.untitled()).or_default() += 1;
+                *tests.entry(scopes.key(&open.untitled())).or_default() += 1;
             }
-            modules.reset();
+            scopes = scopes::Scopes::default();
+            lexical = syntax::LexicalState::default();
+            test_attribute = false;
             continue;
         }
-        let line = raw.trim();
-        if line.starts_with(['/', '*'])
-            || (line.starts_with('#') && !line.starts_with("#[") && !line.starts_with("#!["))
-        {
-            continue;
-        }
-        let compact: String = line.chars().filter(|c| !c.is_whitespace()).collect();
-        if compact.is_empty() {
-            continue;
-        }
-        let mut titled = false;
+        let masked = lexical.mask(raw, language);
+        let code = masked.trim();
+        let compact = scopes::compact(code);
+        let original = scopes::compact(raw);
+        let trimmed = raw.trim_start();
+        let comment = code.is_empty()
+            && if language == Language::Python {
+                trimmed.starts_with('#')
+            } else {
+                ["//", "/*", "*"]
+                    .iter()
+                    .any(|marker| trimmed.starts_with(marker))
+            };
+        let mut consumed = false;
         if let Some(open) = pending.take() {
-            match open.resume(&compact) {
-                cases::Step::Done(key) => {
-                    *cases.entry(key).or_default() += 1;
-                    titled = true;
-                }
-                cases::Step::Untitled(key) => *cases.entry(key).or_default() += 1,
-                cases::Step::Wait(open) => {
-                    pending = Some(open);
-                    titled = true;
-                }
-            }
-        }
-        let rust_test =
-            line.starts_with("#[") && (compact.contains("test]") || compact.contains("test("));
-        if rust_test || line.starts_with("@Test") {
-            test_attribute = true;
-        }
-        if compact.contains("#[cfg(test)]") {
-            test_attribute = true;
-        }
-        if test_attribute
-            && (compact.starts_with("mod") || compact.contains("]mod"))
-            && compact.ends_with(';')
-        {
-            *cases.entry(compact.clone()).or_default() += 1;
-            test_attribute = false;
-        }
-        let function =
-            line.starts_with("fn ") || line.starts_with("async fn ") || line.starts_with("pub fn ");
-        let case = (function && (test_path || test_attribute))
-            || (test_attribute && compact.contains('(') && compact.contains('{'))
-            || line.starts_with("def test_")
-            || line.starts_with("async def test_")
-            || line.starts_with("func Test")
-            || [
-                "it(",
-                "test(",
-                "it.skip(",
-                "test.skip(",
-                "it.only(",
-                "test.only(",
-                "it.each(",
-                "it.each`",
-                "test.each(",
-                "test.each`",
-            ]
-            .iter()
-            .any(|p| compact.starts_with(p));
-        if case && !titled {
-            match cases::javascript(&compact) {
-                Some(cases::Step::Wait(open)) => pending = Some(open),
-                Some(cases::Step::Done(key) | cases::Step::Untitled(key)) => {
-                    *cases.entry(key).or_default() += 1;
-                }
-                None => {
-                    let key = case_key(line, &compact, &modules.prefix());
-                    *cases.entry(key).or_default() += 1;
+            if original.is_empty() || comment {
+                pending = Some(open);
+            } else {
+                match open.resume(&original) {
+                    cases::Step::Done(key) => {
+                        *tests.entry(scopes.key(&key)).or_default() += 1;
+                        consumed = true;
+                    }
+                    cases::Step::Untitled(key) => *tests.entry(scopes.key(&key)).or_default() += 1,
+                    cases::Step::Wait(open) => {
+                        pending = Some(open);
+                        consumed = true;
+                    }
                 }
             }
-            test_attribute = false;
         }
-        modules.feed(line);
-        if !assertion.is_empty()
-            || compact.contains("assert")
-            || compact.contains("expect(")
-            || (test_path && compact.starts_with(".to"))
+        let (case_source, case_code) = scopes.enter(raw, &masked, language);
+        if !case_code.trim().is_empty() {
+            if language == Language::Python {
+                scopes.python_line(case_code);
+            }
+            if language == Language::JavaScript && !consumed {
+                let source = scopes::compact(case_source);
+                let code = scopes::compact(case_code);
+                if javascript_case(&code, &source) {
+                    match cases::javascript(&source) {
+                        Some(cases::Step::Wait(open)) => pending = Some(open),
+                        Some(cases::Step::Done(key) | cases::Step::Untitled(key)) => {
+                            *tests.entry(scopes.key(&key)).or_default() += 1;
+                        }
+                        None => {
+                            let key = source.split(['{', ':']).next().unwrap_or(&source);
+                            *tests.entry(scopes.key(key)).or_default() += 1;
+                        }
+                    }
+                }
+            } else if let Some(name) =
+                declaration(case_code.trim(), language, test_path, &mut test_attribute)
+            {
+                *tests.entry(scopes.key(&name)).or_default() += 1;
+            }
+        }
+        if language.has_scopes() && language != Language::Python {
+            scopes.finish_line(case_code);
+        }
+        if !comment
+            && (!assertion.is_empty()
+                || compact.contains("assert")
+                || compact.contains("expect(")
+                || (test_path && compact.starts_with(".to")))
         {
-            assertion.push_str(&compact);
+            assertion.push_str(&original);
             depth += compact
                 .chars()
                 .filter(|c| matches!(c, '(' | '[' | '{'))
@@ -412,33 +388,108 @@ fn signals(lines: &[String], test_path: bool) -> (Counts, Counts, Counts) {
                 depth = 0;
             }
         }
-        if skip_calls::contains(line)
-            || compact.contains("cfg(any())")
-            || (compact.contains("cfg_attr(") && compact.contains("ignore"))
-            || [
-                "#[ignore",
-                "pytest.mark.skip",
-                "pytest.mark.xfail",
-                "pytest.skip(",
-                "pytest.xfail(",
-                "unittest.skip",
-                ".skipTest(",
-                "unittest.expectedFailure",
-                "@Ignore",
-                "@Disabled",
-                ".Skip(",
-            ]
-            .iter()
-            .any(|p| compact.contains(p))
-        {
-            *skips.entry(compact).or_default() += 1;
+        if skip_marker(code, &compact, language) {
+            *skips.entry(original).or_default() += 1;
         }
     }
     if let Some(open) = pending {
-        *cases.entry(open.untitled()).or_default() += 1;
+        *tests.entry(scopes.key(&open.untitled())).or_default() += 1;
     }
     if !assertion.is_empty() {
         *assertions.entry(assertion).or_default() += 1;
     }
-    (cases, assertions, skips)
+    (tests, assertions, skips)
+}
+
+fn javascript_case(code: &str, original: &str) -> bool {
+    [
+        "it(",
+        "test(",
+        "it.skip(",
+        "test.skip(",
+        "it.only(",
+        "test.only(",
+        "it.each(",
+        "test.each(",
+    ]
+    .iter()
+    .any(|prefix| code.starts_with(prefix))
+        || (code.starts_with("it.each") && original.starts_with("it.each`"))
+        || (code.starts_with("test.each") && original.starts_with("test.each`"))
+}
+
+fn declaration(
+    code: &str,
+    language: Language,
+    test_path: bool,
+    test_attribute: &mut bool,
+) -> Option<String> {
+    match language {
+        Language::Rust => {
+            let (attribute, declaration) = scopes::rust_attributes(code);
+            *test_attribute |= attribute;
+            if declaration.is_empty() {
+                return None;
+            }
+            let attribute = std::mem::take(test_attribute);
+            let declaration = scopes::strip_rust_visibility(declaration);
+            if attribute && declaration.starts_with("mod ") && declaration.ends_with(';') {
+                return Some(scopes::compact(declaration));
+            }
+            let declaration = declaration.strip_prefix("async ").unwrap_or(declaration);
+            let name = declaration
+                .strip_prefix("fn ")
+                .and_then(scopes::identifier)?;
+            (attribute || test_path).then(|| name.to_string())
+        }
+        Language::Java => {
+            let (attribute, declaration) = scopes::java_annotations(code);
+            *test_attribute |= attribute;
+            if declaration.is_empty() {
+                return None;
+            }
+            let attribute = std::mem::take(test_attribute);
+            let (signature, _) = declaration.split_once('(')?;
+            let name = scopes::identifier(signature.split_whitespace().last()?)?;
+            attribute.then(|| name.to_string())
+        }
+        Language::Python => {
+            let declaration = code.strip_prefix("async ").unwrap_or(code);
+            let name = declaration
+                .strip_prefix("def ")
+                .and_then(scopes::identifier)?;
+            name.starts_with("test_").then(|| name.to_string())
+        }
+        Language::Go => {
+            let name = code.strip_prefix("func ").and_then(scopes::identifier)?;
+            name.starts_with("Test").then(|| name.to_string())
+        }
+        _ => None,
+    }
+}
+
+fn skip_marker(code: &str, compact: &str, language: Language) -> bool {
+    match language {
+        Language::Rust => {
+            (compact.starts_with("#[") || compact.starts_with("#!["))
+                && (compact.contains("cfg(any())")
+                    || compact.starts_with("#[ignore")
+                    || (compact.starts_with("#[cfg_attr(") && compact.contains("ignore")))
+        }
+        Language::Python => [
+            "pytest.mark.skip",
+            "pytest.mark.xfail",
+            "pytest.skip(",
+            "pytest.xfail(",
+            "unittest.skip",
+            ".skipTest(",
+            "unittest.expectedFailure",
+        ]
+        .iter()
+        .any(|marker| compact.contains(marker)),
+        Language::JavaScript => skip_calls::contains(code),
+        Language::Java => compact.starts_with("@Ignore") || compact.starts_with("@Disabled"),
+        Language::Go => compact.contains(".Skip("),
+        Language::Other => false,
+    }
 }

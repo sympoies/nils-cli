@@ -1,10 +1,14 @@
 //! Conservative boundaries for test coverage inserted in an existing file.
 use std::collections::BTreeSet;
 
-use super::{File, cases, signals};
+use super::{File, Language, cases, signals};
 
 pub(super) fn file_adds_coverage(file: &File) -> bool {
-    let (cases, assertions, _) = signals(&file.additions, false);
+    let (cases, assertions, _) = signals(
+        file.additions.iter().map(String::as_str),
+        Language::of(&file.new),
+        false,
+    );
     if file.old == "/dev/null" {
         return !cases.is_empty();
     }

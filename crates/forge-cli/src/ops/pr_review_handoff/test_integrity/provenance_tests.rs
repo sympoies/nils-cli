@@ -56,6 +56,7 @@ struct ImportFixture {
     calls: RefCell<Vec<String>>,
     truncate: bool,
     commit: String,
+    images: ordinary_tests::Images,
 }
 
 impl ImportFixture {
@@ -82,6 +83,7 @@ impl ImportFixture {
             calls: RefCell::new(Vec::new()),
             truncate: false,
             commit: UPSTREAM.into(),
+            images: ordinary_tests::Images::default(),
         }
     }
 
@@ -104,7 +106,9 @@ impl BackendRunner for ImportFixture {
         let argv = call.plan_argv();
         let endpoint = argv.iter().find(|arg| arg.starts_with("repos/")).unwrap();
         self.calls.borrow_mut().push(endpoint.clone());
-        let stdout = if endpoint.contains("/files?") {
+        let stdout = if let Some(response) = self.images.response(endpoint) {
+            response.to_string()
+        } else if endpoint.contains("/files?") {
             let page: usize = endpoint.rsplit("page=").next().unwrap().parse().unwrap();
             let size = if endpoint.contains("per_page=1&") {
                 1
@@ -322,6 +326,11 @@ fn existing_modified_and_deleted_tests_cannot_be_omitted_by_import_mappings() {
         "sha":BLOB, "additions":1, "deletions":1, "patch":"@@ -1 +1 @@\n-assert(value === 42);\n+assert(value);"});
     fixture.files[1] = json!({"filename":"vendor/tests/import1.test.ts", "status":"removed",
         "sha":BLOB, "additions":0, "deletions":1, "patch":"@@ -1 +0,0 @@\n-// shared test helper"});
+    fixture.images.add(
+        &mut fixture.files[0],
+        "assert(value === 42);",
+        "assert(value);",
+    );
     let (_, _, findings) = fixture.inspect().unwrap();
     assert_eq!(
         findings,

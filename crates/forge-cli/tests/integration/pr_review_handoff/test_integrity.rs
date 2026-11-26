@@ -24,11 +24,11 @@ fn write_files(stub: &StubEnv, files: &[Value]) {
         )
         .unwrap();
     }
-    for (index, file) in files
-        .iter()
-        .enumerate()
-        .filter(|(_, file)| file["filename"].as_str().unwrap().ends_with(".py"))
-    {
+    for (index, file) in files.iter().enumerate().filter(|(_, file)| {
+        file["filename"]
+            .as_str()
+            .is_some_and(|path| path.ends_with(".py") || path.ends_with(".go"))
+    }) {
         fs::write(
             stub.tempdir
                 .path()
@@ -41,10 +41,36 @@ fn write_files(stub: &StubEnv, files: &[Value]) {
 
 fn sample_files(stub: &StubEnv) {
     let patch = DIFF[DIFF.find("@@ ").unwrap()..].trim_end();
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use sha1::{Digest, Sha1};
+
+    let mut head = String::new();
+    for (name, prefix) in [("base", '-'), ("head", '+')] {
+        let source = patch
+            .lines()
+            .filter_map(|line| line.strip_prefix(prefix))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut hash = Sha1::new();
+        hash.update(format!("blob {}\0", source.len()));
+        hash.update(source.as_bytes());
+        let sha = format!("{:x}", hash.finalize());
+        let root = stub.tempdir.path();
+        fs::write(
+            root.join(format!("{name}-content.json")),
+            json!({"type":"file", "sha":sha, "size":source.len()}).to_string(),
+        )
+        .unwrap();
+        fs::write(root.join(format!("{sha}.json")),
+            json!({"sha":sha, "size": source.len(), "encoding":"base64", "content":STANDARD.encode(source)}).to_string()).unwrap();
+        if name == "head" {
+            head = sha;
+        }
+    }
     write_files(
         stub,
         &[
-            json!({"filename":"tests/test_sample.py", "status":"modified", "sha":HEAD,
+            json!({"filename":"tests/test_sample.py", "status":"modified", "sha":head,
         "additions":3, "deletions":2, "patch":patch}),
         ],
     );
@@ -353,4 +379,71 @@ fn confirmed_changes_pass_but_author_self_confirmation_does_not() {
         HEAD,
     );
     assert_refusal(&stale, 65, "test_changes_unconfirmed");
+}
+
+#[test]
+fn stale_and_retired_declarations_reach_each_warning_surface() {
+    let body = "## Test changes\n\n\
+        - api_test.go | deleted-test:TestRemoved | The replacement covers the removed behavior.\n\
+        - api_test.go | deleted-test | This legacy row used to cover the same removal.\n\
+        - api_test.go | assertion-change | This row describes an unchanged assertion.\n";
+    let fixture = |confirmation: &str| {
+        let stub = integrity_fixture(body, confirmation, "contributor");
+        write_files(
+            &stub,
+            &[json!({
+                "filename": "api_test.go", "status": "modified", "sha": HEAD,
+                "additions": 0, "deletions": 1,
+                "patch": "@@ -3 +2,0 @@\n-func TestRemoved(t *testing.T) {}"
+            })],
+        );
+        stub
+    };
+    let preview = |stub: &StubEnv, format: &str| {
+        run_forge_cli(
+            stub,
+            &[
+                "--provider",
+                "github",
+                "--repo",
+                "acme/widgets",
+                "--format",
+                format,
+                "pr",
+                "review-handoff",
+                "test-changes",
+                "7",
+                "--expected-head",
+                HEAD,
+            ],
+        )
+    };
+    let stub = fixture("");
+    let json = preview(&stub, "json");
+    assert_eq!(json.code, 0, "{} {}", json.stdout, json.stderr);
+    let envelope = parse_envelope(&json.stdout);
+    let warnings = envelope["data"]["warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 2, "{warnings:?}");
+    assert!(
+        warnings[0]
+            .as_str()
+            .unwrap()
+            .starts_with("Retired file-level form")
+    );
+    assert!(warnings[1].as_str().unwrap().contains("match no finding"));
+
+    let text = preview(&stub, "text");
+    assert_eq!(text.code, 0, "{} {}", text.stdout, text.stderr);
+    let confirmation = envelope["data"]["confirmation"].as_str().unwrap();
+    let admission = check(&fixture(confirmation), HEAD);
+    assert_eq!(
+        admission.code, 0,
+        "{} {}",
+        admission.stdout, admission.stderr
+    );
+    for warning in warnings {
+        let line = format!("warning: {}", warning.as_str().unwrap());
+        assert!(text.stdout.contains(&line), "{}", text.stdout);
+        assert!(admission.stderr.contains(&line), "{}", admission.stderr);
+    }
 }

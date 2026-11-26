@@ -49,6 +49,44 @@ pub(super) fn page(files: &[Value], endpoint: &str, argv: &[String]) -> Value {
     json!(batch)
 }
 
+/// Pinned content and blob responses for the small synthetic comparisons.
+#[derive(Default)]
+pub(super) struct Images(std::collections::BTreeMap<String, Value>);
+
+impl Images {
+    pub(super) fn add(&mut self, file: &mut Value, before: &str, after: &str) {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        use sha1::{Digest, Sha1};
+        for (commit, source) in [(MERGE_BASE, before), (HEAD, after)] {
+            let path = file["filename"].as_str().unwrap();
+            let mut hash = Sha1::new();
+            hash.update(format!("blob {}\0", source.len()));
+            hash.update(source);
+            let sha = format!("{:x}", hash.finalize());
+            self.0.insert(
+                format!("repos/acme/widgets/contents/{path}?ref={commit}"),
+                json!({"type":"file", "sha":sha, "size":source.len()}),
+            );
+            self.0.insert(
+                format!("repos/acme/widgets/git/blobs/{sha}"),
+                json!({"sha":sha, "size":source.len(), "encoding":"base64", "content":STANDARD.encode(source)}),
+            );
+            if commit == HEAD {
+                file["sha"] = json!(sha);
+            }
+        }
+    }
+
+    pub(super) fn response(&self, endpoint: &str) -> Option<Value> {
+        if endpoint == format!("repos/acme/widgets/compare/{BASE}...{HEAD}") && !self.0.is_empty() {
+            return Some(json!({"sha": MERGE_BASE}));
+        }
+        self.0.get(endpoint).cloned()
+    }
+}
+
+const MERGE_BASE: &str = "ffffffffffffffffffffffffffffffffffffffff";
+
 #[test]
 fn ordinary_binary_assets_are_metadata_only_and_inline_tests_remain_inspected() {
     let patch = format!(
