@@ -110,6 +110,13 @@ pub(crate) fn load(
 /// Find the last updated retained claim without a separate index. An exact
 /// timestamp tie does not give the patrol enough evidence to pick a claim.
 pub(crate) fn latest(context: &CliContext, record: &SessionRecord) -> Option<Claim> {
+    latest_with_modified(context, record).map(|(claim, _)| claim)
+}
+
+pub(crate) fn latest_with_modified(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Option<(Claim, std::time::SystemTime)> {
     let mut latest = None;
     for entry in std::fs::read_dir(session_dir(context, &record.id)).ok()? {
         let entry = entry.ok()?;
@@ -133,8 +140,8 @@ pub(crate) fn latest(context: &CliContext, record: &SessionRecord) -> Option<Cla
             _ => latest = Some((modified, Some(hash.to_owned()))),
         }
     }
-    let (_, hash) = latest?;
-    load_digest(context, record, &hash?)
+    let (modified, hash) = latest?;
+    load_digest(context, record, &hash?).map(|claim| (claim, modified))
 }
 
 fn load_digest(context: &CliContext, record: &SessionRecord, hash: &str) -> Option<Claim> {

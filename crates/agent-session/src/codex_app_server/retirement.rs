@@ -112,18 +112,16 @@ impl Requests {
         bootstrap: &mut FreshBootstrap,
         value: &Value,
     ) -> Result<MutationAuthorization, TuiMutationRejection> {
-        let authorization =
-            cancel_before_tui_mutation_detailed(context, record, bootstrap, value).await?;
         if !value
             .get("method")
             .and_then(Value::as_str)
             .is_some_and(requires_lease)
             || !runtime_is_supported(record)
         {
-            return Ok(authorization);
+            return cancel_before_tui_mutation_detailed(context, record, bootstrap, value).await;
         }
         let Some(key) = value.get("id").and_then(json_id_key) else {
-            return Ok(authorization);
+            return cancel_before_tui_mutation_detailed(context, record, bootstrap, value).await;
         };
         let fence = open_request_lock(context, record)
             .map_err(|_| TuiMutationRejection::TurnGateOpenFailed)?;
@@ -149,6 +147,11 @@ impl Requests {
         {
             return Err(TuiMutationRejection::TurnGateBusy);
         }
+        if crate::restart::ensure_not_fenced(context, record).is_err() {
+            return Err(TuiMutationRejection::TurnGateBusy);
+        }
+        let authorization =
+            cancel_before_tui_mutation_detailed(context, record, bootstrap, value).await?;
         self.0.insert(key, fence);
         Ok(authorization)
     }

@@ -209,5 +209,8 @@ esac
 mod claude;
 #[path = "start_resume_move/codex.rs"]
 mod codex;
+#[cfg(target_os = "linux")]
+#[path = "start_resume_move/stop.rs"]
+mod stop;
 #[path = "start_resume_move/support.rs"]
 mod support;

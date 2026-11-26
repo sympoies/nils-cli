@@ -537,6 +537,18 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+'--session=[Full managed source session ID]:SESSION:_default' \
+'--incarnation=[Exact source runtime incarnation UUID]:INCARNATION:_default' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
 (export)
 _arguments "${_arguments_options[@]}" : \
 '--session=[Managed source session ID]:SESSION:_default' \
@@ -2294,6 +2306,7 @@ _agent-session__subcmd__resume_commands() {
 _agent-session__subcmd__resume-move_commands() {
     local commands; commands=(
 'plan:Inspect the exact portable source history without stopping the source' \
+'stop:Gracefully stop an exact idle local source and retain it for export' \
 'export:Export a stopped source only when the complete move protocol is available' \
 'prepare:Inspect or reserve the local destination for an exact source plan' \
 'stage:Verify a source proof and the exact privately staged provider history' \
@@ -2337,6 +2350,11 @@ _agent-session__subcmd__resume-move__subcmd__stage_commands() {
 _agent-session__subcmd__resume-move__subcmd__status_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session resume-move status commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__resume-move__subcmd__stop_commands] )) ||
+_agent-session__subcmd__resume-move__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session resume-move stop commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__rules_commands] )) ||
 _agent-session__subcmd__rules_commands() {

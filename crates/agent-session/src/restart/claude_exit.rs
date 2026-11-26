@@ -162,9 +162,17 @@ fn option_label(row: &str) -> &str {
 pub(super) struct ExitDialogs {
     seen: Option<Dialog>,
     attempted: Option<Dialog>,
+    retain_feedback: bool,
 }
 
 impl ExitDialogs {
+    pub(super) fn retaining_source() -> Self {
+        Self {
+            retain_feedback: true,
+            ..Self::default()
+        }
+    }
+
     pub(super) fn last_dialog(&self) -> Option<Dialog> {
         self.seen
     }
@@ -193,6 +201,9 @@ impl ExitDialogs {
         let pane = capture_styled(tmux, &identity.pane_id, remaining(deadline))?;
         let dialog = Dialog::detect(&pane);
         self.seen = dialog.or(self.seen);
+        if self.retain_feedback && dialog == Some(Dialog::FeedbackDraft) {
+            return None;
+        }
         let verify_rollback = self.attempted == Some(Dialog::BackgroundWork) && dialog.is_none();
         if !verify_rollback
             && (dialog.is_none()

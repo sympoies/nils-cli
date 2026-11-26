@@ -253,7 +253,54 @@ pub(crate) fn unsubmitted_attempt(context: &CliContext, id: &str, tmux: &Path) -
             && key::latest(context, &current).as_ref() == Some(&claim))
         .then_some(())
     };
-    observe().is_some()
+    let record = load_session_record(context, id).ok();
+    let keyed = record
+        .as_ref()
+        .and_then(|record| key::latest_with_modified(context, record));
+    let unkeyed = record
+        .as_ref()
+        .and_then(|record| super::stranded::load_with_modified(context, record));
+    match (keyed, unkeyed) {
+        (Some((_, key_time)), Some((_, unkeyed_time))) if unkeyed_time > key_time => {
+            unkeyed_stranded(context, id, tmux)
+        }
+        (Some((_, key_time)), Some((_, unkeyed_time))) if key_time > unkeyed_time => {
+            observe().is_some()
+        }
+        (Some(_), Some(_)) => observe().is_some() || unkeyed_stranded(context, id, tmux),
+        (Some(_), None) => observe().is_some(),
+        (None, Some(_)) => unkeyed_stranded(context, id, tmux),
+        (None, None) => false,
+    }
+}
+
+fn unkeyed_stranded(context: &CliContext, id: &str, tmux: &Path) -> bool {
+    let Some(record) = load_session_record(context, id).ok() else {
+        return false;
+    };
+    let Some(evidence) = super::stranded::load(context, &record).filter(|e| e.active()) else {
+        return false;
+    };
+    let composer = Composer::Pasted {
+        input_sha256: evidence.input_sha256.clone(),
+        fence: None,
+        record_updated_at: evidence.record_updated_at.clone(),
+    };
+    let observed = composer_status(context, &record, tmux, &composer, None);
+    if observed == "absent" {
+        if let Ok(Some(_lock)) = crate::try_acquire_session_record_lock(context, id)
+            && let Ok(current) = load_session_record(context, id)
+            && super::stranded::load(context, &current).as_ref() == Some(&evidence)
+            && composer_status(context, &current, tmux, &composer, None) == "absent"
+        {
+            let _ = evidence.clear_if_current(context, &current);
+        }
+        return false;
+    }
+    load_session_record(context, id)
+        .ok()
+        .and_then(|current| super::stranded::load(context, &current))
+        .is_some_and(|current| current == evidence)
 }
 
 fn composer_status(

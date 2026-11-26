@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     Provider, Refusal, SignedRecord, Verifier, claude, cli_refusal, destination, source,
-    source_fence,
+    source_fence, stop,
 };
 
 const MAX_RECORD_BYTES: u64 =
@@ -37,6 +37,17 @@ enum Command {
         /// Configured destination signer identity.
         #[arg(long)]
         destination: String,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+    },
+    /// Gracefully stop an exact idle local source and retain it for export.
+    Stop {
+        /// Full managed source session ID.
+        #[arg(long)]
+        session: String,
+        /// Exact source runtime incarnation UUID.
+        #[arg(long)]
+        incarnation: String,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
     },
@@ -121,6 +132,7 @@ impl MoveArgs {
     pub(crate) fn format(&self) -> OutputFormat {
         match self.command {
             Command::Plan { format, .. }
+            | Command::Stop { format, .. }
             | Command::Export { format, .. }
             | Command::Recover { format, .. }
             | Command::Prepare { format, .. }
@@ -133,6 +145,7 @@ impl MoveArgs {
     pub(crate) fn name(&self) -> &'static str {
         match self.command {
             Command::Plan { .. } => "resume-move-plan",
+            Command::Stop { .. } => "resume-move-stop",
             Command::Export { .. } => "resume-move-export",
             Command::Recover { .. } => "resume-move-recover",
             Command::Prepare { .. } => "resume-move-prepare",
@@ -155,6 +168,19 @@ pub(crate) fn run(context: &CliContext, args: MoveArgs) -> i32 {
             match super::source::plan(context, &session, &incarnation, &destination) {
                 Ok(plan) => crate::render_single_success(COMMAND, format, &plan, |_| {
                     "source move plan available\n".into()
+                }),
+                Err(error) => crate::render_error(COMMAND, format, error),
+            }
+        }
+        Command::Stop {
+            session,
+            incarnation,
+            format,
+        } => {
+            const COMMAND: &str = "resume-move-stop";
+            match stop::stop(context, &session, &incarnation) {
+                Ok(receipt) => crate::render_single_success(COMMAND, format, &receipt, |_| {
+                    "source stopped and retained for export\n".into()
                 }),
                 Err(error) => crate::render_error(COMMAND, format, error),
             }

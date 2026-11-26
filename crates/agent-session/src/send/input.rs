@@ -18,7 +18,7 @@ pub(crate) fn send_input_unlocked(
         record,
         text,
         keys,
-        tmux_bin,
+        (tmux_bin, &format!("{}:0.0", record.tmux_session)),
         manual_input,
         paste_mode,
     )
@@ -30,15 +30,17 @@ pub(crate) fn send_input_unlocked(
 pub(crate) fn send_restart_exit_unlocked(
     context: &CliContext,
     record: &SessionRecord,
-    command: crate::restart::ProviderExitCommand,
+    command: crate::restart::ProviderExitCommand<'_>,
     tmux_bin: &Path,
 ) -> Result<(), CliError> {
+    let (text, pane) = command.into_parts();
+    let target = format!("{}:0.0", record.tmux_session);
     deliver_input_unlocked(
         context,
         record,
-        Some(command.text()),
+        Some(text),
         &[SpecialKey::Enter],
-        tmux_bin,
+        (tmux_bin, pane.unwrap_or(&target)),
         None,
         PasteMode::Raw,
     )
@@ -49,18 +51,17 @@ fn deliver_input_unlocked(
     record: &SessionRecord,
     text: Option<&str>,
     keys: &[SpecialKey],
-    tmux_bin: &Path,
+    (tmux_bin, target): (&Path, &str),
     mut manual_input: Option<&mut ManualInputSection>,
     paste_mode: PasteMode,
 ) -> Result<(), CliError> {
-    let target = format!("{}:0.0", record.tmux_session);
     let mut pasted_literal_text = false;
     if let Some(text) = text {
         if text_is_bare_newline(text) {
             if let Some(section) = manual_input.as_deref_mut() {
                 section.arm(context, record)?;
             }
-            send_tmux_key(tmux_bin, &target, SpecialKey::Enter)?;
+            send_tmux_key(tmux_bin, target, SpecialKey::Enter)?;
         } else {
             let nonce = uuid::Uuid::new_v4();
             let buffer_name = format!("{}-send-{nonce}", record.id);
@@ -69,7 +70,7 @@ fn deliver_input_unlocked(
             let result = load_and_paste_buffer_with_timeout(
                 tmux_bin,
                 &buffer_name,
-                &target,
+                target,
                 &temp,
                 PANE_INPUT_COMMAND_TIMEOUT,
                 paste_mode,
@@ -88,7 +89,7 @@ fn deliver_input_unlocked(
         {
             section.arm(context, record)?;
         }
-        send_tmux_key(tmux_bin, &target, *key)?;
+        send_tmux_key(tmux_bin, target, *key)?;
     }
     Ok(())
 }

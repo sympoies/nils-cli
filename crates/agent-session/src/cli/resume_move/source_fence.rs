@@ -95,27 +95,33 @@ pub(super) fn export(
     let (records, _sources) =
         start_resume::matching_sources(context, agent, &binding.provider_session_id, None)?;
     let unknown = || start_resume::refusal("resume-source-unknown");
-    let selected_record = records
-        .iter()
-        .find(|record| record.id == request.session)
-        .ok_or_else(unknown)?;
-    if selected_record.runtime.as_ref().is_none_or(|runtime| {
-        runtime.launch_id != request.incarnation
-            || runtime.generation != selected.plan.source_generation
-    }) {
-        return Err(cli_refusal(Refusal::SessionMismatch));
-    }
+    let mut selected_identity = None;
     for record in &records {
-        start_resume::prove_stopped(context, record, tmux)?;
-        let (_, account, revision, root) = source::binding(record)?;
-        if account != binding.account
-            || (record.id == selected_record.id
-                && revision != selected.plan.account_binding_revision)
+        let verified = super::stop::VerifiedStoppedSource::observe(context, record, tmux)?;
+        let identity = verified.identity;
+        if identity.provider != binding.provider
+            || identity.provider_session_id != binding.provider_session_id
         {
+            return Err(cli_refusal(Refusal::SessionMismatch));
+        }
+        if identity.account != binding.account {
             return Err(cli_refusal(Refusal::AccountMismatch));
         }
-        if fs::canonicalize(root).ok().as_deref() != Some(selected.provider_root.as_path()) {
+        if fs::canonicalize(&identity.provider_root).ok().as_deref()
+            != Some(selected.provider_root.as_path())
+        {
             return Err(unknown());
+        }
+        if identity.session_id == request.session {
+            if identity.session_incarnation != request.incarnation
+                || identity.session_generation != selected.plan.source_generation
+            {
+                return Err(cli_refusal(Refusal::SessionMismatch));
+            }
+            if identity.account_binding_revision != selected.plan.account_binding_revision {
+                return Err(cli_refusal(Refusal::AccountMismatch));
+            }
+            selected_identity = Some(identity);
         }
         let cwd = crate::resolve_cwd(Some(Path::new(&record.cwd))).map_err(|_| unknown())?;
         if sha256(cwd.as_os_str().as_encoded_bytes()) != selected.plan.source_checkout_sha256 {
@@ -123,6 +129,7 @@ pub(super) fn export(
         }
     }
 
+    let identity = selected_identity.ok_or_else(unknown)?;
     let history = read_snapshot(binding, &selected)?;
     let issued_at = jiff::Timestamp::now().as_second();
     let expires_at = ticket.record().expires_at;
@@ -131,8 +138,8 @@ pub(super) fn export(
         schema_version: STOP_PROOF_SCHEMA.into(),
         ticket_sha256: ticket.sha256().into(),
         binding: binding.clone(),
-        source_generation: selected.plan.source_generation,
-        account_binding_revision: selected.plan.account_binding_revision,
+        source_generation: identity.session_generation,
+        account_binding_revision: identity.account_binding_revision,
         source_checkout_sha256: selected.plan.source_checkout_sha256,
         stopped: true,
         issued_at,
