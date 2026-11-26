@@ -17,28 +17,28 @@ _remote__cli() {
                 cmd="remote__cli"
                 ;;
             remote__cli,completion)
-                cmd="remote__cli__subcmd__completion"
+                cmd="remote__cli__completion"
                 ;;
             remote__cli,exec)
-                cmd="remote__cli__subcmd__exec"
+                cmd="remote__cli__exec"
                 ;;
             remote__cli,help)
-                cmd="remote__cli__subcmd__help"
+                cmd="remote__cli__help"
                 ;;
             remote__cli,shell)
-                cmd="remote__cli__subcmd__shell"
+                cmd="remote__cli__shell"
                 ;;
-            remote__cli__subcmd__help,completion)
-                cmd="remote__cli__subcmd__help__subcmd__completion"
+            remote__cli__help,completion)
+                cmd="remote__cli__help__completion"
                 ;;
-            remote__cli__subcmd__help,exec)
-                cmd="remote__cli__subcmd__help__subcmd__exec"
+            remote__cli__help,exec)
+                cmd="remote__cli__help__exec"
                 ;;
-            remote__cli__subcmd__help,help)
-                cmd="remote__cli__subcmd__help__subcmd__help"
+            remote__cli__help,help)
+                cmd="remote__cli__help__help"
                 ;;
-            remote__cli__subcmd__help,shell)
-                cmd="remote__cli__subcmd__help__subcmd__shell"
+            remote__cli__help,shell)
+                cmd="remote__cli__help__shell"
                 ;;
             *)
                 ;;
@@ -64,7 +64,7 @@ _remote__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        remote__subcmd__cli__subcmd__completion)
+        remote__cli__completion)
             opts="-h --format --help bash zsh"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -82,7 +82,7 @@ _remote__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        remote__subcmd__cli__subcmd__exec)
+        remote__cli__exec)
             opts="-h --cwd --sudo --timeout --connect-timeout --shell --sudo-user --stdin-file --format --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -135,7 +135,7 @@ _remote__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        remote__subcmd__cli__subcmd__help)
+        remote__cli__help)
             opts="exec shell completion help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -149,7 +149,7 @@ _remote__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        remote__subcmd__cli__subcmd__help__subcmd__completion)
+        remote__cli__help__completion)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -163,7 +163,7 @@ _remote__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        remote__subcmd__cli__subcmd__help__subcmd__exec)
+        remote__cli__help__exec)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -177,7 +177,7 @@ _remote__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        remote__subcmd__cli__subcmd__help__subcmd__help)
+        remote__cli__help__help)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -191,7 +191,7 @@ _remote__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        remote__subcmd__cli__subcmd__help__subcmd__shell)
+        remote__cli__help__shell)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -205,7 +205,7 @@ _remote__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        remote__subcmd__cli__subcmd__shell)
+        remote__cli__shell)
             opts="-h --cwd --sudo --timeout --connect-timeout --shell --script-file --format --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

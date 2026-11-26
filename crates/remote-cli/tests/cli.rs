@@ -339,6 +339,27 @@ fn help_and_exit_matrix_cover_usage_input_and_missing_transport() {
         result(&usage, 64, "cli.remote-cli.error.v1")["error"]["code"],
         "parse-error"
     );
+    let invalid = fixture
+        .command()
+        .args([
+            "exec",
+            "fixture.invalid",
+            "--format",
+            "json",
+            "--connect-timeout",
+            "fixture-confidential-value",
+            "--",
+            "true",
+        ])
+        .output()
+        .unwrap();
+    result(&invalid, 64, "cli.remote-cli.error.v1");
+    assert!(
+        !std::str::from_utf8(&invalid.stdout)
+            .unwrap()
+            .contains("fixture-confidential-value")
+    );
+
     let input = fixture
         .command()
         .args([

@@ -308,13 +308,11 @@ fn parse() -> Cli {
     } else {
         "parse-error"
     };
-    let message = err.to_string();
-    let summary = message.lines().next().unwrap_or("Invalid arguments");
     std::process::exit(emit_parse_error(
         BINARY,
         format,
         code,
-        summary.strip_prefix("error: ").unwrap_or(summary),
+        "Invalid remote-cli arguments. See --help.",
     ));
 }
 
@@ -350,8 +348,20 @@ fn main() {
                 CompletionShell::Bash => Shell::Bash,
                 CompletionShell::Zsh => Shell::Zsh,
             };
-            clap_complete::generate(shell, &mut Cli::command(), BINARY, &mut io::stdout().lock());
-            Ok(exit::SUCCESS)
+            let mut stdout = io::stdout().lock();
+            let mut script = Vec::new();
+            clap_complete::generate(shell, &mut Cli::command(), BINARY, &mut script);
+            if shell == Shell::Bash {
+                // clap_complete 4.6.12 puts the subcommand separator in
+                // hyphenated binary names in case labels but not dispatch.
+                let script = String::from_utf8(script).map_err(io::Error::other);
+                script.and_then(|script| {
+                    stdout.write_all(script.replace("__subcmd__", "__").as_bytes())
+                })
+            } else {
+                stdout.write_all(&script)
+            }
+            .map(|()| exit::SUCCESS)
         }
     };
     std::process::exit(result.unwrap_or(exit::RUNTIME));
