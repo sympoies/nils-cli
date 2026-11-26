@@ -344,8 +344,10 @@ terminal binding and record.
 `occupied` is a text-free signal for the latest retained pre-Enter attempt
 when the same runtime's composer is observably nonempty. Callers can also
 read `unsubmitted_attempt: true` from live board and JSON list rows without
-the key. The signal also flags a possibly stranded paste when the composer cannot be observed. Recovery requires the exact input
-proof and detached pane fence.
+the key. The signal also flags a possibly stranded paste when the composer cannot be observed.
+Unkeyed guarded sends and Claude structured prompts retain a content-free, runtime-bound signal as well;
+it clears when the composer is observed empty or a later send is confirmed. This signal does not
+authorize a retry or recovery. Keyed recovery requires the exact input proof and detached pane fence.
 
 `absent` means the attempt did not paste or the composer is observably empty.
 Different supplied input or an unobservable layout yields `unknown` composer

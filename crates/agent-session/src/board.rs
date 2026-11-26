@@ -91,15 +91,23 @@ pub(crate) fn list_records<'a>(
     views: &'a [SessionView],
     context: &CliContext,
 ) -> Vec<ListRecord<'a>> {
-    let machine = machine_identity(None, context);
     let tmux = crate::resolve_tmux_bin(None);
+    list_records_with_tmux(views, context, &tmux)
+}
+
+pub(crate) fn list_records_with_tmux<'a>(
+    views: &'a [SessionView],
+    context: &CliContext,
+    tmux: &Path,
+) -> Vec<ListRecord<'a>> {
+    let machine = machine_identity(None, context);
     views
         .iter()
         .map(|view| ListRecord {
             view,
             machine: machine.clone(),
             unsubmitted_attempt: view.status == "running"
-                && crate::send::attempt::unsubmitted_attempt(context, &view.id, &tmux),
+                && crate::send::attempt::unsubmitted_attempt(context, &view.id, tmux),
         })
         .collect()
 }

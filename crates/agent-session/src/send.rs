@@ -4,6 +4,7 @@ pub(crate) mod claude_notice;
 pub(crate) mod codex_notice;
 pub(crate) mod daemon_notice;
 pub(crate) mod input;
+pub(crate) mod stranded;
 use crate::serve::prompt_receipts::reply_delivery;
 
 mod native;
@@ -659,6 +660,7 @@ fn guarded(
         None => None,
     };
     let mut delivery = send_guard::key::Attempt::default();
+    let mut stranded = None;
     if let Some(text) = literal {
         let recovery_fence = if args.guards.idempotency_key.is_some()
             && args.guards.require_empty_composer
@@ -712,12 +714,25 @@ fn guarded(
                         stopped: admission.stopped_idle.borrow().is_some(),
                     },
                 )?;
+                if args.guards.require_empty_composer
+                    && let Some(previous) = stranded::load(context, &record).filter(|e| e.active())
+                {
+                    previous.clear_if_current(context, &record)?;
+                }
+                if args.guards.idempotency_key.is_none() && args.keys == [SpecialKey::Enter] {
+                    stranded = Some(stranded::begin(context, &record, text)?);
+                }
                 delivery.composer(send_guard::key::Composer::Unknown);
                 Ok(permission)
             },
         );
         let _ = fs::remove_file(temp);
         delivered?;
+        if let Some(evidence) = stranded.as_mut()
+            && let Err(error) = evidence.pasted(context, &record)
+        {
+            return Err(admission.report_owned_input(error, text, false, None));
+        }
         if delivery.is_keyed()
             && !text.trim().is_empty()
             && !(record.agent == "claude" && text.ends_with(' '))
@@ -865,6 +880,16 @@ fn guarded(
             observed_paste,
             owned_placeholder.as_deref(),
         ));
+    }
+    if let Some(evidence) = stranded.as_mut()
+        && submission.is_some_and(|report| {
+            matches!(
+                report.outcome,
+                send_submit::SubmitOutcome::Submitted | send_submit::SubmitOutcome::Queued
+            )
+        })
+    {
+        evidence.submitted(context, &record)?;
     }
     Ok(SendResult {
         id: record.id,
