@@ -320,3 +320,307 @@ esac
     assert_eq!(value["error"]["code"], "security_read_incomplete");
     assert!(value.get("data").is_none());
 }
+
+#[test]
+fn security_code_scanning_dismiss_dry_run_describes_patch() {
+    let stub = StubEnv::new().gh_stub("#!/bin/sh\necho unexpected-backend >&2\nexit 97\n");
+    let comment = stub.tempdir.path().join("comment.txt");
+    std::fs::write(&comment, "False positive after review").unwrap();
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "security",
+            "alerts",
+            "dismiss",
+            "7",
+            "--reason",
+            "false-positive",
+            "--comment-file",
+            comment.to_str().unwrap(),
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widget",
+            "--format",
+            "json",
+            "--dry-run",
+        ],
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    let plan = parse_envelope(&out.stdout)["data"]["plan"].to_string();
+    assert!(plan.contains("PATCH"));
+    assert!(plan.contains("repos/acme/widget/code-scanning/alerts/7"));
+    assert!(plan.contains("false positive"));
+}
+
+#[test]
+fn security_code_scanning_transitions_send_exact_requests() {
+    for (command, flags, expected, response_state) in [
+        (
+            "dismiss",
+            vec!["--reason", "wont-fix"],
+            "-f state=dismissed -f dismissed_reason=won't fix -f dismissed_comment=Reviewed",
+            "dismissed",
+        ),
+        (
+            "dismiss",
+            vec!["--reason", "false-positive"],
+            "-f state=dismissed -f dismissed_reason=false positive -f dismissed_comment=Reviewed",
+            "dismissed",
+        ),
+        (
+            "dismiss",
+            vec!["--reason", "used-in-tests"],
+            "-f state=dismissed -f dismissed_reason=used in tests -f dismissed_comment=Reviewed",
+            "dismissed",
+        ),
+        (
+            "dismiss",
+            vec!["--reason", "mitigated"],
+            "-f state=dismissed -f dismissed_reason=mitigated -f dismissed_comment=Reviewed",
+            "dismissed",
+        ),
+        ("reopen", vec![], "-f state=open", "open"),
+    ] {
+        let script = format!(
+            "#!/bin/sh\n[ \"$*\" = \"api -X PATCH repos/acme/widget/code-scanning/alerts/7 {expected}\" ] || {{ echo unexpected-request >&2; exit 97; }}\nprintf '%s' '{{\"number\":7,\"state\":\"{response_state}\"}}'\n"
+        );
+        let stub = StubEnv::new().gh_stub(&script);
+        let comment = stub.tempdir.path().join("comment");
+        std::fs::write(&comment, "Reviewed").unwrap();
+        let mut argv = vec![
+            "security",
+            "alerts",
+            command,
+            "7",
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widget",
+            "--format",
+            "json",
+        ];
+        argv.extend(flags);
+        if command == "dismiss" {
+            argv.extend(["--comment-file", comment.to_str().unwrap()]);
+        }
+        let out = run_forge_cli(&stub, &argv);
+        assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+        let value = parse_envelope(&out.stdout);
+        assert_eq!(value["data"]["state"], response_state);
+        assert_eq!(value["data"]["number"], 7);
+    }
+}
+
+#[test]
+fn security_code_scanning_invalid_comment_and_provider_errors_are_actionable() {
+    let stub = StubEnv::new().gh_stub("#!/bin/sh\necho unexpected >&2\nexit 97\n");
+    let comment = stub.tempdir.path().join("comment");
+    std::fs::write(&comment, " \n").unwrap();
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "security",
+            "alerts",
+            "dismiss",
+            "7",
+            "--reason",
+            "false-positive",
+            "--comment-file",
+            comment.to_str().unwrap(),
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widget",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "security_comment_invalid"
+    );
+    for (status, code) in [
+        (403, "security_permission_denied"),
+        (404, "security_alert_not_found"),
+    ] {
+        let stub =
+            StubEnv::new().gh_stub(&format!("#!/bin/sh\necho 'HTTP {status}' >&2\nexit 1\n"));
+        let out = run_forge_cli(
+            &stub,
+            &[
+                "security",
+                "alerts",
+                "reopen",
+                "7",
+                "--provider",
+                "github",
+                "--repo",
+                "acme/widget",
+                "--format",
+                "json",
+            ],
+        );
+        assert_eq!(parse_envelope(&out.stdout)["error"]["code"], code);
+    }
+}
+
+#[test]
+fn security_code_scanning_dismiss_requires_inputs_before_any_request() {
+    let stub = StubEnv::new().gh_stub("#!/bin/sh\necho unexpected >&2\nexit 97\n");
+    for extra in [
+        vec![],
+        vec!["--reason", "bogus"],
+        vec!["--reason", "false-positive"],
+    ] {
+        let mut args = vec![
+            "security",
+            "alerts",
+            "dismiss",
+            "7",
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widget",
+            "--format",
+            "json",
+        ];
+        args.extend(extra);
+        let out = run_forge_cli(&stub, &args);
+        assert_ne!(out.code, 0);
+        assert!(!out.stderr.contains("unexpected"));
+    }
+}
+
+#[test]
+fn security_code_scanning_mutation_uses_write_identity() {
+    let stub = StubEnv::new()
+        .gh_stub(
+            r#"#!/bin/sh
+case "$1:$2" in api:user) printf '{"login":"account-a"}'; exit 0;; auth:token) exit 97;; esac
+[ "$GH_TOKEN" = "$FIXTURE_ACCOUNT_A_CREDENTIAL" ] && [ -n "$GH_TOKEN" ] || exit 97
+printf '{"number":7,"state":"open"}'
+"#,
+        )
+        .env("FORGE_IDENTITY_PRINCIPAL", "contributor")
+        .env("FIXTURE_ACCOUNT_A_CREDENTIAL", "fixture-token");
+    let config = stub.tempdir.path().join("xdg-config/forge-cli");
+    std::fs::create_dir_all(&config).unwrap();
+    let policy = include_str!("../../../nils-common/tests/fixtures/identity/policy.toml")
+        .replace("github.com/sandbox", "github.com/acme");
+    std::fs::write(config.join("identity.toml"), policy).unwrap();
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "security",
+            "alerts",
+            "reopen",
+            "7",
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widget",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    let audit = std::fs::read_to_string(
+        stub.tempdir
+            .path()
+            .join("xdg-state/forge-cli/identity-audit.jsonl"),
+    )
+    .unwrap();
+    assert!(audit.lines().all(|line| {
+        let row: Value = serde_json::from_str(line).unwrap();
+        row["profile_id"] == "account-a"
+            && row["target"]["repo"] == "acme/widget"
+            && row["operation"] == "api_write"
+    }));
+}
+
+#[test]
+fn security_code_scanning_reopen_dry_run_describes_patch_without_calling_provider() {
+    let stub = StubEnv::new().gh_stub("#!/bin/sh\necho unexpected-backend >&2\nexit 97\n");
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "security",
+            "alerts",
+            "reopen",
+            "7",
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widget",
+            "--format",
+            "json",
+            "--dry-run",
+        ],
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    let plan = parse_envelope(&out.stdout)["data"]["plan"].to_string();
+    assert!(plan.contains("PATCH"));
+    assert!(plan.contains("repos/acme/widget/code-scanning/alerts/7"));
+    assert!(plan.contains("state=open"));
+    assert!(!plan.contains("dismissed_reason"));
+}
+
+#[test]
+fn security_code_scanning_preserves_typed_backend_errors() {
+    for (message, code) in [
+        ("API rate limit exceeded (HTTP 403)", "backend_rate_limited"),
+        ("invalid token (HTTP 401)", "backend_unauthenticated"),
+    ] {
+        let stub = StubEnv::new().gh_stub(&format!("#!/bin/sh\necho '{message}' >&2\nexit 1\n"));
+        let out = run_forge_cli(
+            &stub,
+            &[
+                "security",
+                "alerts",
+                "reopen",
+                "7",
+                "--provider",
+                "github",
+                "--repo",
+                "acme/widget",
+                "--format",
+                "json",
+            ],
+        );
+        assert_eq!(parse_envelope(&out.stdout)["error"]["code"], code);
+    }
+}
+
+#[test]
+fn security_code_scanning_rejects_unsafe_or_oversized_comment_before_request() {
+    let stub = StubEnv::new().gh_stub("#!/bin/sh\necho unexpected >&2\nexit 97\n");
+    let comment = stub.tempdir.path().join("comment");
+    for text in [
+        "x".repeat(65537),
+        "/home/example/project/file.txt".to_string(),
+    ] {
+        std::fs::write(&comment, text).unwrap();
+        let out = run_forge_cli(
+            &stub,
+            &[
+                "security",
+                "alerts",
+                "dismiss",
+                "7",
+                "--reason",
+                "false-positive",
+                "--comment-file",
+                comment.to_str().unwrap(),
+                "--provider",
+                "github",
+                "--repo",
+                "acme/widget",
+                "--format",
+                "json",
+            ],
+        );
+        assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+        assert!(!out.stderr.contains("unexpected"));
+    }
+}

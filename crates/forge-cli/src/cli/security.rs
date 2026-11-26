@@ -24,6 +24,10 @@ pub enum SecurityAlertsCommand {
     List(SecurityAlertListArgs),
     /// View code-scanning evidence for an exact ref and commit.
     View(SecurityAlertViewArgs),
+    /// Dismiss a code-scanning alert.
+    Dismiss(SecurityAlertDismissArgs),
+    /// Reopen a code-scanning alert.
+    Reopen(SecurityAlertReopenArgs),
 }
 #[derive(Args, Debug)]
 pub struct SecuritySettingsArgs {
@@ -88,4 +92,40 @@ fn parse_commit(value: &str) -> Result<String, String> {
     } else {
         Err("expected a full 40-character commit SHA".into())
     }
+}
+
+#[derive(Args, Debug)]
+pub struct SecurityAlertDismissArgs {
+    /// Code-scanning alert number.
+    #[arg(value_parser = clap::value_parser!(u64).range(1..))]
+    pub number: u64,
+    /// GitHub dismissal reason.
+    #[arg(long, value_enum)]
+    pub reason: SecurityDismissReason,
+    /// File containing the required dismissal comment.
+    #[arg(long)]
+    pub comment_file: std::path::PathBuf,
+}
+#[derive(ValueEnum, Debug, Clone, Copy)]
+pub enum SecurityDismissReason {
+    FalsePositive,
+    WontFix,
+    UsedInTests,
+    Mitigated,
+}
+impl SecurityDismissReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FalsePositive => "false positive",
+            Self::WontFix => "won't fix",
+            Self::UsedInTests => "used in tests",
+            Self::Mitigated => "mitigated",
+        }
+    }
+}
+#[derive(Args, Debug)]
+pub struct SecurityAlertReopenArgs {
+    /// Code-scanning alert number.
+    #[arg(value_parser = clap::value_parser!(u64).range(1..))]
+    pub number: u64,
 }

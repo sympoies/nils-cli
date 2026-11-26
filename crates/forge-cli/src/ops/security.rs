@@ -1,6 +1,7 @@
 //! GitHub security metadata reads. Alert output selects fields explicitly so
 //! secret-scanning findings never serialize scanned secret values.
 mod code_scanning;
+mod mutation;
 
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use serde::Serialize;
@@ -62,7 +63,7 @@ pub fn run(
     if ctx.provider != Provider::GitHub {
         return Err(ForgeError::provider_unsupported(
             schema(),
-            "security reads are GitHub-only",
+            "security operations are GitHub-only",
             None,
         ));
     }
@@ -70,13 +71,19 @@ pub fn run(
         ForgeError::validation(
             schema(),
             "repo_required",
-            "security reads require --repo owner/repo or a detected remote",
+            "security operations require --repo owner/repo or a detected remote",
             None,
         )
     })?;
     match command {
         SecurityCommand::Alerts(args) => match args.command {
             SecurityAlertsCommand::List(args) => alerts(&ctx, repo, global, args, format),
+            SecurityAlertsCommand::Dismiss(args) => {
+                mutation::dismiss(&ctx, repo, global, args, format)
+            }
+            SecurityAlertsCommand::Reopen(args) => {
+                mutation::reopen(&ctx, repo, global, args, format)
+            }
             SecurityAlertsCommand::View(args) => {
                 code_scanning::view(&ctx, repo, global, args, format)
             }
