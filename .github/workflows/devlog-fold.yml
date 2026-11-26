@@ -161,7 +161,7 @@ jobs:
           script: |
             const fs = require("node:fs");
             const dir = process.env.FOLD_DIR;
-            const { publishReleaseFold, tracker } = require("./.github/scripts/devlog-fold-release.cjs");
+            const { tracker } = require("./.github/scripts/devlog-fold-release.cjs");
             const { admitReleaseFold } = require("./.github/scripts/devlog-fold-admission.cjs");
             const note = tracker({ context, core, file: dir + "/result.json" });
             const release = JSON.parse(fs.readFileSync(dir + "/release.json", "utf8"));
@@ -170,8 +170,7 @@ jobs:
             if (!app || !BOT_TOKEN) throw new Error("Publication requires the bot App");
             const options = { github, writer: getOctokit(BOT_TOKEN), repo: context.repo,
               app, release, root: process.cwd(), env, receipt, note, preparationRunId: Number(PREPARATION_RUN) };
-            const candidate = await publishReleaseFold(options);
-            await admitReleaseFold({ ...options, candidate });
+            await admitReleaseFold(options);
 
       - name: Retain release fold result
         if: always() && github.ref_type == 'tag'

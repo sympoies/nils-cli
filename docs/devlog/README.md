@@ -74,12 +74,16 @@ publication date or later remain pending.
 
 The release run stores its preparation as the
 `devlog-fold-preparation-<release-id>` artifact before creating a ref or PR.
-A rerun or governed recovery run for the same publication reuses that exact
-base and signed head or the recorded empty result. An empty fold creates no
-PR. A conflicting ref or PR on that release branch requires steward
-reconciliation. Publication uses one concurrency group. Dry runs use their
-own group. Generated PRs leave `Test changes` empty and describe the fold
-validation under `Test plan`.
+A rerun or governed recovery run for the same publication keeps that artifact
+as proof of the original preparation. If `main` advances before enqueue,
+admission regenerates from current protected `main` with the same release
+cutoff. It verifies the complete fold and App signature again and requires
+fresh CI for the replacement head. An empty fold creates no PR. If a
+never-queued App PR becomes empty because the entries were already folded,
+the workflow closes it without enqueueing. A conflicting ref or PR on the
+release branch still requires steward reconciliation. Publication uses one
+concurrency group. Dry runs use their own group. Generated PRs leave
+`Test changes` empty and describe the fold validation under `Test plan`.
 
 See [Devlog fold review admission and recovery](../runbooks/delivery-and-releases.md#devlog-fold-review-admission-and-recovery)
 for queue checks, receipts and intervention. To prepare a backlog fold,
@@ -112,8 +116,8 @@ commit), replays the retired baseline fragments with `devlog fold`, restores
 retained fragments and regenerates the index, then compares the complete log
 byte for byte. It admits only exact transfers and generated index changes,
 including when review crosses midnight. Arbitrary history edits and added or
-modified fragments in a fold are rejected. If a concurrent fold changes the
-base, prepare again from the new base before review.
+modified fragments in a fold are rejected. For a manual fold, prepare again
+from the new base before review if a concurrent fold changes it.
 
 The dedicated PR uses normal protected-branch checks and the squash merge
 queue. Release preparation keeps its version-only patch contract. Pending
