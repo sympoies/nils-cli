@@ -671,7 +671,7 @@ operations:
       - { name: --expected-head,  type: string,  required: false } # Required with --submit-review or --metadata-only and invalid without either; compared with the provider PR head before mutation and bound to the submitted/read-back native review commit
       - { name: --recover-pending, type: bool,   default: false } # GitHub-only, summary-only: on github_pending_review_exists delete the exact abandoned viewer-owned pending review this submission would have replaced, then submit. Accepted only for exactly one viewer-authored deletable node bound to --expected-head whose body is byte-identical to the body being submitted; the delete runs the same guards, lease, and read-back as pr pending-review delete --confirm-abandoned. Requires --submit-review.
       - { name: --thread-file,    type: path,    required: false } # GitHub-only JSON array of actionable review-thread specs; requires --submit-review; max 256 KiB, 50 specs, 1024-byte paths, 16 KiB bodies. Use only for findings that should be repaired then resolved via pr review-threads resolve.
-      - { name: --specialist-report, type: bool, default: false } # Opt-in canonical agent-kit specialist marker/fields/verdict/table validation.
+      - { name: --specialist-report, type: bool, default: false } # Require canonical specialist validation even if the body has no marker.
       - { name: --metadata-only, type: bool, default: false } # GitHub-only concise personal metadata for an already-published authoritative native review; requires --expected-head and conflicts with body/thread/submission flags.
       - { name: --native-review-url, type: string, required: false } # Required with --metadata-only and must identify this exact repo/PR's #pullrequestreview- object.
       - { name: --native-review-author, type: string, required: false } # Required with --metadata-only; exact expected App login, verified with provider read-back together with URL, decision state, and commit_id before mutation.
@@ -687,7 +687,7 @@ operations:
     #   expected_review_head_required (DATA 65) — --submit-review or --metadata-only without --expected-head
     #   expected_review_head_requires_submit_review (DATA 65) — --expected-head without --submit-review or --metadata-only
     #   github_review_head_changed (DATA 65) — the provider head differs from --expected-head; returned before native review or metadata mutation
-    #   invalid_specialist_review_report (DATA 65) — --specialist-report body lacks the canonical marker, required fields/verdict, or findings table
+    #   invalid_specialist_review_report (DATA 65) — a flag- or marker-declared specialist body lacks the canonical marker, required fields/verdict, or findings table
     #   reviewable_mismatch (DATA 65) — GitHub specialist report must have exactly one Reviewable reference equal to the PR URL, PR #N, #N, or owner/repo#N, optionally followed by at <full 40-hex SHA>; a qualifier must match --expected-head when supplied, before provider access
     #   native_review_url_required (DATA 65) — --metadata-only without --native-review-url
     #   native_review_author_required (DATA 65) — --metadata-only without --native-review-author
@@ -1186,6 +1186,7 @@ operations:
       # verify mapped additions against pinned upstream blob IDs, and require
       # exact independent confirmation of the complete comparison/manifest.
       # Published specialist Reviewable uses the same exact reference binding as pr.review; an optional full-SHA qualifier must match the native review head; mismatch returns awaiting_designated_review with detail review_id=<id>; field=Reviewable; cause=<validation message>.
+      # Current-head specialist format failures return awaiting_designated_review with the validator reason and cause=invalid_specialist_review_report.
     backends:
       github:
         argv: ["gh", "api", "graphql"]

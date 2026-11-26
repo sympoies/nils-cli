@@ -19,13 +19,13 @@ validation rules, and output schema versions.
 - By default `--decision` is recorded in the envelope and generated issue mirror
   body only (the outcome-comment form); it does not call provider-native
   approve/request-changes APIs.
-- `--specialist-report` opts the supplied body into the canonical
-  `agent-kit:specialist-review-report:v1` contract. Before any provider call,
-  forge-cli requires exactly one marker and `## Review Report` heading,
+- `--specialist-report` or the `agent-kit:specialist-review-report:v1` marker
+  declares a specialist report. Before any provider call, forge-cli validates
+  that the body has exactly one marker and `## Review Report` heading,
   non-empty Reviewable/Lens/Lens verdict/Scope/Evidence reviewed fields, the
   closed `pass|findings|blocked|follow-up-pass` verdict vocabulary, and the
   canonical findings table with at least one exactly-five-cell row. Generic
-  review comments omit this flag and remain valid.
+  review comments can omit both declarations.
   On GitHub, the report must contain exactly one Reviewable value identifying
   the selected PR: its URL, `PR #N`, `#N`, or `owner/repo#N`, optionally
   followed by a space and `at <full commit SHA>` (40 hexadecimal digits).
