@@ -408,38 +408,54 @@ impl Drop for Daemon {
 
 #[test]
 fn daemon_guard_leaves_no_in_flight_child_running_after_it_drops() {
-    // The serve daemon starts short-lived helpers (a fake tmux call). Killing
-    // only the daemon orphans an in-flight helper that can still write into the
-    // fixture directory while the test tears it down.
-    let root = tempfile::tempdir().unwrap();
-    let pid_file = root.path().join("helper.pid");
-    let mut command = std::process::Command::new("sh");
-    command
-        .args(["-c", "sleep 30 & echo $! > \"$1\"; wait", "sh"])
-        .arg(&pid_file)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let daemon = Daemon::spawn(command);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let helper = loop {
-        if let Ok(pid) = fs::read_to_string(&pid_file)
-            && let Ok(pid) = pid.trim().parse::<libc::pid_t>()
-        {
-            break pid;
-        }
-        assert!(Instant::now() < deadline, "helper never started");
-        thread::sleep(Duration::from_millis(10));
+    use std::os::unix::process::ExitStatusExt;
+
+    let sleeper = || {
+        let mut command = std::process::Command::new("sleep");
+        command
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
     };
-    drop(daemon);
-    // SAFETY: signal 0 only probes whether the process exists.
-    let alive = unsafe { libc::kill(helper, 0) } == 0;
-    if alive {
-        // Do not leave the probe's own helper behind when this test fails.
-        // SAFETY: the pid was written by the helper this test just started.
-        unsafe { libc::kill(helper, libc::SIGKILL) };
+    let daemon = Daemon::spawn(sleeper());
+    let helper = sleeper()
+        .process_group(daemon.0.id() as libc::pid_t)
+        .spawn()
+        .unwrap();
+
+    let reap_helper = |mut helper: Child| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = helper.try_wait().unwrap() {
+                assert_eq!(
+                    status.signal(),
+                    Some(libc::SIGKILL),
+                    "the daemon guard did not kill the helper"
+                );
+                return;
+            }
+            if Instant::now() >= deadline {
+                let _ = helper.kill();
+                let _ = helper.wait();
+                panic!("the helper outlived the daemon guard");
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+    };
+
+    if cfg!(target_os = "macos") {
+        // Keep the helper unreaped during drop to exercise the window where
+        // Darwin stops seeing an exiting group member but its PID still exists.
+        drop(daemon);
+        reap_helper(helper);
+    } else {
+        // Linux keeps reporting zombie group members until they are reaped.
+        let reaper = thread::spawn(move || reap_helper(helper));
+        drop(daemon);
+        reaper.join().unwrap();
     }
-    assert!(!alive, "the helper outlived the daemon guard");
 }
 
 #[test]
