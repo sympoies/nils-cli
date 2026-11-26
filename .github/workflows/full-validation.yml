@@ -82,8 +82,9 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
+          toolchain: 1.100.0
           components: rustfmt, clippy
 
       - name: Cache cargo
@@ -237,7 +238,9 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
+        with:
+          toolchain: 1.100.0
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -302,7 +305,9 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
+        with:
+          toolchain: 1.100.0
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -361,8 +366,9 @@ jobs:
           persist-credentials: false
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
+          toolchain: 1.100.0
           components: clippy
 
       - name: Cache cargo
@@ -417,8 +423,9 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
+          toolchain: 1.100.0
           components: llvm-tools-preview
 
       - name: Cache cargo

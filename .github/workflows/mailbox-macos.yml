@@ -27,8 +27,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.100.0
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
+          toolchain: 1.100.0
           components: llvm-tools-preview
       - uses: actions/setup-node@v7
         with:

@@ -10,6 +10,7 @@ import unittest
 REPO = Path(__file__).resolve().parents[3]
 AUDIT = REPO / 'scripts/ci/toolchain-pin-audit.py'
 PIN = '1.99.1'
+ACTION_REF = 'df2a88e9fe4098bad09cb42c3dec7187f15861fc'
 
 WORKFLOW = f"""name: Fixture
 on: [push]
@@ -21,7 +22,9 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@{PIN}
+        uses: dtolnay/rust-toolchain@{ACTION_REF}
+        with:
+          toolchain: {PIN}
 
       - name: Build
         run: |
@@ -78,25 +81,29 @@ class ToolchainPinAuditTest(unittest.TestCase):
         for ref in ('stable', 'beta', 'nightly', 'master', '1.98.0', '1.99', 'v1'):
             with self.subTest(ref=ref):
                 self.write('.github/workflows/ci.yml', WORKFLOW.replace(
-                    f'rust-toolchain@{PIN}', f'rust-toolchain@{ref}'))
+                    f'rust-toolchain@{ACTION_REF}', f'rust-toolchain@{ref}'))
                 self.assert_rejected(f'.github/workflows/ci.yml:11: dtolnay/rust-toolchain@{ref}')
 
     def test_setup_action_without_a_ref_is_rejected(self):
         self.write('.github/workflows/ci.yml', WORKFLOW.replace(
-            f'rust-toolchain@{PIN}', 'rust-toolchain'))
+            f'rust-toolchain@{ACTION_REF}', 'rust-toolchain'))
         self.assert_rejected('.github/workflows/ci.yml:11: dtolnay/rust-toolchain')
 
     def test_other_toolchain_setup_action_is_rejected(self):
         self.write('.github/workflows/ci.yml', WORKFLOW.replace(
-            f'dtolnay/rust-toolchain@{PIN}', 'actions-rust-lang/setup-rust-toolchain@v1'))
+            f'dtolnay/rust-toolchain@{ACTION_REF}', 'actions-rust-lang/setup-rust-toolchain@v1'))
         self.assert_rejected('actions-rust-lang/setup-rust-toolchain@v1')
 
     def test_setup_action_toolchain_input_must_match_the_pin(self):
         for value in ('stable', '1.98.0'):
             with self.subTest(value=value):
                 self.write('.github/workflows/ci.yml', WORKFLOW.replace(
-                    f'rust-toolchain@{PIN}\n', f'rust-toolchain@{PIN}\n        with:\n          toolchain: {value}\n'))
+                    f'toolchain: {PIN}', f'toolchain: {value}'))
                 self.assert_rejected(f'toolchain: {value}')
+
+    def test_setup_action_requires_explicit_toolchain(self):
+        self.write('.github/workflows/ci.yml', WORKFLOW.replace(f'          toolchain: {PIN}\n', ''))
+        self.assert_rejected(f'toolchain setup must explicitly select {PIN}')
 
     def test_rustup_commands_must_name_the_pin_in_workflows_and_helpers(self):
         for command in ('rustup default stable', 'rustup toolchain install nightly',
@@ -144,7 +151,7 @@ class ToolchainPinAuditTest(unittest.TestCase):
     def test_yaml_workflow_is_scanned(self):
         (self.root / '.github/workflows/ci.yml').unlink()
         self.write('.github/workflows/ci.yaml', WORKFLOW.replace(
-            f'rust-toolchain@{PIN}', 'rust-toolchain@stable'))
+            f'rust-toolchain@{ACTION_REF}', 'rust-toolchain@stable'))
         self.assert_rejected('.github/workflows/ci.yaml:11: dtolnay/rust-toolchain@stable')
 
     def test_commented_toolchain_selections_are_ignored(self):
@@ -235,7 +242,7 @@ class ToolchainPinAuditTest(unittest.TestCase):
 
     def test_job_running_cargo_without_a_setup_step_is_rejected(self):
         self.write('.github/workflows/ci.yml', WORKFLOW.replace(
-            f'      - name: Set up Rust\n        uses: dtolnay/rust-toolchain@{PIN}\n\n', ''))
+            f'      - name: Set up Rust\n        uses: dtolnay/rust-toolchain@{ACTION_REF}\n        with:\n          toolchain: {PIN}\n\n', ''))
         self.assert_rejected('.github/workflows/ci.yml: job build runs cargo without a pinned toolchain step')
 
     def test_setup_step_after_the_first_cargo_step_is_rejected(self):
@@ -248,7 +255,7 @@ jobs:
       - name: Build
         run: cargo build --locked
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@{PIN}
+        uses: dtolnay/rust-toolchain@{ACTION_REF}
 """)
         self.assert_rejected('job build runs cargo without a pinned toolchain step')
 
