@@ -3212,7 +3212,7 @@ fn start_run_tmux(
         shell_words::quote(log_file)
     );
 
-    let mut command = new_session_command(tmux_bin, tmux_scope_runner().as_ref());
+    let mut command = ProcessCommand::new(tmux_bin);
     command
         .arg("new-session")
         .arg("-d")
@@ -3226,22 +3226,22 @@ fn start_run_tmux(
     add_runtime_tmux_environment(&mut command, state_dir, record)?;
     begin_held_runtime(&mut command, state_dir, record)?;
     command.arg("sh").arg("-lc").arg(script);
-    run_tmux_new_session(command, tmux_bin, record)
+    run_tmux_new_session(command, &[], record)
 }
 fn run_tmux_new_session(
     command: ProcessCommand,
-    tmux_bin: &Path,
+    agent_args: &[String],
     record: &SessionRecord,
 ) -> Result<TmuxRuntimeIdentity, CliError> {
-    let output =
-        runtime_environment::output(command, PANE_INPUT_COMMAND_TIMEOUT).map_err(|err| {
-            let code = if err.kind() == io::ErrorKind::TimedOut {
-                "command-timeout"
-            } else {
-                "command-wait-failed"
-            };
-            CliError::runtime(code, format!("failed to run tmux new-session: {err}"), None)
-        })?;
+    let tmux_bin = Path::new(command.get_program());
+    let output = startup::output_new_session(&command, agent_args).map_err(|err| {
+        let code = if err.kind() == io::ErrorKind::TimedOut {
+            "command-timeout"
+        } else {
+            "command-wait-failed"
+        };
+        CliError::runtime(code, format!("failed to run tmux new-session: {err}"), None)
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(CliError::runtime(
