@@ -28,19 +28,33 @@ fn response(reply: Reply) -> Response {
     (status, Json(body)).into_response()
 }
 
-fn credential(headers: &HeaderMap) -> Result<String, Response> {
-    let Some(token) = super::move_routes::single_header(headers, AUTHORIZATION.as_str())
+enum CredentialError {
+    Missing,
+    Delegated,
+    RelayHeaders,
+}
+
+impl IntoResponse for CredentialError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Missing => refuse(StatusCode::UNAUTHORIZED, "resume-move-unavailable"),
+            Self::Delegated => envelope_err(delegation::scope_denied()),
+            Self::RelayHeaders => refuse(StatusCode::BAD_REQUEST, "resume-unsupported"),
+        }
+    }
+}
+
+fn credential(headers: &HeaderMap) -> Result<String, CredentialError> {
+    let token = super::move_routes::single_header(headers, AUTHORIZATION.as_str())
         .and_then(|value| value.strip_prefix("Bearer "))
-    else {
-        return Err(refuse(StatusCode::UNAUTHORIZED, "resume-move-unavailable"));
-    };
+        .ok_or(CredentialError::Missing)?;
     if delegation::is_delegation(token) {
-        return Err(envelope_err(delegation::scope_denied()));
+        return Err(CredentialError::Delegated);
     }
     if headers.contains_key(BINDING_HEADER)
         || headers.contains_key(super::move_routes::RELAY_TOKEN_HEADER)
     {
-        return Err(refuse(StatusCode::BAD_REQUEST, "resume-unsupported"));
+        return Err(CredentialError::RelayHeaders);
     }
     Ok(token.to_owned())
 }
@@ -53,7 +67,7 @@ async fn discover(
     let (parts, body) = request.into_parts();
     let token = match credential(&parts.headers) {
         Ok(token) => token,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     if parts.method != Method::GET
         || parts.uri.query().is_some()
@@ -89,7 +103,7 @@ async fn start(
     let (parts, body) = request.into_parts();
     let token = match credential(&parts.headers) {
         Ok(token) => token,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     let unsupported = || refuse(StatusCode::BAD_REQUEST, "resume-unsupported");
     if parts.uri.query().is_some() {
