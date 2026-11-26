@@ -233,8 +233,8 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   invalid data, or a full 100-comment page returns `review_snapshot_incomplete`
   rather than treating a partial result as empty. The newest remaining appointed-author review must be
   `COMMENTED` or `APPROVED`, have a `pass` or `follow-up-pass` verdict, and
-  postdate handover. A report in the same timestamp second fails closed. Long
-  summaries use bounded native-body read-back with verified identity and head.
+  postdate handover. A bound current-head `APPROVED` report may tie the timestamp.
+  Long summaries use bounded native-body read-back with verified identity and head.
   A newer current-interval blocked or malformed report supersedes an earlier
   pass. Unbound later-generation reports and ambiguous, malformed or unknown
   bindings are not skipped.
