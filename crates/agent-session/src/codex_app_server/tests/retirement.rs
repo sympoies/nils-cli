@@ -21,6 +21,50 @@ async fn shell_command_waits_for_retirement_and_fences_its_pending_response() {
     exercise_request("thread/shellCommand", true).await;
 }
 
+#[tokio::test]
+async fn graceful_exit_fences_native_writes_after_admission_locks_are_released() {
+    let tmp = tempfile::tempdir().unwrap();
+    let context = CliContext {
+        state_dir: tmp.path().join("state"),
+        host: None,
+    };
+    let record = record_with_runtime("exit-fixture", &tmp.path().join("provider.sock"));
+    let launch = &record.runtime.as_ref().unwrap().launch_id;
+    let dir = crate::session_dir(&context, &record.id);
+    fs::create_dir_all(&dir).unwrap();
+    let exit_fence = crate::restart::RestartFence::acquire(&context, &record, launch).unwrap();
+
+    let turn = json!({
+        "id": 1, "method": "turn/start",
+        "params": {"threadId": "fixture-thread", "input": []}
+    });
+    assert!(matches!(
+        acquire_turn_start_gate(&context, &record, &turn),
+        Err(TuiMutationRejection::TurnGateBusy)
+    ));
+
+    let request = json!({
+        "id": 2, "method": "review/start",
+        "params": {"threadId": "fixture-thread"}
+    });
+    let mut requests = crate::codex_app_server::retirement::Requests::default();
+    let mut bootstrap = FreshBootstrap::Closed;
+    assert!(matches!(
+        requests
+            .authorize(&context, &record, &mut bootstrap, &request)
+            .await,
+        Err(TuiMutationRejection::TurnGateBusy)
+    ));
+    drop(exit_fence);
+    assert!(acquire_turn_start_gate(&context, &record, &turn).is_ok());
+    assert!(
+        requests
+            .authorize(&context, &record, &mut bootstrap, &request)
+            .await
+            .is_ok()
+    );
+}
+
 async fn exercise_request(method: &str, hold_retirement: bool) {
     let tmp = tempfile::tempdir().unwrap();
     let (_socket_dir, upstream) = nils_test_support::short_socket_path("compact.sock");

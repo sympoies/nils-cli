@@ -14,6 +14,7 @@ pub(crate) mod destination;
 mod source;
 pub(crate) mod source_fence;
 mod ssh;
+mod stop;
 #[cfg(test)]
 mod tests;
 
@@ -412,6 +413,8 @@ pub enum Refusal {
     TargetMismatch,
     AccountMismatch,
     SourceLive,
+    SourceBusy,
+    SourceAlreadyStopped,
     PathMismatch,
     TranscriptCwdOutsideCheckout,
     HistoryStale,
@@ -434,6 +437,8 @@ impl Refusal {
             Self::TargetMismatch => "resume-move-target-mismatch",
             Self::AccountMismatch => "resume-account-mismatch",
             Self::SourceLive => "resume-source-live",
+            Self::SourceBusy => "resume-move-source-busy",
+            Self::SourceAlreadyStopped => "resume-move-source-already-stopped",
             Self::PathMismatch => "resume-move-path-mismatch",
             Self::TranscriptCwdOutsideCheckout => "resume-move-transcript-cwd-outside-checkout",
             Self::HistoryStale => "resume-move-history-stale",

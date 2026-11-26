@@ -84,7 +84,16 @@ expiry must be within the ticket's expiry. The file's byte count and hash
 must match the signed snapshot regardless of copied file timestamps. Expiry
 does not release the source fence.
 
-The verifier returns typed reasons.
+The verifier and lifecycle commands return typed reasons.
+
+Use `agent-session resume-move stop --session ID --incarnation UUID --format json`
+from the local owner account to gracefully exit an idle source without deleting
+its managed record or altering its history. The command waits up to 30 seconds
+for the provider to exit and does not force termination. The local
+`cli.agent-session.resume-move-stop.v1` receipt reports the observed stopped
+incarnation, generation, provider conversation and settled account binding.
+Export re-verifies the current source under its own locks, even if the source
+has an earlier receipt. Only the signed stop proof is transferable.
 
 | Code | Condition |
 | --- | --- |
@@ -95,6 +104,9 @@ The verifier returns typed reasons.
 | `resume-move-target-mismatch` | Wrong source or destination host |
 | `resume-account-mismatch` | Account differs from the original binding |
 | `resume-source-live` | Stop verdict is false |
+| `resume-move-source-busy` | The local source has active input, work, or recovery |
+| `resume-move-source-already-stopped` | The exact source is already stopped, with a fresh local receipt in `details.receipt` |
+| `resume-source-unknown` | Source admission or stopped-runtime evidence is incomplete |
 | `resume-move-path-mismatch` | Checkout binding differs |
 | `resume-move-transcript-cwd-outside-checkout` | A Claude transcript records a cwd outside the planned checkout root |
 | `resume-move-history-stale` | Staged history differs from the snapshot |

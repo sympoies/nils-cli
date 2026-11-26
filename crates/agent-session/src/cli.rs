@@ -1555,7 +1555,7 @@ pub struct RestartArgs {
     pub force: bool,
 
     /// Bound the wait for the provider to exit, in seconds.
-    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=600))]
+    #[arg(long, default_value_t = crate::restart::DEFAULT_STOP_TIMEOUT_SECS, value_parser = clap::value_parser!(u64).range(1..=600))]
     pub stop_timeout: u64,
 
     /// Bound the wait for the relaunched provider's ready prompt, in seconds.

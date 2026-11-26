@@ -34,6 +34,7 @@ use crate::{CliContext, CliError, SessionRecord, coordination, load_session_reco
 
 const COMMAND: &str = "restart";
 const SCHEMA_VERSION: &str = "agent-session.restart.v1";
+pub(crate) const DEFAULT_STOP_TIMEOUT_SECS: u64 = 30;
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// A stopped incarnation's last heartbeat stays fresh for up to 30 seconds.
 const PRIOR_LEASE_WAIT: Duration = Duration::from_secs(35);
@@ -300,7 +301,7 @@ pub(crate) fn ensure_not_fenced(
 
 /// One restart's fence of an incarnation; dropping it releases the fence
 /// while it still carries this restart's owner token.
-struct RestartFence {
+pub(crate) struct RestartFence {
     context: CliContext,
     path: PathBuf,
     owner: String,
@@ -310,7 +311,7 @@ impl RestartFence {
     /// Under the registry lock notification attempts take, refuse a live
     /// restart of the session or an exact notification submission in
     /// progress, and fence any later attempt.
-    fn acquire(
+    pub(crate) fn acquire(
         context: &CliContext,
         record: &SessionRecord,
         launch: &str,
@@ -410,30 +411,27 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
     test_control::fire(context, test_control::Phase::ExitRequested, &old_launch);
     let stop_deadline = Instant::now() + Duration::from_secs(args.stop_timeout);
     let mut exit_dialogs = claude_exit::ExitDialogs::default();
-    while exit_requested && Instant::now() < stop_deadline {
-        let current = load_session_record(context, &expected.id).ok();
-        if current.as_ref().and_then(launch_id).as_deref() != Some(old_launch.as_str())
-            || status_before(&tmux, &expected, stop_deadline) == "stopped"
-        {
-            break;
-        }
-        if agent == AgentKind::Claude
-            && !args.force
-            && exit_dialogs.poll(context, &expected, &tmux, stop_deadline)
-        {
-            receipt.outcome = "not-restarted";
-            receipt.finished_at = now();
-            return Err(CliError::runtime(
-                "restart-exit-dialog",
-                "not restarted: Claude's background-work exit dialog was cancelled",
-                Some(json!({
-                    "id": receipt.id,
-                    "cause": claude_exit::Dialog::BackgroundWork.code(),
-                    "receipt": receipt,
-                })),
-            ));
-        }
-        sleep(POLL_INTERVAL.min(stop_deadline.saturating_duration_since(Instant::now())));
+    if exit_requested
+        && wait_for_provider_exit(
+            context,
+            &expected,
+            &tmux,
+            stop_deadline,
+            !args.force,
+            &mut exit_dialogs,
+        ) == ExitWait::Cancelled
+    {
+        receipt.outcome = "not-restarted";
+        receipt.finished_at = now();
+        return Err(CliError::runtime(
+            "restart-exit-dialog",
+            "not restarted: Claude's background-work exit dialog was cancelled",
+            Some(json!({
+                "id": receipt.id,
+                "cause": claude_exit::Dialog::BackgroundWork.code(),
+                "receipt": receipt,
+            })),
+        ));
     }
 
     let record_lock = match crate::acquire_session_record_lock_timed(
@@ -628,11 +626,97 @@ fn record_provider_version(
 /// A one-shot lifecycle command, constructed only after restart admission.
 /// Its private field prevents general input paths from creating a quarantine
 /// bypass from caller-supplied text.
-pub(crate) struct ProviderExitCommand(&'static str);
+pub(crate) struct ProviderExitCommand<'a>(&'static str, Option<&'a str>);
 
-impl ProviderExitCommand {
-    pub(crate) fn text(self) -> &'static str {
-        self.0
+impl<'a> ProviderExitCommand<'a> {
+    pub(crate) fn into_parts(self) -> (&'static str, Option<&'a str>) {
+        (self.0, self.1)
+    }
+}
+
+/// Only the lifecycle controllers, after idle admission and input fencing,
+/// may submit the fixed provider exit command.
+pub(crate) fn send_provider_exit(
+    context: &CliContext,
+    record: &SessionRecord,
+    tmux: &Path,
+    identity: Option<&crate::TmuxRuntimeIdentity>,
+) -> Result<(), CliError> {
+    let command = match record.agent.as_str() {
+        "claude" => "/exit",
+        "codex" => "/quit",
+        _ => {
+            return Err(refusal(
+                "restart-unsupported",
+                "provider cannot exit gracefully",
+                record,
+            ));
+        }
+    };
+    crate::send::input::send_restart_exit_unlocked(
+        context,
+        record,
+        ProviderExitCommand(command, identity.map(|identity| identity.pane_id.as_str())),
+        tmux,
+    )
+}
+
+pub(crate) fn check_exit_background_work(
+    tmux: &Path,
+    record: &SessionRecord,
+) -> Result<(), CliError> {
+    claude_exit::require_no_background_work(tmux, record, Instant::now() + Duration::from_secs(1))
+}
+
+#[derive(PartialEq, Eq)]
+enum ExitWait {
+    Inactive,
+    Cancelled,
+    TimedOut,
+}
+
+fn wait_for_provider_exit(
+    context: &CliContext,
+    expected: &SessionRecord,
+    tmux: &Path,
+    deadline: Instant,
+    observe_dialogs: bool,
+    dialogs: &mut claude_exit::ExitDialogs,
+) -> ExitWait {
+    while Instant::now() < deadline {
+        let same_runtime = load_session_record(context, &expected.id)
+            .is_ok_and(|current| crate::ensure_same_session_identity(expected, &current).is_ok());
+        if !same_runtime || status_before(tmux, expected, deadline) == "stopped" {
+            return ExitWait::Inactive;
+        }
+        if expected.agent == "claude"
+            && observe_dialogs
+            && dialogs.poll(context, expected, tmux, deadline)
+        {
+            return ExitWait::Cancelled;
+        }
+        sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())));
+    }
+    ExitWait::TimedOut
+}
+
+/// Wait without holding record, activity or provider locks so exit hooks
+/// can finish. Inactivity here still needs fresh persisted process proof.
+pub(crate) fn await_retained_exit(
+    context: &CliContext,
+    record: &SessionRecord,
+    tmux: &Path,
+) -> Option<&'static str> {
+    let deadline = Instant::now() + Duration::from_secs(DEFAULT_STOP_TIMEOUT_SECS);
+    let mut dialogs = claude_exit::ExitDialogs::retaining_source();
+    match wait_for_provider_exit(context, record, tmux, deadline, true, &mut dialogs) {
+        ExitWait::Inactive => None,
+        ExitWait::Cancelled => Some(claude_exit::Dialog::BackgroundWork.code()),
+        ExitWait::TimedOut => Some(
+            dialogs
+                .last_dialog()
+                .map_or("exit-timeout", |dialog| dialog.code()),
+        ),
     }
 }
 
@@ -727,19 +811,12 @@ fn request_provider_exit(
         return Ok((false, fence));
     }
     // Admission already refuses every provider without an observable prompt.
-    let command = match agent {
-        AgentKind::Claude if admitted => "/exit",
-        AgentKind::Codex if admitted => "/quit",
-        _ => return Ok((false, fence)),
-    };
+    if !admitted || !matches!(agent, AgentKind::Claude | AgentKind::Codex) {
+        return Ok((false, fence));
+    }
     crate::codex_account::authorize_restart_exit_locked(context, &mut current)?;
     crate::auto_resume::cancel_for_manual_input_locked(context, &current.id, &now())?;
-    crate::send::input::send_restart_exit_unlocked(
-        context,
-        &current,
-        ProviderExitCommand(command),
-        tmux,
-    )?;
+    send_provider_exit(context, &current, tmux, None)?;
     Ok((true, fence))
 }
 

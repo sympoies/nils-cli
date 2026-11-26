@@ -174,7 +174,7 @@ pub(super) fn binding(
     }
 }
 
-fn find_history(
+pub(super) fn find_history(
     provider: Provider,
     root: &Path,
     thread: &str,
