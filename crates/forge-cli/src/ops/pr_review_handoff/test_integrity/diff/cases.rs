@@ -1,71 +1,8 @@
-//! Row keys for removed tests: Rust module paths and JavaScript titles.
+//! Row keys for removed tests: JavaScript titles.
 
 /// Separates hunks inside the collected old/new line lists, so module nesting
 /// and multi-line calls never continue across a gap in the visible source.
 pub(super) const HUNK: &str = "\0hunk";
-
-/// Rust `mod name { ... }` nesting visible in the diff hunk. A module whose
-/// opening line is outside the hunk context cannot be named.
-#[derive(Default)]
-pub(super) struct Modules {
-    stack: Vec<(String, i32)>,
-    depth: i32,
-}
-
-impl Modules {
-    pub(super) fn reset(&mut self) {
-        *self = Self::default();
-    }
-
-    /// `outer::inner::` for the current position, or an empty string.
-    pub(super) fn prefix(&self) -> String {
-        self.stack
-            .iter()
-            .map(|(name, _)| format!("{name}::"))
-            .collect()
-    }
-
-    pub(super) fn feed(&mut self, line: &str) {
-        if let Some(name) = module_open(line) {
-            self.stack.push((name, self.depth));
-        }
-        let (opens, closes) = braces(line);
-        self.depth += opens - closes;
-        while self.stack.last().is_some_and(|(_, at)| *at >= self.depth) {
-            self.stack.pop();
-        }
-    }
-}
-
-fn module_open(line: &str) -> Option<String> {
-    let mut rest = line;
-    while rest.starts_with("#[") {
-        rest = rest[rest.find(']')? + 1..].trim_start();
-    }
-    if let Some(after) = rest.strip_prefix("pub") {
-        let after = after.trim_start();
-        rest = match after.strip_prefix('(') {
-            Some(scope) => scope[scope.find(')')? + 1..].trim_start(),
-            None => after,
-        };
-    }
-    let rest = rest.strip_prefix("mod ")?.trim_start();
-    let end = rest
-        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .unwrap_or(rest.len());
-    (end > 0 && rest[end..].trim_start().starts_with('{')).then(|| rest[..end].to_string())
-}
-
-/// Brace counts outside string/char literals and line comments.
-fn braces(line: &str) -> (i32, i32) {
-    let (mut opens, mut closes) = (0, 0);
-    visit_braces(line, false, |_, brace| match brace {
-        '{' => opens += 1,
-        '}' => closes += 1,
-        _ => unreachable!("only braces are visited"),
-    });
-    (opens, closes)
-}
 
 pub(super) fn visit_braces(
     line: &str,

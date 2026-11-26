@@ -209,7 +209,16 @@ case "$1 $2" in
 JSON
     fi; exit 0 ;;
   "api repos/acme/widgets/compare/"*)
+    if [ -n "${{TEST_INTEGRITY_FILES_DIR:-}}" ] && [ "$3" = "--jq" ]; then
+      echo '{{"sha":"{OLD}"}}'; exit 0
+    fi
     cat "${{TEST_INTEGRITY_DIFF:-/dev/null}}"; exit 0 ;;
+  "api repos/acme/widgets/contents/tests/test_sample.py?ref={OLD}")
+    cat "$TEST_INTEGRITY_FILES_DIR/base-content.json"; exit $? ;;
+  "api repos/acme/widgets/contents/tests/test_sample.py?ref={HEAD}")
+    cat "$TEST_INTEGRITY_FILES_DIR/head-content.json"; exit $? ;;
+  "api repos/acme/widgets/git/blobs/"*)
+    cat "$TEST_INTEGRITY_FILES_DIR/${{2##*/}}.json"; exit $? ;;
   "api repos/acme/widgets/pulls/7/files?"*)
     if [ -n "${{TEST_INTEGRITY_FILES_DIR:-}}" ]; then
       case "$2" in

@@ -94,7 +94,7 @@ fn the_retired_file_level_row_and_stale_rows_are_reported() {
 
 #[test]
 fn javascript_titles_on_their_own_line_are_extracted() {
-    let before = "it(\n  'handles x',\n  () => {},\n);\ntest(\n\n  \"handles y\", () => {});\nit('keeps', () => {});";
+    let before = "it(\n  'handles x',\n  () => {},\n);\ntest(\n\n  // title follows\n  \"handles y\", () => {});\nit('keeps', () => {});";
     assert_eq!(
         deleted("tests/api.test.ts", before, "it('keeps', () => {});"),
         vec![
@@ -209,16 +209,193 @@ fn python_decorator_changes_preserve_test_identity() {
 }
 
 #[test]
-fn rust_attributes_and_javascript_wrappers_keep_recognized_tests() {
+fn rust_attributes_preserve_identity_and_javascript_wrappers_change_scope() {
     let rust = "#[test]\nfn contract() {}";
     let attributed = "#[allow(unused)]\n#[test]\nfn contract() {}";
+    for (before, after) in [(rust, attributed), (attributed, rust)] {
+        assert_eq!(deleted("src/lib.rs", before, after), Vec::<String>::new());
+    }
     let js = "test('contract', () => {});";
     let wrapped = "describe('group', () => {\n  test('contract', () => {});\n});";
+    assert_eq!(
+        deleted("api.test.ts", js, wrapped),
+        ["deleted-test:test('contract'"]
+    );
+    assert_eq!(
+        deleted("api.test.ts", wrapped, js),
+        ["deleted-test:describe('group'::test('contract'"]
+    );
+}
+
+#[test]
+fn javascript_non_it_titles_with_path_separators_keep_distinct_labels() {
+    let before = "test.only('a::function x', () => {});\ntest.only('a::fn tionx', () => {});";
+    assert_eq!(
+        deleted("api.test.ts", before, ""),
+        vec![
+            "deleted-test:test.only('a::fntionx'",
+            "deleted-test:test.only('a::functionx'"
+        ]
+    );
+}
+
+#[test]
+fn test_markers_only_count_as_code_in_their_own_language() {
     for (path, before, after) in [
-        ("src/lib.rs", rust, attributed),
-        ("tests/api.test.ts", js, wrapped),
+        (
+            "src/lib.rs",
+            "let marker = \"#[cfg(test)]\";\nif rust_test || line.starts_with(\"@Test\") {\n    work();\n}",
+            "if rust_test {\n    work();\n}",
+        ),
+        (
+            "src/lib.rs",
+            "const SAMPLE: &str = r#\"\n#[test]\nfn example() {}\n\"#;",
+            "",
+        ),
+        (
+            "api.py",
+            "example = \"\"\"\ndef test_example():\n    pass\n\"\"\"",
+            "",
+        ),
+        (
+            "Api.java",
+            "String example = \"\"\"\n@Test\nvoid example() {}\n\"\"\";",
+            "",
+        ),
+        (
+            "api.ts",
+            "const example = `\ntest('example', () => {});\n`;",
+            "",
+        ),
+        (
+            "api.rs",
+            "",
+            "let examples = \"#[ignore] t.Skip() @Disabled pytest.mark.skip\";",
+        ),
     ] {
-        assert_eq!(deleted(path, before, after), Vec::<String>::new());
-        assert_eq!(deleted(path, after, before), Vec::<String>::new());
+        assert_eq!(deleted(path, before, after), Vec::<String>::new(), "{path}");
     }
+}
+
+#[test]
+fn multi_hunk_deletions_use_both_immutable_images() {
+    for (path, first, second, close, declaration, expected) in [
+        (
+            "src/lib.rs",
+            "mod first {",
+            "mod second {",
+            "}",
+            "#[test]\nfn same() {}",
+            "first::same",
+        ),
+        (
+            "src/lib.rs",
+            "impl First {",
+            "impl Second {",
+            "}",
+            "#[rstest]\nfn same() {}",
+            "First::same",
+        ),
+        (
+            "api.test.ts",
+            "describe('first', () => {",
+            "describe('second', () => {",
+            "});",
+            "test('same::name', () => {});",
+            "describe('first'::test('same::name'",
+        ),
+        (
+            "api.py",
+            "class First(\n    Parent,\n):",
+            "class Second:",
+            "",
+            "def test_same(self): pass",
+            "First::test_same",
+        ),
+        (
+            "Api.java",
+            "class First {",
+            "class Second {",
+            "}",
+            "@Test\nvoid same() {}",
+            "First::same",
+        ),
+    ] {
+        let filler = if path.ends_with(".py") {
+            "    pass\n"
+        } else {
+            "    // unchanged\n"
+        };
+        let gap = filler.repeat(8);
+        let first = format!("{first}\n{gap}");
+        let middle = format!("{gap}{close}\n{second}\n{gap}");
+        let last = format!("{gap}{close}\n");
+        let declaration = format!("    {}", declaration.replace('\n', "\n    "));
+        let before = format!("{first}{declaration}\n{middle}{last}");
+        let after = format!("{first}{middle}{declaration}\n{last}");
+        let length = declaration.lines().count();
+        let removed = declaration.replace('\n', "\n-");
+        let added = declaration.replace('\n', "\n+");
+        let second = first.lines().count() + length + middle.lines().count();
+        let patch = format!(
+            "diff --git a/{path} b/{path}\n@@ -{},{length} +{},0 @@\n-{removed}\n@@ -{second},0 +{},{length} @@\n+{added}\n",
+            first.lines().count() + 1,
+            first.lines().count(),
+            second - length + 1
+        );
+        let mut runner =
+            ComparisonRunner::new(&patch, [subject(HEAD, BASE, ""), subject(HEAD, BASE, "")]);
+        runner.images.add(&mut runner.files[0], &before, &after);
+        let (_, _, findings) = comparison(&runner, &context(), 7, HEAD).unwrap();
+        assert_eq!(
+            findings,
+            [diff::Finding {
+                path: path.into(),
+                kind: format!("deleted-test:{expected}"),
+            }],
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn javascript_nested_suites_resolve_multiline_and_inline_openers() {
+    let before = "describe(\n  'outer braces }',\n  () => {\n    describe.only('inner', () => { test('case', () => {}); });\n  },\n);";
+    let after = before.replace("test('case', () => {});", "");
+    assert_eq!(
+        deleted("api.test.ts", before, &after),
+        ["deleted-test:describe('outer%{20}braces%{20}}'::describe('inner'::test('case'"]
+    );
+}
+
+#[test]
+fn recognizable_test_declarations_inside_rust_macros_keep_the_module_path() {
+    let before = "mod outer {\n    macro_rules! tests {\n        () => {\n            #[test] fn concrete() {}\n        };\n    }\n    tests!();\n}";
+    let after = before.replace("#[test] fn concrete() {}", "");
+    assert_eq!(
+        deleted("src/lib.rs", before, &after),
+        ["deleted-test:outer::concrete"]
+    );
+}
+
+#[test]
+fn javascript_regex_literals_preserve_later_test_deletions() {
+    let inputs = [
+        "const pattern = /`/g;",
+        r"const pattern = /src\/*.ts/;",
+        "const pattern = /[/`]/;",
+        r#"const ratio = "12" / /* } */ 2;"#,
+    ];
+    let findings = inputs.map(|input| {
+        let suite = format!("describe('suite', () => {{\n    {input}\n");
+        deleted(
+            "api.test.ts",
+            &format!("{suite}    test('removed', () => {{}});\n}});"),
+            &format!("{suite}}});"),
+        )
+    });
+    assert_eq!(
+        findings,
+        inputs.map(|_| vec!["deleted-test:describe('suite'::test('removed'".to_string()])
+    );
 }

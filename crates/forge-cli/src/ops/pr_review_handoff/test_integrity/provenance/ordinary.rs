@@ -1,7 +1,7 @@
 //! Enumerate complete metadata before acquiring only inspectable source patches.
 use super::{
     BackendRunner, ChangedFile, ForgeError, ProviderContext, Subject, api, diff, files, incomplete,
-    limit, residual, residual_patch,
+    inspect, limit, residual, residual_patch,
 };
 
 pub(in super::super) fn comparison<R: BackendRunner>(
@@ -123,7 +123,7 @@ pub(in super::super) fn comparison<R: BackendRunner>(
         }
         patch.push_str(&next);
     }
-    let findings = diff::detect(&patch)?;
+    let findings = inspect(runner, ctx, subject, &files, &mut merge_base, &patch)?;
     // Bind skipped paths to immutable blob IDs without retaining their contents.
     let binding = serde_json::json!({"files": files, "patch": patch, "merge_base": merge_base});
     Ok((binding.to_string(), findings))

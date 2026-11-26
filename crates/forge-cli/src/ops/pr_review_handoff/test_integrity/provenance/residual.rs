@@ -94,13 +94,13 @@ pub(super) fn merge_base<R: BackendRunner>(
     Ok(base.sha)
 }
 
-pub(super) fn patch<R: BackendRunner>(
+pub(super) fn images<R: BackendRunner>(
     runner: &R,
     ctx: &ProviderContext,
     subject: &Subject,
     comparison_base: &str,
     file: &ChangedFile,
-) -> Result<String, ForgeError> {
+) -> Result<(Vec<u8>, Vec<u8>), ForgeError> {
     // A write-capable PR command must still authorize these reads as api_read.
     let _scope =
         crate::identity::api_read_scope(&ctx.host, ctx.repo.as_deref().ok_or_else(incomplete)?)?;
@@ -120,6 +120,17 @@ pub(super) fn patch<R: BackendRunner>(
     } else {
         bytes(runner, ctx, &file.filename, &subject.head, Some(&file.sha))?
     };
+    Ok((before, after))
+}
+
+pub(super) fn patch<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    subject: &Subject,
+    comparison_base: &str,
+    file: &ChangedFile,
+) -> Result<String, ForgeError> {
+    let (before, after) = images(runner, ctx, subject, comparison_base, file)?;
     if [&before, &after]
         .iter()
         .any(|bytes| bytes.contains(&0) || std::str::from_utf8(bytes).is_err())

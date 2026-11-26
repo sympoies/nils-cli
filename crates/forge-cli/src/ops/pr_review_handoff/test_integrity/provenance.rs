@@ -230,7 +230,7 @@ pub(super) fn comparison<R: BackendRunner>(
 ) -> Result<(String, Vec<diff::Finding>), ForgeError> {
     let files = files(runner, ctx, number, subject, false)?;
     let tree = upstream(runner, ctx, d)?;
-    let merge_base = if files
+    let mut merge_base = if files
         .iter()
         .any(|file| file.patch.is_none() && file.status != "added")
     {
@@ -291,7 +291,7 @@ pub(super) fn comparison<R: BackendRunner>(
     {
         return Err(mismatch());
     }
-    let mut findings = diff::detect(&residual)?;
+    let mut findings = inspect(runner, ctx, subject, &files, &mut merge_base, &residual)?;
     findings.extend(adaptations.iter().map(|path| diff::Finding {
         path: path.clone(),
         kind: "import-adaptation".into(),
@@ -311,6 +311,45 @@ pub(super) fn comparison<R: BackendRunner>(
         binding["merge_base"] = json!(base);
     }
     Ok((format!("{PREFIX}{binding}"), findings))
+}
+
+fn inspect<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    subject: &Subject,
+    files: &[ChangedFile],
+    merge_base: &mut Option<String>,
+    patch: &str,
+) -> Result<Vec<diff::Finding>, ForgeError> {
+    let by_path: BTreeMap<_, _> = files
+        .iter()
+        .map(|file| (file.filename.as_str(), file))
+        .collect();
+    diff::detect_with_images(patch, |path| {
+        let file = by_path.get(path).ok_or_else(incomplete)?;
+        if matches!(file.status.as_str(), "added" | "removed")
+            || (file.additions == 0 && file.deletions == 0)
+            || !(diff::scoped_source(path)
+                || file
+                    .previous_filename
+                    .as_deref()
+                    .is_some_and(diff::scoped_source))
+        {
+            return Ok(None);
+        }
+        if merge_base.is_none() {
+            *merge_base = Some(residual::merge_base(runner, ctx, subject)?);
+        }
+        let (before, after) =
+            residual::images(runner, ctx, subject, merge_base.as_deref().unwrap(), file)?;
+        let text = |bytes: Vec<u8>| {
+            if bytes.contains(&0) {
+                return Err(incomplete());
+            }
+            String::from_utf8(bytes).map_err(|_| incomplete())
+        };
+        Ok(Some((text(before)?, text(after)?)))
+    })
 }
 
 pub(super) fn summary(binding: &str) -> Option<Value> {
