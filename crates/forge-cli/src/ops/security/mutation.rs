@@ -8,6 +8,9 @@ use crate::provider::ProviderContext;
 use crate::rate_limit::default_runner;
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use serde_json::json;
+use std::io::Read;
+
+const MAX_COMMENT_BYTES: u64 = 64 * 1024;
 
 pub(super) fn dismiss(
     ctx: &ProviderContext,
@@ -16,22 +19,34 @@ pub(super) fn dismiss(
     args: SecurityAlertDismissArgs,
     format: OutputFormat,
 ) -> Result<i32, ForgeError> {
-    let comment = std::fs::read_to_string(&args.comment_file).map_err(|_| {
+    let invalid = || {
         ForgeError::validation(
             schema(),
             "security_comment_invalid",
-            "cannot read --comment-file as UTF-8",
+            "--comment-file must be a readable regular UTF-8 file containing 1 to 65536 bytes of nonblank text",
             None,
         )
-    })?;
-    if comment.trim().is_empty() {
-        return Err(ForgeError::validation(
-            schema(),
-            "security_comment_invalid",
-            "--comment-file must not be blank",
-            None,
-        ));
+    };
+    if !std::fs::metadata(&args.comment_file)
+        .map_err(|_| invalid())?
+        .is_file()
+    {
+        return Err(invalid());
     }
+    let mut bytes = Vec::new();
+    std::fs::File::open(&args.comment_file)
+        .map_err(|_| invalid())?
+        .take(MAX_COMMENT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| invalid())?;
+    if bytes.len() as u64 > MAX_COMMENT_BYTES {
+        return Err(invalid());
+    }
+    let comment = String::from_utf8(bytes).map_err(|_| invalid())?;
+    if comment.trim().is_empty() || comment.contains('\0') {
+        return Err(invalid());
+    }
+    crate::ops::github_write::guard_text(&comment, "dismissal comment")?;
     transition(
         ctx,
         repo,
@@ -87,6 +102,7 @@ fn transition(
         return dry_run(version, ctx, call, format);
     }
     let output = default_runner().run(&call).map_err(|error| {
+        if error.kind() != "backend_error" { return error; }
         let detail = error.detail().unwrap_or_default();
         if detail.contains("HTTP 404") {
             ForgeError::validation(schema(), "security_alert_not_found", "Alert not found or inaccessible; check the alert number, repository and token access", None)

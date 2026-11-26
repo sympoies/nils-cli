@@ -565,3 +565,59 @@ fn security_code_scanning_reopen_dry_run_describes_patch_without_calling_provide
     assert!(plan.contains("state=open"));
     assert!(!plan.contains("dismissed_reason"));
 }
+
+#[test]
+fn security_code_scanning_preserves_typed_backend_errors() {
+    for (message, code) in [
+        ("API rate limit exceeded (HTTP 403)", "backend_rate_limited"),
+        ("invalid token (HTTP 401)", "backend_unauthenticated"),
+    ] {
+        let stub = StubEnv::new().gh_stub(&format!("#!/bin/sh\necho '{message}' >&2\nexit 1\n"));
+        let out = run_forge_cli(
+            &stub,
+            &[
+                "security",
+                "alerts",
+                "reopen",
+                "7",
+                "--provider",
+                "github",
+                "--repo",
+                "acme/widget",
+                "--format",
+                "json",
+            ],
+        );
+        assert_eq!(parse_envelope(&out.stdout)["error"]["code"], code);
+    }
+}
+
+#[test]
+fn security_code_scanning_rejects_unsafe_or_oversized_comment_before_request() {
+    let stub = StubEnv::new().gh_stub("#!/bin/sh\necho unexpected >&2\nexit 97\n");
+    let comment = stub.tempdir.path().join("comment");
+    for text in ["x".repeat(65537), "/home/example/project/file.txt".to_string()] {
+        std::fs::write(&comment, text).unwrap();
+        let out = run_forge_cli(
+            &stub,
+            &[
+                "security",
+                "alerts",
+                "dismiss",
+                "7",
+                "--reason",
+                "false-positive",
+                "--comment-file",
+                comment.to_str().unwrap(),
+                "--provider",
+                "github",
+                "--repo",
+                "acme/widget",
+                "--format",
+                "json",
+            ],
+        );
+        assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+        assert!(!out.stderr.contains("unexpected"));
+    }
+}

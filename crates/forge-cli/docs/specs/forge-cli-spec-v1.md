@@ -1740,7 +1740,9 @@ invocation's managed identity. Provider permission errors remain errors.
 - `security alerts dismiss NUMBER --reason false-positive|wont-fix|used-in-tests|mitigated
   --comment-file PATH` and `security alerts reopen NUMBER` change a GitHub
   code-scanning alert in the selected repository using the write-scoped identity.
-  Dismissal requires a nonblank UTF-8 comment.
+  Dismissal requires a nonblank UTF-8 comment in a regular file of at most
+  65,536 bytes. Provider-bound text guards reject local paths and other unsafe
+  text.
 - Alert transition JSON success schemas are `cli.forge-cli.security.alerts.dismiss.v1` and
   `cli.forge-cli.security.alerts.reopen.v1`; data contains `provider`, `host`,
   `repo`, `number`, `state`, `dismissed_reason`, `dismissed_comment`, and `url`.
