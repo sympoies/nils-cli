@@ -365,16 +365,17 @@ A trusted non-session operator launcher may additionally pass `--attest-role`
 with both `--forge-initiator ID` and `--role ROLE`. This records `attested_role`
 in the immutable launch context for that session alone. The optional field must
 exactly match `role`; absent provenance grants no attested role. It is omitted
-on existing bindings and on ordinary launches. Managed callers receive
-`role-attestation-forbidden` before any session is created, including with
-`--no-parent`. Resume cannot request new attestation. Adoption, display metadata,
-and resume preserve the original provenance.
+on existing bindings and on ordinary launches. Direct local attestation
+from a managed caller returns `role-attestation-forbidden`, including with
+`--no-parent`. Console can sponsor an independently authorized
+[attested root](console-attested-create-v1.md). Resume cannot request new
+attestation. Adoption, display metadata and resume preserve the original
+provenance.
 
-Every managed child launch clears `attested_role`, including local children,
-console children, and `--no-parent` roots that retain an initiator. A child may
-choose the same ordinary role, but that label is not operator attestation.
-The trusted launcher must explicitly attest each replacement supervisor session;
-its stable role name can then survive session restarts in a consumer policy.
+Every ordinary managed launch clears `attested_role`, including local and
+Console children and `--no-parent` roots that retain an initiator. An ordinary
+role label confers no attestation. Each replacement supervisor session
+requires its own trusted local or Console attestation.
 
 For example, the launcher requests `agent-session start --agent codex
 --forge-initiator operator --role steward --attest-role` for each supervisor
@@ -387,12 +388,14 @@ code that can modify the private registry or impersonate the operator launcher.
 A same-user process that removes its managed environment or replaces the broker
 executable is outside this guarantee.
 
-The authenticated attestation audit tuple is `initiator` (the configured
-operator-launcher identity), `session_created_at` (when the immutable attestation
-was created), `attested_role` (which role), and `session_id` with
-`session_incarnation` (which acting session/runtime). Attestation is created only
-with a new session, so no separate retroactive timestamp or identity is inferred.
-The stored record retains the same initiator, creation time, role and session ID.
+The authenticated attestation audit tuple includes `initiator`,
+`session_created_at`, `attested_role`, `session_id` and `session_incarnation`.
+A local attestation uses the configured operator-launcher identity. An
+attested Console root uses the reserved daemon initiator `console-relay`.
+The Console relay keeps its dispatch attribution in the private
+[operation receipt](console-attested-create-v1.md#operation-and-replay).
+Attestation is created with the new record. The original initiator,
+creation time, role and session ID persist.
 
 Generic HTTP `POST /sessions` refuses any `lineage.forge_context` with HTTP 400
 `identity_session_binding_untrusted` before creating a record. HTTP authentication
@@ -401,9 +404,11 @@ authenticated local child launches produce the binding.
 
 Authenticated Console child requests reconstruct context from the caller's
 record, replacing caller-supplied lineage. Forwarding a bound context through
-generic HTTP creation fails closed. Console roots and bound child forwarding
-require a separately implemented, verified launch-owner protocol. Existing records
-without context remain valid but cannot satisfy a required forge binding.
+generic HTTP creation fails closed. The
+[attested Console create contract](console-attested-create-v1.md) supplies a
+daemon-owned forge context for fresh roots. It grants no authority for bound
+child forwarding. Existing records without context cannot satisfy a required
+forge binding.
 
 `broker identity --session ID [--capability-file FILE] --format json` is a
 metadata-only authenticated projection, with envelope
@@ -430,9 +435,9 @@ none; readers treat an absent `role` as null.
 | --- | --- | --- |
 | `work-ref-invalid` | usage / 400 | A reference outside the grammar, more than 4 issues, or an invalid `work` object. |
 | `lineage-invalid` | usage / 400 | A create body `lineage` with an invalid shape. |
-| `identity_session_binding_untrusted` | usage / 400 | Generic HTTP creation supplied a forge launch context without verified launch ownership. |
+| `identity_session_binding_untrusted` | usage / 400 | Generic HTTP creation supplied a forge launch context, or an attested Console create supplied caller-owned role, forge identity or attestation credentials. |
 | `role-invalid` | usage / 400 | A malformed role identifier or non-string role. |
-| `role-requires-root` | usage / 400 | A `role` on a start that has a parent. |
+| `role-requires-root` | usage / 400 | A `role` on a start that has a parent, or an attested Console create that supplies caller lineage or lacks explicit root intent. |
 | `lineage-parent-mismatch` | usage / 400 | The console edge found `lineage.parent` differing from the relaying session. `console_start` forwards it, with `role-invalid`, `lineage-invalid` and `work-ref-invalid`, as a usage error. |
 | `lineage-depth-exceeded` | usage / 400 | A start deeper than 64. |
 | `lineage-revision-conflict` | data | `lineage adopt --if-revision` does not match. |

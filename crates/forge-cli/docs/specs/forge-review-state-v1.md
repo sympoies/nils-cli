@@ -383,16 +383,15 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
 - A `role:` supervisor entry matches only `attested_role` from a fresh
   authenticated `agent-session broker identity` binding. The broker verifies
   the caller capability and current runtime incarnation; the consumer requires
-  its session/incarnation to match the acting managed session. The trusted
-  operator launcher must have requested `--attest-role` for that specific
-  session. Children cannot inherit or self-assign this provenance. Ordinary
-  roles, board labels, titles, and inherited initiators confer no supervisor
-  authority. The role name survives session replacement; each replacement
-  requires its own operator attestation.
+  its session/incarnation to match the acting managed session. Each session
+  needs its own trusted operator `--attest-role` launch or
+  [attested Console root](../../../agent-session/docs/specs/console-attested-create-v1.md).
+  Children cannot inherit or self-assign this provenance. Ordinary roles,
+  board labels, titles and inherited initiators confer no supervisor authority.
 
-  This uses agent-session's existing
-  same-OS-user trusted-launcher boundary, not credential isolation from code
-  that can modify the private registry. Digest entries do not require a role
+  This uses agent-session's trusted launch boundaries and private registry.
+  Code that can modify the private registry is outside that guarantee.
+  Digest entries do not require a role
   binding; an exact digest match takes precedence in a mixed allow-list.
   The supervisor must remain distinct from both recorded coordinator and
   assigned reviewer, regardless of how it matches the policy.

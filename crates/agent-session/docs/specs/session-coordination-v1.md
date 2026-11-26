@@ -520,6 +520,10 @@ field that names an owner: the aggregator takes the owner from the caller's
 exact Console grant. With federation unconfigured the route fails with
 `console-start-disabled` (HTTP 409).
 
+[Attested Console creation](console-attested-create-v1.md) defines the
+explicit `attest_role: true` extension for authorized fresh roots, including
+relay capability discovery and an explicit session ID.
+
 The CLI's `--operation-id` has the same canonical UUIDv7 requirement; a UUID of another version
 or a malformed ID fails with `console-start-invalid` and a UUIDv7 diagnostic. A valid ID with
 session fields creates or reconciles the identical submission without another launch;

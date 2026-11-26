@@ -120,6 +120,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/agent-session/docs/specs/resume-move-proof-v1.md`
 - `crates/agent-session/docs/specs/console-resume-move-v1.md`
 - `crates/agent-session/docs/specs/console-resume-move-transport-v1.md`
+- `crates/agent-session/docs/specs/console-attested-create-v1.md`
 - `crates/agent-session/docs/specs/scoped-worker-delegation-v1.md`
 - `crates/agent-session/docs/specs/session-board-v1.md`
 - `crates/agent-session/docs/specs/session-context-usage-v1.md`

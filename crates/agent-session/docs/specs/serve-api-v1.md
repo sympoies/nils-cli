@@ -23,7 +23,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `DELETE /shells/{owner}` | Bearer + incarnation body | [Emergency shells](serve-api-v1.md#emergency-shells) |
 | `GET /shells/{owner}/attach?incarnation=...` | Bearer + incarnation query | [Emergency shells](serve-api-v1.md#emergency-shells) |
 | `GET /sessions` | Open; the `resume_move` lineage field only for Bearer requests | [Observation](serve-observation-v1.md); [context usage v1](session-context-usage-v1.md); [Console resume-move v1](console-resume-move-v1.md#destination-admission-and-lineage) |
-| `POST /sessions` | Bearer | [Session creation](serve-session-create-v1.md) |
+| `POST /sessions` | Bearer for ordinary creation. Attested creation also requires its dedicated credential and binding. | [Session creation](serve-session-create-v1.md), [attested Console creation](console-attested-create-v1.md) |
 | `GET /history/sessions` | Bearer | [History and archive](serve-history-v1.md) |
 | `GET /history/sessions/{history_id}/messages` | Bearer | [History and archive](serve-history-v1.md) |
 | `GET /history/sessions/{history_id}/images/{image_id}` | Bearer | [History images v1](history-images-v1.md) |
