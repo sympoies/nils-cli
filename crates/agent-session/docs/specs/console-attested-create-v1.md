@@ -14,9 +14,17 @@ caller grant and permitted destination using the trust boundary in the
 [resume-move transport](console-resume-move-transport-v1.md#delegated-caller-binding).
 An explicit server-side allowlist of authenticated dispatch callers maps
 an eligible launch to the literal role `steward`. The relay checks that
-policy for every attested dispatch. A caller may request an attested
-launch, but supplies no identity or role value to attest. A managed
-dispatcher may sponsor a root without becoming its lineage parent.
+policy for every attested dispatch.
+
+The authenticated `POST /api/coordination/sessions/v1` request opts in
+with the JSON boolean `attest_role: true` at the top level, beside
+`source_session_id` and `source_incarnation`. This field conveys intent
+only. The relay consumes it and never forwards it to the destination.
+An omitted field or `attest_role: false` selects ordinary creation.
+An ordinary `role` label never opts in. For `true`, the relay requires a fresh root, no
+caller-supplied role or forge identity, and a matching grant. If any
+check fails, refuse before forwarding. A managed dispatcher may sponsor
+a root without becoming its lineage parent.
 
 Console continues to apply its existing ownership, destination and
 account admission. The relay constructs its destination request from
@@ -118,6 +126,7 @@ Other routes cannot consume this binding as launch authority.
 
 | Boundary | HTTP | Code | Condition |
 | --- | --- | --- | --- |
+| Console relay | 400 | `console-create-invalid-body` | The dispatch request repeats `attest_role` or supplies a non-boolean value, including null. |
 | Console relay | 403 | `console-create-attestation-forbidden` | An authenticated caller requests attestation without a matching current role grant or uses a destination outside that grant. Advise using an authorized dispatch caller and destination. |
 | Destination | 503 | `token-not-configured` | The destination machine bearer is unconfigured. |
 | Destination | 401 | `unauthorized` | The machine bearer is missing or invalid, or an attested request has a repeated bearer or a missing, invalid or repeated ingress credential. |
@@ -126,8 +135,8 @@ Other routes cannot consume this binding as launch authority.
 | Destination | 403 | `console-create-role-forbidden` | A validly shaped and matched binding proposes any role string other than the exact literal `steward`. |
 | Destination | 400 | `console-create-invalid-body` | After binding and role verification the attested body is invalid UTF-8 or JSON, is not an object, or contains duplicate JSON keys. |
 | Console relay or destination | 400 | `identity_session_binding_untrusted` | Any `lineage.forge_context` member, even if null. An attested request also refuses body `role` or any explicit forge identity field (`forge_context`, `initiator`, `attested_role`) at the root or in `lineage`. Console uses the same refusal for a client-supplied binding or ingress header. |
-| Destination | 400 | `role-requires-root` | The attested create supplies valid parented session lineage. |
-| Destination | 400 | `resume-unsupported` | The attested create requests a provider import or a resume. |
+| Console relay or destination | 400 | `role-requires-root` | The attested create supplies valid parented session lineage. |
+| Console relay or destination | 400 | `resume-unsupported` | The attested create requests a provider import or a resume. |
 
 Ordinary bearer-authenticated creates may still carry an ordinary
 `role` under the existing root rule. They cannot set a forge launch
@@ -152,7 +161,10 @@ copying raw transport diagnostics.
   The role is provenance, and the existing same-OS-user launcher and
   private registry trust boundary still applies. Existing access to
   control a running session remains outside the create-time guarantee.
-- Verify that a grant-matched request creates a fresh Console root with
+- Verify that only explicit true opts in. An absent or false flag with
+  an ordinary `steward` label leaves ordinary creation in effect. The
+  flag never reaches the destination.
+- Verify that a grant-matched opt-in creates a fresh Console root with
   the server-set context and that its broker-authenticated
   `role:steward` satisfies the configured Forge selector. Exercise the
   same call from an ordinary `steward`-labeled session, from a child and
