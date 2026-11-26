@@ -79,8 +79,9 @@ For optional runtime tools used by individual CLIs, see `BINARY_DEPENDENCIES.md`
 source of the version. A floating `stable` moved under CI without a change in the
 repository, so every place that selects a toolchain names that same release:
 
-- each `dtolnay/rust-toolchain@X.Y.Z` step in `.github/workflows/`; every job that
-  runs `cargo` or `rustc` installs it explicitly before its first cargo step,
+- the explicit `toolchain: X.Y.Z` input of each commit-pinned
+  `dtolnay/rust-toolchain` step in `.github/workflows/`; every job that runs
+  `cargo` or `rustc` installs it explicitly before its first cargo step,
   including the release-preparation and dependabot workflows
 - `rustup`, `cargo +channel` and `RUSTUP_TOOLCHAIN` uses in workflows and under
   `scripts/`
@@ -94,9 +95,9 @@ cannot become additional version sources; review additions of these files agains
 this root-only rule.
 
 `python3 scripts/ci/toolchain-pin-audit.py` fails on a version other than the file's,
-on a floating or missing ref (`stable`, `beta`, `nightly`, `@master`, no `@`), and on a
-job that runs cargo without the pinned step. It runs in `--local-fast`, the scoped CI
-checks and the full checks. It sees cargo only as a command word in a `run:` block, so
+on an action ref other than the audited commit, a missing or mismatched toolchain
+input, and on a job that runs cargo without the pinned step. It runs in
+`--local-fast`, the scoped CI checks and the full checks. It sees cargo only as a command word in a `run:` block, so
 a job that reaches cargo only through a script (`cargo-deny-audit.sh`) is not detected.
 This is an accepted exception for the `cargo_deny` jobs in `ci.yml` and
 `full-validation.yml`: they install a prebuilt `cargo-deny` and run advisory and
@@ -107,8 +108,9 @@ discovery is outside this text audit, so review such changes explicitly.
 
 Bump the toolchain in one reviewed PR that does nothing else:
 
-1. Change the version in `rust-toolchain.toml` and every `dtolnay/rust-toolchain@`
-   ref, then run the audit; it names any place left on the old release.
+1. Change the version in `rust-toolchain.toml` and every `toolchain:` input on
+   a `dtolnay/rust-toolchain` step, then run the audit; it names any place left
+   on the old release.
 2. Fix the new compiler and clippy lints in the same PR.
 3. Check that tooling reading the `target/` layout still handles it
    (`scripts/ci/lib/target_guard.py` and the test-binary resolvers).
@@ -121,6 +123,13 @@ Bump the toolchain in one reviewed PR that does nothing else:
 6. Right after the merge, dispatch the manual full run on `main` so `full_validation`
    runs. It must be green before the next release; if it fails, a fix PR or a revert
    goes first and the release waits.
+
+To update the action implementation independently, review the upstream `master`
+commit and its `action.yml`, then replace the commit in every workflow,
+`scripts/ci/toolchain-pin-audit.py`, and its fixture test in one PR. Run the audit
+and its tests, the release workflow contract test, and the hosted PR checks.
+Dependabot ignores this action because numbered upstream refs select a Rust
+release rather than an action release; maintainers perform these updates manually.
 
 ## 2. Build and quick smoke checks
 

@@ -108,7 +108,7 @@ assert_contains .github/workflows/release-cache.yml "cargo build --release --wor
 # runner, or toolchain step that differs between the two workflows makes every
 # release restore miss without failing anything.
 release_build_signature() {
-  rg --no-filename '^\s*(- runs_on:|target:|uses: dtolnay/rust-toolchain@|targets:)' "$1" |
+  rg --no-filename '^\s*(- runs_on:|target:|uses: dtolnay/rust-toolchain@|targets:|toolchain:)' "$1" |
     sed -E 's/^[[:space:]]*(- )?//'
 }
 if [[ "$(release_build_signature .github/workflows/release.yml)" != \
