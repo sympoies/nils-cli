@@ -1318,3 +1318,78 @@ fn completion_export_succeeds_outside_git_repo() {
         output.stdout_text()
     );
 }
+
+#[test]
+fn test_first_tiers_record_failing() {
+    for (exit, observed, refusal) in [
+        (
+            "101",
+            "error[E0308]: mismatched types\nerror: could not compile lookup",
+            Some("failing-test-compile-error"),
+        ),
+        (
+            "101",
+            "error[E0425]: cannot find function lookup in this scope",
+            Some("failing-test-missing-symbol"),
+        ),
+        ("124", "test timed out", Some("failing-test-timeout")),
+        (
+            "101",
+            "test lookup timed out after 30s",
+            Some("failing-test-timeout"),
+        ),
+        (
+            "101",
+            "assertion failed: expected an item before timeout",
+            None,
+        ),
+    ] {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let out = out_arg(tmp.path());
+        let init = run(
+            tmp.path(),
+            &["init", "--out", &out, "--classification", "bug-fix"],
+        );
+        assert_eq!(init.code, 0, "{init:?}");
+
+        let record = tmp.path().join("test-first-evidence.json");
+        let before = fs::read(&record).unwrap();
+        let result = run(
+            tmp.path(),
+            &[
+                "record-failing",
+                "--out",
+                &out,
+                "--command",
+                "cargo test lookup",
+                "--exit-code",
+                exit,
+                "--summary",
+                "Lookup regression before the fix",
+                "--expected-failure",
+                "Expected an item",
+                "--observed-failure",
+                observed,
+                "--test-name",
+                "lookup",
+                "--format",
+                "json",
+            ],
+        );
+        let envelope = result.stdout_json();
+        match refusal {
+            Some(code) => {
+                assert_eq!(envelope["error"]["code"], code, "{observed}: {result:?}");
+                assert_eq!(result.code, 65, "{result:?}");
+                assert_eq!(fs::read(&record).unwrap(), before);
+            }
+            None => {
+                assert_eq!(result.code, 0, "{result:?}");
+                assert_eq!(
+                    envelope["result"]["mutation"]["item"]["observed_failure"],
+                    observed
+                );
+            }
+        }
+    }
+}

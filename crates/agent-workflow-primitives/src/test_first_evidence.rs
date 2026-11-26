@@ -1,4 +1,5 @@
 mod cli;
+mod failing_evidence;
 mod retro_binding;
 mod verification;
 pub use retro_binding::RetroBinding;
@@ -21,9 +22,8 @@ use sha2::{Digest, Sha256};
 
 use cli::{
     BindDeliveryArgs, ChangeClassification, CheckArgs, CheckPhase, Cli, Command, CommonArgs,
-    InitArgs, OutputFormat, RecordFailingArgs, RecordFinalArgs, RecordGapArgs, RecordImpactArgs,
-    RecordWaiverArgs, SubjectArgs, TestDisposition, ValidationScope, ValidationStatus, VerifyArgs,
-    WaiverKind,
+    InitArgs, OutputFormat, RecordFinalArgs, RecordGapArgs, RecordImpactArgs, RecordWaiverArgs,
+    SubjectArgs, TestDisposition, ValidationScope, ValidationStatus, VerifyArgs, WaiverKind,
 };
 use nils_common::cli_contract::exit;
 use nils_common::fs::{display_path, normalize_path};
@@ -39,8 +39,6 @@ const V1_RECORD_SCHEMA_VERSION: &str = "test-first-evidence.record.v1";
 const RECORD_FILE_NAME: &str = "test-first-evidence.json";
 
 const INIT_SCHEMA_VERSION: &str = "cli.test-first-evidence.init.v2";
-const RECORD_FAILING_SCHEMA_VERSION: &str = "cli.test-first-evidence.record-failing.v2";
-const RECORD_FAILING_RECEIPT_SCHEMA_VERSION: &str = "cli.test-first-evidence.record-failing.v3";
 const RECORD_IMPACT_SCHEMA_VERSION: &str = "cli.test-first-evidence.record-impact.v2";
 const RECORD_WAIVER_SCHEMA_VERSION: &str = "cli.test-first-evidence.record-waiver.v2";
 const RECORD_FINAL_SCHEMA_VERSION: &str = "cli.test-first-evidence.record-final.v2";
@@ -54,7 +52,6 @@ const SHOW_SCHEMA_VERSION: &str = "cli.test-first-evidence.show.v2";
 const CHECK_SCHEMA_VERSION: &str = "cli.test-first-evidence.check.v2";
 
 const INIT_COMMAND: &str = "test-first-evidence init";
-const RECORD_FAILING_COMMAND: &str = "test-first-evidence record-failing";
 const RECORD_IMPACT_COMMAND: &str = "test-first-evidence record-impact";
 const RECORD_WAIVER_COMMAND: &str = "test-first-evidence record-waiver";
 const RECORD_FINAL_COMMAND: &str = "test-first-evidence record-final";
@@ -92,7 +89,7 @@ where
 fn dispatch(cli: Cli) -> i32 {
     match cli.command {
         Command::Init(args) => run_init(args),
-        Command::RecordFailing(args) => run_record_failing(args),
+        Command::RecordFailing(args) => failing_evidence::run_record_failing(args),
         Command::RecordImpact(args) => run_record_impact(args),
         Command::RecordWaiver(args) => run_record_waiver(args),
         Command::RecordFinal(args) => final_validation::run_record_final(args),
@@ -267,71 +264,6 @@ fn run_init(args: InitArgs) -> i32 {
     match init_record(&args) {
         Ok(result) => render_record_success(INIT_SCHEMA_VERSION, INIT_COMMAND, format, &result),
         Err(err) => render_error(INIT_SCHEMA_VERSION, INIT_COMMAND, format, err),
-    }
-}
-
-fn run_record_failing(args: RecordFailingArgs) -> i32 {
-    let format = args.common.format;
-    let full_record = args.output.full_record;
-    match update_record_with_item(args.common.out_dir.as_path(), |record| {
-        let command = required_text(Some(&args.command), "--command", "missing-failing-command")?;
-        let summary = required_text(Some(&args.summary), "--summary", "missing-failing-summary")?;
-        let expected_failure = required_text(
-            Some(&args.expected_failure),
-            "--expected-failure",
-            "missing-expected-failure",
-        )?;
-        let observed_failure = required_text(
-            Some(&args.observed_failure),
-            "--observed-failure",
-            "missing-observed-failure",
-        )?;
-        let evidence = FailingEvidence {
-            command: redact_text(command).value,
-            exit_code: args.exit_code,
-            summary: redact_text(summary).value,
-            expected_failure: redact_text(expected_failure).value,
-            observed_failure: redact_text(observed_failure).value,
-            test_name: args
-                .test_name
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(|value| redact_text(value).value),
-            artifacts: normalized_paths(&args.artifact),
-        };
-        let duplicate = record.failing_tests.iter().any(|item| {
-            item.command.trim() == evidence.command
-                && item.test_name.as_deref().map(str::trim) == evidence.test_name.as_deref()
-        });
-        if duplicate {
-            return Err(CliError::data(
-                "duplicate-failing-evidence",
-                "failing evidence with the same command and test name already exists",
-                None,
-            ));
-        }
-        record.failing_tests.push(evidence.clone());
-        record.failing_tests.sort_by(|left, right| {
-            (&left.test_name, &left.command).cmp(&(&right.test_name, &right.command))
-        });
-        Ok(evidence)
-    }) {
-        Ok((result, item)) => render_mutation_success(
-            RECORD_FAILING_RECEIPT_SCHEMA_VERSION,
-            RECORD_FAILING_SCHEMA_VERSION,
-            RECORD_FAILING_COMMAND,
-            format,
-            full_record,
-            &result,
-            &item,
-        ),
-        Err(err) => render_error(
-            RECORD_FAILING_SCHEMA_VERSION,
-            RECORD_FAILING_COMMAND,
-            format,
-            err,
-        ),
     }
 }
 
@@ -784,8 +716,8 @@ fn v1_record_error(record_file: Option<String>) -> CliError {
 
 /// Verify test-first evidence for external callers such as `forge-cli`'s PR
 /// gate. Returns a [`VerifyResult`] or an error for missing/unreadable records.
-/// A record is complete when it has a failing test or waiver, plus passing
-/// final validation.
+/// Feature records may omit the failing test or waiver. Passing final validation
+/// is required.
 pub fn verify_dir(out_dir: &Path) -> Result<VerifyResult, String> {
     let result = read_record_result(out_dir).map_err(|err| err.message)?;
     let missing = missing_evidence_fields(&result.record);
@@ -960,7 +892,9 @@ fn missing_evidence_fields(record: &EvidenceRecord) -> Vec<String> {
         }
     } else {
         if record.failing_tests.is_empty() {
-            missing.push("failing_tests_or_waiver".to_string());
+            if classification != Some(ChangeClassification::Feature) {
+                missing.push("failing_tests_or_waiver".to_string());
+            }
         } else {
             if record.failing_tests.iter().any(|item| item.exit_code == 0) {
                 missing.push("failing_tests_nonzero_exit".to_string());
@@ -970,6 +904,8 @@ fn missing_evidence_fields(record: &EvidenceRecord) -> Vec<String> {
                     || item.summary.trim().is_empty()
                     || item.expected_failure.trim().is_empty()
                     || item.observed_failure.trim().is_empty()
+                    || failing_evidence::invalid_failure(item.exit_code, &item.observed_failure)
+                        .is_some()
                     || item
                         .test_name
                         .as_deref()
@@ -1619,6 +1555,10 @@ fn print_record_text(record: &EvidenceRecord, complete: bool) {
             "failing-test"
         } else if record.waiver.is_some() {
             "waiver"
+        } else if ChangeClassification::parse(&record.change_classification)
+            == Some(ChangeClassification::Feature)
+        {
+            "optional"
         } else {
             "missing"
         }

@@ -286,8 +286,23 @@ It retains log digests and chronology attestation without replacing prior bindin
 Classification is a closed set:
 `behavior-change|bug-fix|feature|docs-only|config-only|generated-only|refactor-only`.
 The first three are testable and must declare at least one changed, added, or
-removed behavior. Feature/bug forge delivery accepts only those testable
-classifications.
+removed behavior. The evidence tracks the test-first tiers:
+
+- **A (bug or regression fix, boundary contract, security)** requires a
+  meaningful red first from the expected assertion. Use `bug-fix` or
+  `behavior-change`, and record a waiver with substitute validation if a
+  meaningful red is impractical.
+- **B (feature)** requires acceptance criteria first and stable-interface
+  tests before merge. Use `feature`, capture the criteria in the contract
+  delta, and record passing interface tests for the delivery head. A red
+  record or waiver is optional.
+- **C (docs, config, generated output, small UI tweak, spike)** requires
+  repository checks only and no record.
+
+`record-failing` uses the supplied exit code and observed diagnostic.
+It refuses compile errors (`failing-test-compile-error`), missing symbols
+(`failing-test-missing-symbol`), and timeouts (`failing-test-timeout`) with
+exit 65 and the corresponding JSON error code.
 
 JSON responses from `record-failing`, `record-final`, and `bind-delivery`
 default to compact `cli.test-first-evidence.<command>.v3` mutation receipts.
@@ -417,8 +432,8 @@ Stable subject reason codes are `subject-match`, `unbound-subject`,
 uses the repository's `[path_classes]` contract from the root
 `VALIDATION.toml` (the same contract drives `docs-impact`), and `delivery` is the
 phase-aware spelling of strict v2 completeness. Production paths require a
-contract delta, test-impact declaration, and meaningful failing evidence or a
-complete waiver; unknown and overlapping classes fail closed. A repository
+contract delta and test-impact declaration. Tier A also requires meaningful
+failing evidence or a complete waiver. Unknown and overlapping classes fail closed. A repository
 without a path-class contract reports `not-configured` without inventing
 language-specific rules.
 

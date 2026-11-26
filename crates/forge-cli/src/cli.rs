@@ -1276,11 +1276,11 @@ pub struct PrDeliverArgs {
     /// Fail when selected labels are missing, not applicable, or conflict.
     #[arg(long = "strict-labels", action = ArgAction::SetTrue)]
     pub strict_labels: bool,
-    /// Verified v2 test-first evidence for the current baseline and delivery
-    /// subject. The gate applies when `[test_first].require` is true and
-    /// `require_kinds` selects this kind (default: feature/bug). It also applies
-    /// to test-kind repairs and mixed changes when bug or test is selected.
-    /// The directory is forwarded to creation and checked on adoption.
+    /// Head-bound evidence for selected kinds (default: feature/bug) when `[test_first].require` is true.
+    /// Tier A requires a meaningful red from the expected assertion or a waiver.
+    /// Tier B uses acceptance criteria first and stable-interface tests before merge.
+    /// A red record is optional. Tier C uses repository checks only by default.
+    /// Test-kind repairs and mixed changes require evidence when bug or test is selected.
     #[arg(long = "test-first-evidence", value_name = "DIR")]
     pub test_first_evidence: Option<String>,
     /// Cumulative CI-wait budget before declaring `checks_timeout` (default `30m`).

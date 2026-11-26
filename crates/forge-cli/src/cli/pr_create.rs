@@ -38,13 +38,13 @@ pub struct PrCreateArgs {
     /// Fail when selected labels are missing, not applicable, or conflict.
     #[arg(long = "strict-labels", action = ArgAction::SetTrue)]
     pub strict_labels: bool,
-    /// Directory holding a `test-first-evidence` record. Verified by the
-    /// test-first gate when `[test_first].require` is true and `require_kinds`
-    /// selects this kind (default: feature/bug). Test-kind repairs and mixed
-    /// changes are gated when bug or test is selected. Requires a complete v2 record
-    /// with a testable classification, pre-fix evidence, scoped final validation, a
-    /// residual-gap declaration, and a bound baseline/delivery subject
-    /// matching the current checkout.
+    /// Head-bound evidence when `[test_first].require` is true and `require_kinds`
+    /// selects this kind (default: feature/bug).
+    /// Tier A requires a meaningful red from the expected assertion, or a waiver.
+    /// Tier B requires acceptance criteria first and stable-interface tests before merge.
+    /// A red record is optional. Tier C uses repository checks only under the default
+    /// kind selection. Test-kind repairs and mixed changes also require evidence
+    /// when bug or test is selected.
     #[arg(long = "test-first-evidence", value_name = "DIR")]
     pub test_first_evidence: Option<String>,
     /// Number of an earlier PR / MR this one supersedes. With

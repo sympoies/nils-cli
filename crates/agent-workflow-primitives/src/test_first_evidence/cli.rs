@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
     about = "Record test-first evidence and waivers for agent workflows.",
     long_about = "Create and verify durable test-first evidence records that capture contract impact, meaningful failures, waivers, residual gaps, and scoped final validation.",
     disable_help_subcommand = true,
-    after_help = "EXAMPLES:\n  test-first-evidence init --out /tmp/evidence --classification behavior-change --production-path src/lib.rs --changed-behavior 'new contract'\n  test-first-evidence bind-baseline --out /tmp/evidence --project-path .\n  test-first-evidence record-impact --out /tmp/evidence --target tests/lib.rs::contract --disposition add-missing --protected-behavior 'new contract' --reason 'no owner test exists'\n  test-first-evidence record-failing --out /tmp/evidence --command 'cargo test contract' --exit-code 101 --summary 'bug reproduced' --expected-failure 'new contract missing' --observed-failure 'assertion mismatch' --format json\n  test-first-evidence record-final --out /tmp/evidence --command 'cargo test contract' --status pass --scope focused --format json\n  test-first-evidence record-gap --out /tmp/evidence --none\n  test-first-evidence bind-delivery --out /tmp/evidence --project-path . --format json\n  test-first-evidence bind-delivery --out /tmp/evidence --project-path . --format json --full-record\n  test-first-evidence verify --out /tmp/evidence --project-path . --format json\n  test-first-evidence completion zsh\n\nJSON MUTATIONS:\n  record-failing, record-final, and bind-delivery return compact receipts by default.\n  Pass --full-record to those commands for the complete evidence record.\n\nENVIRONMENT:\n  none\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error\n  65  invalid input data"
+    after_help = "EXAMPLES:\n  test-first-evidence init --out /tmp/evidence --classification behavior-change --production-path src/lib.rs --changed-behavior 'new contract'\n  test-first-evidence bind-baseline --out /tmp/evidence --project-path .\n  test-first-evidence record-impact --out /tmp/evidence --target tests/lib.rs::contract --disposition add-missing --protected-behavior 'new contract' --reason 'no owner test exists'\n  test-first-evidence record-failing --out /tmp/evidence --command 'cargo test contract' --exit-code 101 --summary 'bug reproduced' --expected-failure 'new contract missing' --observed-failure 'assertion mismatch' --format json\n  test-first-evidence record-final --out /tmp/evidence --command 'cargo test contract' --status pass --scope focused --format json\n  test-first-evidence record-gap --out /tmp/evidence --none\n  test-first-evidence bind-delivery --out /tmp/evidence --project-path . --format json\n  test-first-evidence bind-delivery --out /tmp/evidence --project-path . --format json --full-record\n  test-first-evidence verify --out /tmp/evidence --project-path . --format json\n  test-first-evidence completion zsh\n\nTEST-FIRST TIERS:\n  A (bug or regression fix, boundary contract, security): a meaningful red first from the expected assertion.\n  B (feature): acceptance criteria first and stable-interface tests before merge. No red record is required.\n  C (docs, config, generated output, small UI tweak, spike): repository checks only, no record.\n\nJSON MUTATIONS:\n  record-failing, record-final, and bind-delivery return compact receipts by default.\n  Pass --full-record to those commands for the complete evidence record.\n\nENVIRONMENT:\n  none\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error\n  65  invalid input data"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -23,7 +23,11 @@ pub struct Cli {
 pub enum Command {
     /// Create a deterministic evidence record.
     Init(InitArgs),
-    /// Record a failing test or reproducible failure before the fix.
+    /// Record the expected assertion failure before the fix.
+    ///
+    /// Tier A requires a meaningful red first. Compile errors, missing symbols
+    /// and timeouts are refused. If a meaningful red is impractical, use
+    /// record-waiver with substitute validation.
     RecordFailing(RecordFailingArgs),
     /// Record one materially affected test target or declare none exist.
     RecordImpact(RecordImpactArgs),
@@ -119,7 +123,7 @@ pub struct InitArgs {
     #[command(flatten)]
     pub common: CommonArgs,
 
-    /// Change classification. Feature/bug delivery requires a testable classification.
+    /// Change classification. Use feature for tier B, and bug-fix or behavior-change for tier A.
     #[arg(long, value_enum)]
     pub classification: ChangeClassification,
 
@@ -180,7 +184,7 @@ pub struct RecordFailingArgs {
     #[arg(long = "expected-failure", value_name = "TEXT")]
     pub expected_failure: String,
 
-    /// Failure actually observed in the before-fix run.
+    /// Assertion failure actually observed in the before-fix run.
     #[arg(long = "observed-failure", value_name = "TEXT")]
     pub observed_failure: String,
 
