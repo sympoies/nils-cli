@@ -48,6 +48,7 @@ impl LexicalState {
         let mut masked = vec![b' '; line.len()];
         let mut offset = 0;
         let mut escaped_at_end = false;
+        let mut last_token_is_literal = self.literal.is_some();
         while offset < line.len() {
             let rest = &line[offset..];
             let advance = if let Some(literal) = &self.literal {
@@ -93,11 +94,23 @@ impl LexicalState {
             } else if language != Language::Python && rest.starts_with("/*") {
                 self.block_depth = 1;
                 2
+            } else if language == Language::JavaScript
+                && rest.starts_with('/')
+                && !last_token_is_literal
+                && javascript_regex_context(&masked[..offset])
+                && let Some(length) = javascript_regex_length(rest)
+            {
+                last_token_is_literal = true;
+                length
             } else if let Some((literal, length)) = opening(rest, language) {
                 self.literal = Some(literal);
+                last_token_is_literal = true;
                 length
             } else {
                 let length = char_len(rest);
+                if !rest[..length].chars().all(char::is_whitespace) {
+                    last_token_is_literal = false;
+                }
                 masked[offset..offset + length].copy_from_slice(&rest.as_bytes()[..length]);
                 length
             };
@@ -158,6 +171,56 @@ fn opening(text: &str, language: Language) -> Option<(Literal, usize)> {
         },
         delimiter.len(),
     ))
+}
+
+/// A slash can start a regex where an expression is expected. The prefix
+/// keeps code and masks literal and comment contents at their source offsets.
+fn javascript_regex_context(prefix: &[u8]) -> bool {
+    let code = std::str::from_utf8(prefix)
+        .expect("mask preserves UTF-8")
+        .trim_end();
+    if code.is_empty()
+        || code.ends_with(['=', '(', '[', '{', ',', ':', ';', '!', '?', '~', '&', '|'])
+        || code.ends_with("=>")
+    {
+        return true;
+    }
+    let keyword = code
+        .rsplit(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '$')))
+        .next()
+        .unwrap_or_default();
+    let before = &code[..code.len() - keyword.len()];
+    !before.trim_end().ends_with('.')
+        && matches!(
+            keyword,
+            "return" | "throw" | "case" | "delete" | "void" | "typeof" | "yield"
+        )
+}
+
+/// A regex literal closes on the same line, outside an escape or character set.
+fn javascript_regex_length(text: &str) -> Option<usize> {
+    let mut in_class = false;
+    let mut escaped = false;
+    for (offset, byte) in text.bytes().enumerate().skip(1) {
+        if std::mem::take(&mut escaped) {
+            continue;
+        }
+        match byte {
+            b'\\' => escaped = true,
+            b'[' => in_class = true,
+            b']' => in_class = false,
+            b'/' if !in_class => {
+                let end = offset + 1;
+                let flags = text[end..]
+                    .bytes()
+                    .take_while(u8::is_ascii_alphabetic)
+                    .count();
+                return Some(end + flags);
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn rust_char(text: &str) -> bool {

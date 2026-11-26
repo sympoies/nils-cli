@@ -53,6 +53,10 @@ with `#[rstest]` or `#[test_case(...)]`. Macro expansion and runtime generation
 require manual review. Removing `#[cfg(test)] mod tests;` also requires a
 declaration, including when the attribute is on the preceding line.
 
+JavaScript scope keys recognize `describe`, `describe.only` and `describe.skip`
+with a static title and callback. Parameterized suites, other suite modifiers,
+and options-first suite signatures require manual review.
+
 JavaScript case titles can start on a later line and contain escaped quotes.
 An `it.each` or `test.each` table has one row keyed by its title, for example
 `deleted-test:it.each('adds%i'`. Individual case removals from a surviving

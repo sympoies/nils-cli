@@ -94,7 +94,7 @@ fn the_retired_file_level_row_and_stale_rows_are_reported() {
 
 #[test]
 fn javascript_titles_on_their_own_line_are_extracted() {
-    let before = "it(\n  'handles x',\n  () => {},\n);\ntest(\n  // title follows\n  \"handles y\", () => {});\nit('keeps', () => {});";
+    let before = "it(\n  'handles x',\n  () => {},\n);\ntest(\n\n  // title follows\n  \"handles y\", () => {});\nit('keeps', () => {});";
     assert_eq!(
         deleted("tests/api.test.ts", before, "it('keeps', () => {});"),
         vec![
@@ -375,5 +375,27 @@ fn recognizable_test_declarations_inside_rust_macros_keep_the_module_path() {
     assert_eq!(
         deleted("src/lib.rs", before, &after),
         ["deleted-test:outer::concrete"]
+    );
+}
+
+#[test]
+fn javascript_regex_literals_preserve_later_test_deletions() {
+    let inputs = [
+        "const pattern = /`/g;",
+        r"const pattern = /src\/*.ts/;",
+        "const pattern = /[/`]/;",
+        r#"const ratio = "12" / /* } */ 2;"#,
+    ];
+    let findings = inputs.map(|input| {
+        let suite = format!("describe('suite', () => {{\n    {input}\n");
+        deleted(
+            "api.test.ts",
+            &format!("{suite}    test('removed', () => {{}});\n}});"),
+            &format!("{suite}}});"),
+        )
+    });
+    assert_eq!(
+        findings,
+        inputs.map(|_| vec!["deleted-test:describe('suite'::test('removed'".to_string()])
     );
 }
