@@ -538,3 +538,30 @@ printf '{"number":7,"state":"open"}'
             && row["operation"] == "api_write"
     }));
 }
+
+#[test]
+fn security_code_scanning_reopen_dry_run_describes_patch_without_calling_provider() {
+    let stub = StubEnv::new().gh_stub("#!/bin/sh\necho unexpected-backend >&2\nexit 97\n");
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "security",
+            "alerts",
+            "reopen",
+            "7",
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widget",
+            "--format",
+            "json",
+            "--dry-run",
+        ],
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    let plan = parse_envelope(&out.stdout)["data"]["plan"].to_string();
+    assert!(plan.contains("PATCH"));
+    assert!(plan.contains("repos/acme/widget/code-scanning/alerts/7"));
+    assert!(plan.contains("state=open"));
+    assert!(!plan.contains("dismissed_reason"));
+}
