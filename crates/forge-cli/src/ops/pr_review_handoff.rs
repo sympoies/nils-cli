@@ -598,8 +598,21 @@ fn prove_coordinator_retired(
     let records = board["records"]
         .as_array()
         .ok_or_else(diagnostics::board_unavailable)?;
+    let supports_retained = board["extensions"].as_array().is_some_and(|extensions| {
+        extensions
+            .iter()
+            .any(|extension| extension == "review_handoff_retention.v1")
+    });
+    let retained = supports_retained
+        .then(|| {
+            board["retained_for_review"]
+                .as_array()
+                .ok_or_else(diagnostics::board_unavailable)
+        })
+        .transpose()?;
     let matching: Vec<_> = records
         .iter()
+        .chain(retained.into_iter().flatten())
         .filter(|row| {
             row["session_id"]
                 .as_str()
