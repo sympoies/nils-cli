@@ -13,6 +13,7 @@ use std::{
 
 pub(super) mod backup;
 mod delivery;
+pub(super) mod eligibility;
 #[cfg(any(not(target_os = "linux"), test))]
 mod lsof;
 #[cfg(target_os = "linux")]
@@ -22,7 +23,7 @@ pub(super) mod recovery;
 pub(super) struct Fence {
     _registry: Option<lease::RemovalLeaseGuard>,
     checkout: Option<lease::RemovalLeaseGuard>,
-    _lifecycle: Option<worktree_lifecycle::Guard>,
+    lifecycle: Option<worktree_lifecycle::Guard>,
     pub(super) removed_branch: Option<String>,
     pub(super) removed_head: String,
     pub(super) delivered: bool,
@@ -138,12 +139,28 @@ pub(super) fn git_error_reason(output: &Output) -> String {
 }
 
 pub(super) fn probe(program: &str, args: &[&str], cwd: &Path) -> Result<Output, CliError> {
-    let mut command = Command::new(program);
-    command.args(args).current_dir(cwd);
-    if program == "git" {
-        lease::sanitize_git_environment(&mut command);
-    }
-    lease::removal_probe(&mut command).map_err(|error| {
+    let mut command = if program == "git" {
+        local_git_command(cwd)
+    } else {
+        let mut command = Command::new(program);
+        command.current_dir(cwd);
+        command
+    };
+    run_probe(command.args(args))
+}
+
+fn local_git_command(cwd: &Path) -> Command {
+    let mut command = Command::new("git");
+    lease::sanitize_git_environment(&mut command);
+    command
+        .current_dir(cwd)
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_ALLOW_PROTOCOL", "");
+    command
+}
+
+fn run_probe(command: &mut Command) -> Result<Output, CliError> {
+    lease::removal_probe(command).map_err(|error| {
         refused(
             "removal-proof-unavailable",
             "bounded local probe could not complete",
@@ -153,7 +170,10 @@ pub(super) fn probe(program: &str, args: &[&str], cwd: &Path) -> Result<Output, 
 }
 
 pub(super) fn git(target: &Path, args: &[&str]) -> Result<String, CliError> {
-    let output = probe("git", args, target)?;
+    git_stdout(probe("git", args, target)?)
+}
+
+fn git_stdout(output: Output) -> Result<String, CliError> {
     if !output.status.success() {
         return Err(
             refused("removal-proof-unavailable", "local Git operation failed")
@@ -422,6 +442,7 @@ pub(super) fn fence(
     target: &Path,
     layout: &WorktreeLayout,
     forge_delivery: bool,
+    conditional: bool,
 ) -> Result<Fence, CliError> {
     if !is_managed_worktree(target, layout) {
         return Err(refused(
@@ -473,6 +494,12 @@ pub(super) fn fence(
                 json!({"session_key":holder,"target":target,"evidence":"unexpired-checkout-lease"}),
             )),
             Ok((guard, None, notes)) => {
+                if conditional && !notes.is_empty() {
+                    return Err(refused(
+                        "removal-proof-unavailable",
+                        "checkout lease proof is unavailable",
+                    ));
+                }
                 warnings.extend(notes);
                 guard
             }
@@ -559,6 +586,12 @@ pub(super) fn fence(
             "target identity or HEAD changed",
         ));
     }
+    if conditional && (lifecycle.is_none() || checkout.is_none()) {
+        return Err(refused(
+            "removal-proof-unavailable",
+            "conditional removal requires both the lifecycle and checkout fences",
+        ));
+    }
     let delivery_proof = cached_delivery(&target, &head).or_else(|| {
         forge_delivery
             .then(|| delivery::lookup(&target, &head, removed_branch.as_deref()))
@@ -575,7 +608,7 @@ pub(super) fn fence(
     Ok(Fence {
         _registry: registry,
         checkout,
-        _lifecycle: lifecycle,
+        lifecycle,
         removed_branch,
         removed_head: head,
         delivered,

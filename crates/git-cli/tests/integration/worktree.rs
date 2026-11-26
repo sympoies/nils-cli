@@ -2249,3 +2249,6 @@ mod backup_signing;
 #[cfg(target_os = "linux")]
 #[path = "worktree/removal_atomicity.rs"]
 mod removal_atomicity;
+
+#[path = "worktree/removal_eligibility.rs"]
+mod removal_eligibility;
