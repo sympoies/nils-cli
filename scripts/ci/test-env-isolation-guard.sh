@@ -53,6 +53,9 @@ real_cargo_home="${CARGO_HOME:-${HOME:?HOME is required to locate cargo}/.cargo}
 real_rustup_home="${RUSTUP_HOME:-${HOME}/.rustup}"
 
 root="$(mktemp -d "${TMPDIR:-/tmp}/nils-env-guard.XXXXXX")"
+# The tests' TMPDIR lives under this root. Production code refuses state paths
+# that contain a symlink, so resolve any symlink in the caller's TMPDIR here.
+root="$(cd -P -- "$root" && pwd -P)"
 if [[ "${ENV_GUARD_KEEP:-0}" != 1 ]]; then
   trap 'rm -rf -- "$root"' EXIT
 fi

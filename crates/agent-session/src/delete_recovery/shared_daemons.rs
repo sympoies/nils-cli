@@ -143,7 +143,9 @@ mod tests {
         let copy = package.join("keyboxd");
         std::fs::write(&copy, b"fixture").unwrap();
         let mut policy = policy;
-        policy.excluded.push(package.clone());
+        policy
+            .excluded
+            .push(std::fs::canonicalize(&package).unwrap());
         assert!(gnupg_executable(&copy, Some(&policy)).is_none());
     }
 
