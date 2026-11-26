@@ -21,7 +21,7 @@ The capability is `resume-move-start/v1`. All three start routes use
 | Hop | Start route | Authority |
 | --- | --- | --- |
 | Managed caller to origin daemon | `POST /sessions/{caller}/console-resume-move/v1` | Authenticate the managed caller for this operation. Match the path and caller IDs and the caller incarnation to the authenticated runtime. |
-| Origin daemon to Console relay | `POST /api/coordination/resume-move/v1` | Authenticate the origin and resolve the exact caller grant. Verify the asserted owner and the destination against that grant. |
+| Origin daemon to Console relay | `POST /api/coordination/resume-move/v1` | Authenticate the origin and resolve the exact caller grant. Verify the destination against that grant and derive the owner from it. |
 | Console relay to destination daemon | `POST /sessions/resume-move/v1` | Authenticate the relay and verify the delegated caller, derived owner and route scope in the authenticated relay binding. Only the destination daemon may admit the move. |
 
 Each hop validates capability, version, shape and scope before forwarding
