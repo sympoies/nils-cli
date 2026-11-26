@@ -6,6 +6,10 @@
 - Managed callers can start an exact provider move through Console after v1
   capability discovery. The origin retains a private dispatch fence and reuses
   the original request for read-only reconciliation.
+- The origin scopes receipts and operation bindings to the authenticated
+  caller, bounds each caller's unresolved and retained moves, compacts
+  terminal receipts to their fence and reply, and refuses future-dated
+  operation IDs. A binding conflict reports an unresolved outcome.
 
 ### Why / context
 

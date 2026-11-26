@@ -698,6 +698,13 @@ reconciliation through the relay. A replacement incarnation uses native
 `resume-move status` at the destination. See
 [Console resume-move transport](../specs/console-resume-move-transport-v1.md).
 
+The origin keeps its fences per authenticated caller session ID. A caller may
+hold at most 8 unresolved moves and 128 retained moves; a terminal move keeps
+only its digest fence and validated reply. Past a limit a first submission
+returns `resume-move-state-unavailable` without forwarding. Repeats of an
+existing move are never limited, and other callers are unaffected. The origin
+refuses an operation ID dated more than an hour ahead with `resume-unsupported`.
+
 ## Companion inbox producer
 
 `agent-session message send-companion --body-file PATH` uses the same

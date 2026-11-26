@@ -134,6 +134,9 @@ async fn start(
         if !request.matches_caller(&caller, &incarnation) {
             return mismatch();
         }
+        if request.operation_is_future_dated() {
+            return unsupported();
+        }
         response(origin::start(
             &state.context,
             state.federation.as_ref(),

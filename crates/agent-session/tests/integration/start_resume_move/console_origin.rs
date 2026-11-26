@@ -144,6 +144,29 @@ impl<'a> Origin<'a> {
         daemon
     }
 
+    fn post(
+        &self,
+        daemon: &Daemon,
+        path_caller: &str,
+        token: &str,
+        headers: &[(&str, &str)],
+        body: Value,
+    ) -> (u16, Value) {
+        let mut request = daemon
+            .client
+            .post(format!(
+                "{}/sessions/{path_caller}/console-resume-move/v1",
+                daemon.base
+            ))
+            .bearer_auth(token)
+            .body(body.to_string());
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let response = request.send().unwrap();
+        (response.status().as_u16(), response.json().unwrap())
+    }
+
     fn start(&self, operation: &str) -> Value {
         self.start_with_account(operation, "fixture-account")
     }
@@ -384,7 +407,9 @@ fn request(stream: &mut TcpStream) -> (String, Vec<u8>) {
                 authorized = true;
             }
             "content-length" => length = value.trim().parse().unwrap(),
-            BINDING_HEADER => panic!("origin must not send the relay binding"),
+            name if name == BINDING_HEADER.to_ascii_lowercase() => {
+                panic!("origin must not send the relay binding")
+            }
             _ => {}
         }
     }
@@ -402,7 +427,7 @@ fn console_origin_forwards_the_full_request_to_destination() {
         let origin = Origin::new(&f);
         let _daemon = origin.daemon(Some(&relay.url));
         let result = origin.start(OPERATION);
-        assert_eq!(result["data"]["state"], "created", "{result}");
+        assert_eq!(result["data"]["state"], "created");
         assert_eq!(
             result["data"]["session_id"],
             format!("move-{}", f.move_id())
@@ -450,10 +475,7 @@ fn console_origin_preserves_a_typed_destination_refusal() {
         let origin = Origin::new(&f);
         let daemon = origin.daemon(Some(&relay.url));
         let result = origin.start_with_account(OPERATION, "other-account");
-        assert_eq!(
-            result["error"]["code"], "resume-account-mismatch",
-            "{result}"
-        );
+        assert_eq!(result["error"]["code"], "resume-account-mismatch");
         let traffic = relay.traffic.lock().unwrap();
         let (status, upstream) = traffic.terminal.as_ref().unwrap();
         assert_eq!(*status, 422);
@@ -571,6 +593,11 @@ fn console_origin_replacement_caller_cannot_reconcile() {
         let _daemon = origin.daemon(Some(&relay.url));
         let conflict = origin.start(NEXT_OPERATION);
         assert_eq!(conflict["error"]["code"], "resume-move-binding-mismatch");
+        assert!(
+            conflict["error"]["details"]
+                .get("session_created")
+                .is_none()
+        );
         let traffic = relay.traffic.lock().unwrap();
         assert_eq!(traffic.handshakes, 1);
         assert_eq!(traffic.posts.len(), 1);
@@ -579,8 +606,122 @@ fn console_origin_replacement_caller_cannot_reconcile() {
     });
 }
 
+#[test]
+fn console_origin_retargeting_a_move_conflicts_without_reforwarding() {
+    with_console_fixture(|f| {
+        let target = f.daemon(true, Some(&f.signers.allowlist), false);
+        let relay = Relay::spawn(&f, &target, Reply::Forward);
+        let origin = Origin::new(&f);
+        let _daemon = origin.daemon(Some(&relay.url));
+        assert_eq!(origin.start(OPERATION)["data"]["state"], "created");
+
+        let retargeted = origin.start_with_account(NEXT_OPERATION, "other-account");
+        assert_eq!(retargeted["error"]["code"], "resume-move-binding-mismatch");
+        assert!(
+            retargeted["error"]["details"]
+                .get("session_created")
+                .is_none()
+        );
+        assert_eq!(relay.traffic.lock().unwrap().posts.len(), 1);
+        assert_eq!(f.launch_count(), 1);
+    });
+}
+
+#[test]
+fn console_origin_refuses_a_future_dated_operation_before_dispatch() {
+    with_console_fixture(|f| {
+        let target = f.daemon(true, Some(&f.signers.allowlist), false);
+        let relay = Relay::spawn(&f, &target, Reply::Forward);
+        let origin = Origin::new(&f);
+        let daemon = origin.daemon(Some(&relay.url));
+        let mut body = f.request();
+        body["operation_id"] = json!("ffffffff-ffff-7fff-bfff-ffffffffffff");
+        let (status, result) = origin.post(&daemon, "caller", CALLER_TOKEN, &[], body);
+        assert_eq!(status, 400);
+        assert_eq!(result["error"]["code"], "resume-unsupported");
+        let traffic = relay.traffic.lock().unwrap();
+        assert_eq!((traffic.handshakes, traffic.posts.len()), (0, 0));
+        assert_eq!(f.launch_count(), 0);
+    });
+}
+
+#[test]
+fn console_origin_rejects_every_unauthorized_caller_before_any_relay_traffic() {
+    with_console_fixture(|f| {
+        let target = f.daemon(true, Some(&f.signers.allowlist), false);
+        let relay = Relay::spawn(&f, &target, Reply::Forward);
+        let origin = Origin::new(&f);
+        let daemon = origin.daemon(Some(&relay.url));
+        let mut owner = f.request();
+        owner["caller"]["owner"] = json!("fixture-owner");
+        for (name, path_caller, token, headers, body, status, code) in [
+            (
+                "wrong token",
+                "caller",
+                "synthetic-wrong-capability-0000001",
+                vec![],
+                f.request(),
+                401,
+                "resume-move-unavailable",
+            ),
+            (
+                "wrong path caller",
+                "other",
+                CALLER_TOKEN,
+                vec![],
+                f.request(),
+                401,
+                "resume-move-unavailable",
+            ),
+            (
+                "delegation token",
+                "caller",
+                "asd1.synthetic-delegation",
+                vec![],
+                f.request(),
+                422,
+                "delegation-scope-denied",
+            ),
+            (
+                "binding header",
+                "caller",
+                CALLER_TOKEN,
+                vec![(BINDING_HEADER, "synthetic")],
+                f.request(),
+                400,
+                "resume-unsupported",
+            ),
+            (
+                "relay token header",
+                "caller",
+                CALLER_TOKEN,
+                vec![("x-agent-session-relay-token", INGRESS)],
+                f.request(),
+                400,
+                "resume-unsupported",
+            ),
+            (
+                "owner assertion",
+                "caller",
+                CALLER_TOKEN,
+                vec![],
+                owner,
+                403,
+                "resume-move-binding-mismatch",
+            ),
+        ] {
+            let (actual, result) = origin.post(&daemon, path_caller, token, &headers, body);
+            assert_eq!(actual, status, "{name}");
+            assert_eq!(result["error"]["code"], code, "{name}");
+        }
+        let traffic = relay.traffic.lock().unwrap();
+        assert_eq!((traffic.handshakes, traffic.posts.len()), (0, 0));
+        assert_eq!(f.launch_count(), 0);
+    });
+}
+
 fn assert_unknown(result: &Value) {
-    assert_eq!(result["error"]["code"], UNKNOWN, "{result}");
+    assert_eq!(result["error"]["code"], UNKNOWN);
     let details = &result["error"]["details"];
     assert_eq!(details["safe_to_retry"], false);
     assert_eq!(details["next_action"], "reconcile_destination");

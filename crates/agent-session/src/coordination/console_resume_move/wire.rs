@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Deserializer, Serialize, de::IgnoredAny};
@@ -10,6 +11,7 @@ pub(crate) const START_SCHEMA: &str = "agent-session.console-resume-move.v1";
 const CAPABILITY_SCHEMA: &str = "agent-session.console-resume-move-capability.v1";
 const CAPABILITY: &str = "resume-move-start/v1";
 pub(crate) const MAX_START_BYTES: usize = 16 * 1024;
+const OPERATION_CLOCK_SKEW: Duration = Duration::from_secs(60 * 60);
 pub(crate) const STATUS_SCHEMA: &str = "agent-session.console-resume-move-status.v1";
 const BINDING_SCHEMA: &str = "agent-session.console-resume-move-binding.v1";
 pub(crate) const BINDING_HEADER: &str = "x-agent-session-resume-move-binding";
@@ -94,6 +96,22 @@ pub(crate) enum StartShape {
 impl StartRequest {
     pub(crate) fn matches_caller(&self, id: &str, incarnation: &str) -> bool {
         self.caller.session_id == id && self.caller.session_incarnation == incarnation
+    }
+
+    /// An operation ID dated beyond the allowed clock skew would never age out
+    /// of the origin's binding index, so the origin refuses it.
+    pub(crate) fn operation_is_future_dated(&self) -> bool {
+        let limit_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .saturating_add(OPERATION_CLOCK_SKEW)
+            .as_millis();
+        operation_timestamp_ms(&self.operation_id)
+            .is_none_or(|timestamp| u128::from(timestamp) > limit_ms)
+    }
+
+    pub(super) fn caller_id(&self) -> &str {
+        &self.caller.session_id
     }
 
     pub(super) fn digest(&self) -> String {
