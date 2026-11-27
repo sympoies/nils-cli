@@ -190,6 +190,13 @@ mod tests {
     fn failed_startup_without_conversation_reaches_fresh_launch_and_rolls_back_on_failure() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
+        let runtime_dir = tempfile::Builder::new()
+            .prefix("as-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let runtime_path = fs::canonicalize(runtime_dir.path()).unwrap();
+        let _runtime = EnvGuard::set(&lock, "XDG_RUNTIME_DIR", runtime_path.to_str().unwrap());
         let broker_dir = tempfile::TempDir::new().unwrap();
         let _broker = EnvGuard::set(
             &lock,

@@ -529,13 +529,6 @@ fn wait_for_http_json(addr: std::net::SocketAddr, path: &str, timeout: Duration)
     );
 }
 
-fn stop_child(child: &mut Child) {
-    if child.try_wait().expect("try_wait").is_none() {
-        let _ = child.kill();
-    }
-    let _ = child.wait();
-}
-
 pub(super) struct TestProcessGroup {
     pid: u32,
     child: Arc<Mutex<Child>>,
@@ -755,6 +748,7 @@ impl ServeGuard {
     fn spawn(mut command: Command, addr: std::net::SocketAddr, stderr_path: PathBuf) -> Self {
         let stderr = fs::File::create(&stderr_path).expect("serve stderr");
         let child = command
+            .process_group(0)
             .stderr(Stdio::from(stderr))
             .spawn()
             .expect("spawn serve");
@@ -800,7 +794,7 @@ impl ServeGuard {
 
 impl Drop for ServeGuard {
     fn drop(&mut self) {
-        stop_child(&mut self.child);
+        serve_command::stop_serve_group(&mut self.child);
     }
 }
 

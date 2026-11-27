@@ -199,15 +199,17 @@ mod tests {
 
     #[test]
     fn ensure_private_state_dir_accepts_lexical_var_tmp_private_state_path() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        // The leak probe canonicalizes TMPDIR to /private/var on macOS.
-        let temp_path = std::path::Path::new("/")
-            .join(temp.path().strip_prefix("/private").unwrap_or(temp.path()));
-        assert!(
-            temp_path.starts_with("/var"),
-            "tempdir should be lexically under /var: {}",
-            temp_path.display()
-        );
+        let temp = match tempfile::Builder::new()
+            .prefix("agent-hook-")
+            .tempdir_in("/var/tmp")
+        {
+            Ok(temp) => temp,
+            Err(error) => {
+                eprintln!("skipping: /var/tmp unavailable: {error}");
+                return;
+            }
+        };
+        let temp_path = temp.path();
         let path = temp_path.join("private-state");
 
         ensure_private_state_dir(&path, "state-dir").expect("private state dir");

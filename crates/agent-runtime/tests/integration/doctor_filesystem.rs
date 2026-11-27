@@ -131,6 +131,8 @@ fn install_clean(product: &str, source_root: &Path, home: &Path, state_home: &Pa
 }
 
 fn commit_source(source_root: &Path) {
+    let config = source_root.parent().unwrap().join("fixture-gitconfig");
+    fs::write(&config, "[commit]\n    gpgsign = false\n").unwrap();
     for args in [
         vec!["init", "-q"],
         vec!["config", "user.email", "fixture@example.invalid"],
@@ -141,6 +143,8 @@ fn commit_source(source_root: &Path) {
         let status = Command::new("git")
             .arg("-C")
             .arg(source_root)
+            .env("GIT_CONFIG_GLOBAL", &config)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .args(args)
             .status()
             .unwrap();
