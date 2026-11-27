@@ -1,0 +1,140 @@
+name: Agent-session tempdir probe
+
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+
+concurrency:
+  group: agent-session-tempdir-probe-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  agent_session_tempdir_probe:
+    # Report a skipped check for merge groups. The queue validates its own merge
+    # candidate through the existing CI workflow.
+    if: github.event_name == 'pull_request'
+    name: agent-session tempdir probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: "4"
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
+        with:
+          toolchain: 1.100.0
+
+      - name: Detect agent-session probe inputs
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          echo "Checking PR head $HEAD_SHA against base $BASE_SHA"
+          # Keep the check visible on unrelated PRs. Cargo's workspace-only
+          # metadata includes path dependencies without resolving the registry.
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+          metadata = json.loads(subprocess.check_output([
+              "cargo", "metadata", "--format-version", "1", "--no-deps", "--offline", "--locked",
+          ]))
+          workspace = Path(metadata["workspace_root"])
+          members = {
+              Path(package["manifest_path"]).parent: package["dependencies"]
+              for package in metadata["packages"]
+          }
+          roots = set()
+          pending = [workspace / "crates/agent-session"]
+          while pending:
+              directory = pending.pop()
+              if directory in roots:
+                  continue
+              roots.add(directory)
+              for dependency in members[directory]:
+                  dependency_path = dependency.get("path")
+                  if dependency_path and Path(dependency_path) in members:
+                      pending.append(Path(dependency_path))
+          roots = {directory.relative_to(workspace) for directory in roots}
+
+          inputs = {
+              Path("Cargo.lock"),
+              Path("Cargo.toml"),
+              Path("scripts/ci/tempdir-leak-probe.sh"),
+              Path(".github/workflows/agent-session-tempdir-probe.yml"),
+          }
+          diff = subprocess.check_output([
+              "git", "diff", "--name-only", "--no-renames", "-z",
+              f'{os.environ["BASE_SHA"]}...{os.environ["HEAD_SHA"]}', "--",
+          ])
+          changed = [Path(os.fsdecode(name)) for name in diff.split(b"\0") if name]
+          matched = sorted(path for path in changed if path in inputs or roots.intersection(path.parents))
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print(f"run_probe={str(bool(matched)).lower()}", file=output)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              if matched:
+                  print("Qualifying paths:\n", file=summary)
+                  for path in matched:
+                      print(f"    {json.dumps(path.as_posix())}", file=summary)
+              else:
+                  print("No qualifying change.", file=summary)
+          PY
+
+      - name: Restore Linux Cargo cache
+        if: steps.changes.outputs.run_probe == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-test
+          save-if: false
+
+      - name: Set up Node.js
+        if: steps.changes.outputs.run_probe == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Install Linux test dependencies
+        if: steps.changes.outputs.run_probe == 'true'
+        run: bash scripts/ci/apt-install-retry.sh zsh xvfb xauth ripgrep tmux bubblewrap
+
+      - name: Install cargo-nextest
+        if: steps.changes.outputs.run_probe == 'true'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Provision systemd user scopes
+        if: steps.changes.outputs.run_probe == 'true'
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          uid="$(id -u)"
+          sudo loginctl enable-linger "${USER}"
+          sudo systemctl start "user@${uid}.service"
+          echo "XDG_RUNTIME_DIR=/run/user/${uid}" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus" >> "$GITHUB_ENV"
+          test -S "/run/user/${uid}/systemd/private"
+
+      - name: Run no-exemption agent-session tempdir probe
+        if: steps.changes.outputs.run_probe == 'true'
+        run: |
+          TMPDIR="$(realpath -- "$RUNNER_TEMP")"
+          export TMPDIR
+          bash scripts/ci/tempdir-leak-probe.sh -- -p nils-agent-session --retries 0
