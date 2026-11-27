@@ -3220,9 +3220,9 @@ fn start_run_tmux(
         .arg("-F")
         .arg(TMUX_RUNTIME_IDENTITY_FORMAT)
         .arg("-s")
-        .arg(record.tmux_session.replace('#', "##"))
+        .arg(startup::literal_tmux_option(&record.tmux_session))
         .arg("-c")
-        .arg(record.cwd.replace('#', "##"));
+        .arg(startup::literal_tmux_option(&record.cwd));
     add_runtime_tmux_environment(&mut command, state_dir, record)?;
     begin_held_runtime(&mut command, state_dir, record)?;
     command.arg("sh").arg("-lc").arg(script);

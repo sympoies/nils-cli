@@ -10,6 +10,29 @@ use std::process::Output;
 
 pub(super) const STDERR_FILE: &str = ".startup-stderr.log";
 
+// tmux treats hash runs followed by `[` as literal style syntax in these
+// options, while other hashes introduce formats and need escaping.
+pub(super) fn literal_tmux_option(value: &str) -> String {
+    let mut chars = value.chars().peekable();
+    let mut encoded = String::with_capacity(value.len());
+    while let Some(ch) = chars.next() {
+        if ch != '#' {
+            encoded.push(ch);
+            continue;
+        }
+        let mut count = 1;
+        while chars.peek() == Some(&'#') {
+            chars.next();
+            count += 1;
+        }
+        if chars.peek() != Some(&'[') {
+            count *= 2;
+        }
+        encoded.extend(std::iter::repeat_n('#', count));
+    }
+    encoded
+}
+
 pub(super) fn start_interactive_tmux(
     tmux_bin: &Path,
     agent_bin: &Path,
@@ -27,9 +50,9 @@ pub(super) fn start_interactive_tmux(
         .arg("-F")
         .arg(TMUX_RUNTIME_IDENTITY_FORMAT)
         .arg("-s")
-        .arg(record.tmux_session.replace('#', "##"))
+        .arg(literal_tmux_option(&record.tmux_session))
         .arg("-c")
-        .arg(record.cwd.replace('#', "##"));
+        .arg(literal_tmux_option(&record.cwd));
     add_runtime_tmux_environment(&mut command, state_dir, record)?;
     begin_held_runtime(&mut command, state_dir, record)?;
 
@@ -131,9 +154,9 @@ pub(super) fn start_resume_tmux(
         .arg("-F")
         .arg(TMUX_RUNTIME_IDENTITY_FORMAT)
         .arg("-s")
-        .arg(record.tmux_session.replace('#', "##"))
+        .arg(literal_tmux_option(&record.tmux_session))
         .arg("-c")
-        .arg(record.cwd.replace('#', "##"));
+        .arg(literal_tmux_option(&record.cwd));
     add_runtime_tmux_environment(&mut command, state_dir, record)?;
     begin_held_runtime(&mut command, state_dir, record)?;
     add_interactive_agent_environment(&mut command);
@@ -625,8 +648,8 @@ mod literal_option_tests {
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
         let record: SessionRecord = serde_json::from_value(json!({
             "schema_version": SESSION_DOCUMENT_VERSION, "id":"fixture", "agent":"codex",
-            "mode":"interactive", "cwd":"/fixture/#(command)/#{host}",
-            "tmux_session":"fixture-#(command)-#{host}",
+            "mode":"interactive", "cwd":"/fixture/#[style]/###[style]/#(command)/#{host}",
+            "tmux_session":"fixture-#[style]-###[style]-#(command)-#{host}",
             "prompt_file":"prompt", "log_file":"log",
             "created_at":"2030-01-01T00:00:00Z", "updated_at":"2030-01-01T00:00:00Z",
             "runtime":{"kind":"tmux", "tmux_session":"fixture", "generation":1,
@@ -662,8 +685,8 @@ mod literal_option_tests {
             assert_eq!(
                 (args[name + 1], args[cwd + 1]),
                 (
-                    "fixture-##(command)-##{host}",
-                    "/fixture/##(command)/##{host}"
+                    "fixture-#[style]-###[style]-##(command)-##{host}",
+                    "/fixture/#[style]/###[style]/##(command)/##{host}"
                 )
             );
         }
