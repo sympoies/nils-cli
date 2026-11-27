@@ -7203,10 +7203,7 @@ async fn lifecycle_review_deleted_runtime_helper_returns_reachable_failure() {
     let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
     let tmp = tempfile::TempDir::new().unwrap();
     let cwd = tmp.path().join("repo");
-    let runtime_dir = tempfile::Builder::new()
-        .prefix("cx-")
-        .tempdir_in("/tmp")
-        .unwrap();
+    let (runtime_dir, _) = nils_test_support::short_socket_path("socket");
     fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
     fs::create_dir(&cwd).unwrap();
     let codex = executable(
@@ -7458,10 +7455,7 @@ async fn serve_created_capable_codex_session_projects_supported_app_server_runti
     let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
     let tmp = tempfile::TempDir::new().unwrap();
     let cwd = tmp.path().join("repo");
-    let runtime_dir = tempfile::Builder::new()
-        .prefix("cx-")
-        .tempdir_in("/tmp")
-        .unwrap();
+    let (runtime_dir, _) = nils_test_support::short_socket_path("socket");
     let home = tmp.path().join("home");
     fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let log = tmp.path().join("tmux.log");
@@ -8457,10 +8451,7 @@ async fn create_rejects_unknown_mismatched_or_unready_launch_profiles() {
 async fn create_imports_codex_session_from_provider_resume_id() {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::TempDir::new().unwrap();
-    let runtime_dir = tempfile::Builder::new()
-        .prefix("cx-")
-        .tempdir_in("/tmp")
-        .unwrap();
+    let (runtime_dir, _) = nils_test_support::short_socket_path("socket");
     let cwd = tmp.path().join("repo");
     let codex_home = tmp.path().join("codex-home");
     fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
@@ -13869,10 +13860,7 @@ async fn codex_accounts_route_is_authenticated_and_projects_no_credentials() {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::TempDir::new().unwrap();
     // Readiness resolves the private runtime dir; never use the host's.
-    let runtime_dir = tempfile::Builder::new()
-        .prefix("cx-")
-        .tempdir_in("/tmp")
-        .unwrap();
+    let (runtime_dir, _) = nils_test_support::short_socket_path("socket");
     fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let _runtime_dir = EnvGuard::set(
         &lock,
@@ -14404,7 +14392,7 @@ async fn sessions_capabilities_advertise_account_switch_only_with_a_broker() {
 async fn claude_account_switch_on_a_stopped_session_applies_at_the_next_resume() {
     let lock = GlobalStateLock::new();
     let _policy = EnvGuard::remove(&lock, crate::launch_env::ALLOWLIST_ENV);
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch::short_runtime_tempdir(&lock);
     let cwd = tmp.path().join("repo");
     fs::create_dir_all(&cwd).unwrap();
     let broker = claude_broker_fixture(&lock, tmp.path());
@@ -14749,7 +14737,7 @@ fn broker_without_identity_resume_uses_prior_persisted_identity() {
     use crate::coordination::broker::test_support;
     let lock = GlobalStateLock::new();
     for agent in ["claude", "codex"] {
-        let tmp = tempfile::TempDir::new().unwrap();
+        let (tmp, _runtime) = account_switch::short_runtime_tempdir(&lock);
         let cwd = tmp.path().join("repo");
         fs::create_dir_all(&cwd).unwrap();
         let _broker = claude_broker_fixture(&lock, tmp.path());

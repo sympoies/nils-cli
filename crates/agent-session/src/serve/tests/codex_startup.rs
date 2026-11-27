@@ -15,7 +15,7 @@ async fn created_status(provider_status: Option<&'static str>) {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().join("non-repository");
     fs::create_dir(&cwd).unwrap();
-    let runtime_dir = tempfile::tempdir_in("/tmp").unwrap();
+    let (runtime_dir, _) = nils_test_support::short_socket_path("socket");
     fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let codex = executable(
         &tmp.path().join("codex"),

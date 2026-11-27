@@ -22,7 +22,7 @@ fn staged_codex_move_launches_in_the_per_move_home_and_replays_one_session() {
         return;
     }
     // Short root: the app-server socket path must fit the Unix socket budget.
-    let fixture = tempfile::tempdir_in("/tmp").unwrap();
+    let (fixture, _) = nils_test_support::short_socket_path("socket");
     let root = fs::canonicalize(fixture.path()).unwrap();
     let state = root.join("destination-state");
     let cwd = root.join("workspace");

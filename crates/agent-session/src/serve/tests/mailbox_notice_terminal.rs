@@ -180,7 +180,7 @@ async fn mailbox_notice_supported_terminal_preserves_operator_draft_before_claim
     assert_eq!(notification_fixture(fixture.temp.path())["state"], "queued");
 }
 
-fn bind_native_receiver(fixture: &WakeFixture) -> (tempfile::TempDir, PathBuf, PathBuf, Value, String) {
+fn bind_native_receiver(fixture: &WakeFixture) -> (nils_test_support::tempdir::ScopedTempDir, PathBuf, PathBuf, Value, String) {
     use crate::send::claude_notice::{Launch, runtime, sha256};
     let record = load_session_record(&fixture.state.context, "beta").unwrap();
     let dir = runtime::module_dir(&fixture.state.context.state_dir, &record).unwrap();
@@ -188,7 +188,7 @@ fn bind_native_receiver(fixture: &WakeFixture) -> (tempfile::TempDir, PathBuf, P
     for path in [&dir, &dir.join("hooks")] {
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     }
-    let socket_root = tempfile::tempdir_in("/tmp").unwrap();
+    let (socket_root, _) = nils_test_support::short_socket_path("socket");
     fs::set_permissions(socket_root.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let socket_parent = socket_root.path().join("agent-session");
     fs::create_dir(&socket_parent).unwrap();

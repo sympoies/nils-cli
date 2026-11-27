@@ -95,7 +95,7 @@ fn production_forwarding_limit_is_the_64_mib_constant() {
 }
 
 struct Fixture {
-    _tmp: tempfile::TempDir,
+    _tmp: nils_test_support::tempdir::ScopedTempDir,
     context: CliContext,
     upstream: PathBuf,
     listener: Option<UnixListener>,
@@ -104,7 +104,7 @@ struct Fixture {
 
 fn fixture(id: &str) -> Fixture {
     // Keep both socket names within the Unix pathname budget even with a long TMPDIR.
-    let tmp = tempfile::tempdir_in("/tmp").unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("socket");
     let upstream = tmp.path().join("upstream.sock");
     let listener = std::os::unix::net::UnixListener::bind(&upstream).unwrap_or_else(|err| {
         panic!(
@@ -419,7 +419,7 @@ async fn proxy_exit_keeps_the_final_error_line_for_session_diagnostics() {
 #[test]
 fn proxy_fixture_works_with_short_and_long_temporary_roots() {
     // Use child processes because temp_dir reads process-wide environment.
-    let short = tempfile::tempdir_in("/tmp").unwrap();
+    let (short, _) = nils_test_support::short_socket_path("socket");
     let long = short.path().join("long-root-".repeat(16));
     fs::create_dir(&long).unwrap();
     assert!(long.as_os_str().len() > 108);

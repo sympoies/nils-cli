@@ -23,7 +23,7 @@ impl Drop for Pane {
 }
 
 struct Fixture {
-    _tmp: tempfile::TempDir,
+    _tmp: nils_test_support::tempdir::ScopedTempDir,
     state: PathBuf,
     session: PathBuf,
     tmux: PathBuf,
@@ -37,7 +37,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let tmp = tempfile::tempdir_in("/tmp").unwrap();
+        let (tmp, _) = nils_test_support::short_socket_path("socket");
         let state = tmp.path().join("state");
         let agent = fake_agent(tmp.path(), "claude");
         let session = write_resumable_session_record_with_agent_bin(

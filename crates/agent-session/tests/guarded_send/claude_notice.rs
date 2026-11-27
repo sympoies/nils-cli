@@ -199,7 +199,7 @@ fn mounted_module(calls: &[Vec<String>]) -> Option<PathBuf> {
 #[test]
 fn claude_notice_supported_writer_launch_mounts_native_module() {
     for resume in [false, true] {
-        let temp = tempfile::tempdir_in("/tmp").unwrap();
+        let (temp, _) = nils_test_support::short_socket_path("socket");
         let (output, calls) = launch_case(temp.path(), "1", "2.1.296", resume);
         assert_eq!(
             output.code,
@@ -242,7 +242,7 @@ fn claude_notice_supported_writer_launch_mounts_native_module() {
 fn claude_notice_gate_off_and_other_versions_do_not_mount_a_module() {
     for (gate, version) in [("0", "2.1.296"), ("1", "2.1.295")] {
         for resume in [false, true] {
-            let temp = tempfile::tempdir_in("/tmp").unwrap();
+            let (temp, _) = nils_test_support::short_socket_path("socket");
             let (output, calls) = launch_case(temp.path(), gate, version, resume);
             assert_eq!(
                 output.code,
@@ -856,7 +856,7 @@ fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
     crate::cases::for_each_case(
         &cases,
         |&(resume, (gate, version, mounted, reason, observed))| {
-            let temp = tempfile::tempdir_in("/tmp").unwrap();
+            let (temp, _) = nils_test_support::short_socket_path("socket");
             let (_, calls) = launch_case(temp.path(), gate, version, resume);
             let case = format!("{gate} {version} resume={resume}");
             assert_eq!(mounted_module(&calls).is_some(), mounted, "{case}");

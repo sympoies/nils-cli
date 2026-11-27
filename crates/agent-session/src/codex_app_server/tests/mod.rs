@@ -570,10 +570,7 @@ fn account_binding_readiness_reports_bounded_safe_reasons() {
 fn configured_0_145_app_server_runtime_keeps_hook_attention_authority() {
     let _probe_guard = capability_probe_test_guard();
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::Builder::new()
-        .prefix("agent-session-authority-")
-        .tempdir_in("/tmp")
-        .unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("socket");
     let runtime_dir = tmp.path().join("run");
     let home = tmp.path().join("home");
     fs::create_dir(&runtime_dir).unwrap();
@@ -641,10 +638,7 @@ fn configured_0_145_app_server_runtime_keeps_hook_attention_authority() {
 fn configured_0_145_runtime_stays_hook_authority_with_unguarded_permission_hook() {
     let _probe_guard = capability_probe_test_guard();
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::Builder::new()
-        .prefix("agent-session-unguarded-")
-        .tempdir_in("/tmp")
-        .unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("socket");
     let runtime_dir = tmp.path().join("run");
     let home = tmp.path().join("home");
     fs::create_dir(&runtime_dir).unwrap();
@@ -700,10 +694,7 @@ fn configured_0_145_runtime_stays_hook_authority_with_unguarded_permission_hook(
 #[test]
 fn transport_only_app_server_runtime_keeps_hook_attention_authority() {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::Builder::new()
-        .prefix("agent-session-transport-")
-        .tempdir_in("/tmp")
-        .unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("socket");
     let runtime_dir = tmp.path().join("run");
     fs::create_dir(&runtime_dir).unwrap();
     fs::set_permissions(&runtime_dir, fs::Permissions::from_mode(0o700)).unwrap();
@@ -1408,10 +1399,7 @@ fn startup_diagnostic_collector_caps_private_failure_output_discards_clean_ready
 #[test]
 fn explicit_cleanup_removes_only_the_derived_runtime_files() {
     let lock = GlobalStateLock::new();
-    let runtime_dir = tempfile::Builder::new()
-        .prefix("cx-")
-        .tempdir_in("/tmp")
-        .unwrap();
+    let (runtime_dir, _) = nils_test_support::short_socket_path("socket");
     fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let _runtime_dir = EnvGuard::set(
         &lock,
@@ -1436,10 +1424,7 @@ fn explicit_cleanup_removes_only_the_derived_runtime_files() {
     let unrelated = socket.with_extension("unrelated");
     fs::write(&unrelated, b"keep").unwrap();
 
-    let replacement_runtime = tempfile::Builder::new()
-        .prefix("cx-")
-        .tempdir_in("/tmp")
-        .unwrap();
+    let (replacement_runtime, _) = nils_test_support::short_socket_path("socket");
     let _replacement_runtime = EnvGuard::set(
         &lock,
         "XDG_RUNTIME_DIR",
@@ -1458,10 +1443,7 @@ fn explicit_cleanup_removes_only_the_derived_runtime_files() {
 #[test]
 fn runtime_rejects_a_world_accessible_runtime_root() {
     let lock = GlobalStateLock::new();
-    let runtime_dir = tempfile::Builder::new()
-        .prefix("cx-")
-        .tempdir_in("/tmp")
-        .unwrap();
+    let (runtime_dir, _) = nils_test_support::short_socket_path("socket");
     fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
     let _runtime_dir = EnvGuard::set(
         &lock,
@@ -1481,10 +1463,7 @@ fn runtime_rejects_a_world_accessible_runtime_root() {
 #[test]
 fn runtime_paths_are_isolated_by_state_and_launch_identity() {
     let lock = GlobalStateLock::new();
-    let runtime_dir = tempfile::Builder::new()
-        .prefix("cx-")
-        .tempdir_in("/tmp")
-        .unwrap();
+    let (runtime_dir, _) = nils_test_support::short_socket_path("socket");
     fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let _runtime_dir = EnvGuard::set(
         &lock,
