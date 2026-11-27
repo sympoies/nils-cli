@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 4) )); then
+  echo 'error: Bash 4.4 or newer is required; install it and invoke this script with that bash.' >&2
+  exit 2
+fi
+
+# Nested scripts also invoke bash by name; select this interpreter first.
+PATH="$(dirname "$BASH"):$PATH"
+export PATH
+
 usage() {
   cat <<'USAGE'
 Usage:

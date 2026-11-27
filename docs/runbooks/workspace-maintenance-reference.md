@@ -30,7 +30,8 @@ This installs/updates:
 
 ### 1.2 Minimum tools required for local checks
 
-All local check flows assume `bash` is available to run repo scripts.
+Local check flows require Bash 4.4 or newer. Invoke the checks entrypoint with
+that Bash; it uses the same interpreter for nested scripts.
 
 Docs-only checks require:
 
