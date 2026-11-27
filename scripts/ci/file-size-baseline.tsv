@@ -19,12 +19,12 @@ crates/agent-session/src/retitle_v3.rs	impl	3634
 crates/agent-session/src/retitle_v3.rs	test	3637
 crates/agent-session/src/serve.rs	impl	10105
 crates/agent-session/src/serve/tests.rs	test	21514
-crates/agent-session/tests/integration/cli.rs	test	11455
+crates/agent-session/tests/integration/cli.rs	test	11449
 crates/agent-session/tests/integration/coordination.rs	test	4918
 crates/agent-workflow-primitives/src/heuristic_inbox.rs	impl	4085
 crates/agent-workflow-primitives/src/repo_retro.rs	impl	2487
 crates/agent-workflow-primitives/src/review_specialists.rs	impl	2736
-crates/agent-workflow-primitives/tests/integration/cli.rs	test	3672
+crates/agent-workflow-primitives/tests/integration/cli.rs	test	3656
 crates/codex-cli/src/agent/capsule.rs	impl	2626
 crates/codex-cli/tests/integration/execution_capsule.rs	test	3083
 crates/forge-cli/src/cli.rs	impl	2296

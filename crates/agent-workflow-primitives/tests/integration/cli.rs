@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 use std::thread;
 
 use nils_test_support::cmd::{CmdOutput, run_resolved_in_dir};
@@ -1280,24 +1279,9 @@ fn secret_like_inputs_are_redacted() {
     assert!(!combined.contains("sk-proj-supersecret"));
 }
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .status()
-        .expect("run git");
-    assert!(status.success(), "git {args:?} failed");
-}
-
-fn git_with_env(dir: &Path, args: &[&str], envs: &[(&str, &str)]) {
-    let mut command = Command::new("git");
-    command.args(args).current_dir(dir);
-    for (key, value) in envs {
-        command.env(key, value);
-    }
-    let status = command.status().expect("run git");
-    assert!(status.success(), "git {args:?} failed");
-}
+#[path = "cli/retro_git.rs"]
+mod retro_git;
+use retro_git::{git, git_with_env};
 
 fn commit_retro_file(repo: &Path, rel: &str, text: &str, message: &str, commit_date: &str) {
     let path = repo.join(rel);

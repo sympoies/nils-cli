@@ -321,7 +321,16 @@ fn apply_removes_stale_symlinks_from_explicit_prior_source_roots() {
 #[cfg(target_os = "macos")]
 #[test]
 fn apply_canonicalizes_var_alias_for_explicit_owned_source_root() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = match tempfile::Builder::new()
+        .prefix("agent-runtime-")
+        .tempdir_in("/var/tmp")
+    {
+        Ok(tmp) => tmp,
+        Err(error) => {
+            eprintln!("skipping: /var/tmp unavailable: {error}");
+            return;
+        }
+    };
     let source_root = build_claude_source_root(tmp.path());
     let prior_source_root = tmp.path().join("prior-src");
     fs::create_dir_all(prior_source_root.join("targets/claude")).unwrap();

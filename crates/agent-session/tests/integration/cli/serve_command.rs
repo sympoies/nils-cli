@@ -86,3 +86,25 @@ pub(super) fn assert_direct_serve_roots(fixture: &Path, command: &Command) {
         .expect("fixture TMUX socket");
     assert_inside("TMUX socket", Path::new(socket));
 }
+
+// Wait for daemon descendants before the owning TempDir is removed.
+pub(super) fn stop_serve_group(child: &mut std::process::Child) {
+    if child.try_wait().expect("poll serve").is_none() {
+        let group = -(child.id() as libc::pid_t);
+        // SAFETY: this live child leads the process group created by ServeGuard.
+        unsafe { libc::kill(group, libc::SIGKILL) };
+        child.wait().expect("wait for serve");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            // SAFETY: signal zero checks whether the owned process group remains.
+            if unsafe { libc::kill(group, 0) } != 0 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "serve descendants did not exit"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+}
