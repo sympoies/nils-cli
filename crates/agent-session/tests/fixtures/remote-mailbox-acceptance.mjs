@@ -53,10 +53,28 @@ async function start(host,federation=true,agentBinary=binary) {
   await waitFor(async()=>{try{return(await fetch(host.url+'/healthz')).ok;}catch{return false;}},'daemon health');
 }
 async function stop(host){if(!host.child)return;const child=host.child;child.kill('SIGTERM');await Promise.race([new Promise(resolve=>child.once('exit',resolve)),delay(3000)]);if(child.exitCode===null)child.kill('SIGKILL');children.delete(child);host.child=null;}
-async function cli(host,args,expect=0){const output=await new Promise((resolve,reject)=>{const child=spawn(binary,['--state-dir',host.root,'message',...args,'--capability-file',host.capabilityFile,'--format','json'],{stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',data=>stdout+=data);child.stderr.on('data',data=>stderr+=data);child.on('error',reject);child.on('exit',status=>resolve({status,stdout,stderr}));});assert.equal(output.status,expect,`CLI ${args[0]} failed: ${output.stderr} ${output.stdout}`);const parsed=JSON.parse(output.stdout);return parsed.data??parsed;}
+function cliOutput(host,args){return new Promise((resolve,reject)=>{const child=spawn(binary,['--state-dir',host.root,'message',...args,'--capability-file',host.capabilityFile,'--format','json'],{stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',data=>stdout+=data);child.stderr.on('data',data=>stderr+=data);child.on('error',reject);child.on('close',status=>resolve({status,stdout,stderr}));});}
+function checkedCliOutput(output,args,expect=0){assert.equal(output.status,expect,`CLI ${args[0]} failed: ${output.stderr} ${output.stdout}`);const parsed=JSON.parse(output.stdout);return parsed.data??parsed;}
+async function cli(host,args,expect=0){return checkedCliOutput(await cliOutput(host,args),args,expect);}
 function bodyFile(label,text){const path=join(root,label+'.txt');privateWrite(path,text);return path;}
-async function status(host,id){return cli(host,['delivery','--session',host.session,'--message',id]);}
-async function delivered(host,id){return waitFor(async()=>{const value=await status(host,id);return value.state==='delivered'?value:false;},'persisted delivery');}
+const deliveryArgs = (host,id) => ['delivery','--session',host.session,'--message',id];
+async function status(host,id){return cli(host,deliveryArgs(host,id));}
+async function waitForDelivery(host,id,accept,label,milliseconds) {
+  const args = deliveryArgs(host,id);
+  return waitFor(async () => {
+    const output = await cliOutput(host,args);
+    // A busy store changes no receipt. Poll again within this wait's deadline
+    // instead of restarting the fixture; other failures still fail the test.
+    if (output.status === 65) {
+      const { error } = checkedCliOutput(output,args,65);
+      if (error?.code === 'coordination-lock-timeout' && error.details?.retryable === true &&
+          error.details.next_action === 'retry-delivery-check') return false;
+    }
+    const value = checkedCliOutput(output,args);
+    return accept(value) ? value : false;
+  },label,milliseconds);
+}
+async function delivered(host,id){return waitForDelivery(host,id,v=>v.state==='delivered','persisted delivery');}
 async function send(source,target,label){return cli(source,['send','--from',source.session,'--to-machine',target.machine,'--to',target.session,'--body-file',bodyFile(label,label),'--idempotency-key',label]);}
 async function inspect(target,id,text){const value=await cli(target,['show','--session',target.session,'--message',id]);assert.equal(value.body.text,text);assert.equal(value.body.classification,'peer_message');return value;}
 try {
@@ -108,7 +126,7 @@ try {
   const timedSentEpoch=now();
   const timed=await send(alpha,beta,'timeout-first');
   const following=await send(alpha,beta,'timeout-following');
-  await waitFor(async()=>{const v=await status(alpha,following.message_id);return v.state==='delivered';},'later queued entry bypasses repeated timeout',120000);
+  await waitForDelivery(alpha,following.message_id,v=>v.state==='delivered','later queued entry bypasses repeated timeout',120000);
   const timedState=await status(alpha,timed.message_id);assert(timedState.attempts>0);
   const timedJournal=JSON.parse(readFileSync(join(alpha.root,'coordination','federation-journal.json'),'utf8')).remote_outbox.find(i=>i.envelope.message_id===timed.message_id);
   assert(timedJournal.next_attempt_epoch>timedSentEpoch+15,'retry deadline begins after request completion');
@@ -282,31 +300,31 @@ await registryContentionAcceptance({alpha,beta,cli,bodyFile,delivered,waitFor,ch
   alpha.incarnation=randomUUID();alphaRecord.runtime.launch_id=alpha.incarnation;privateWrite(alphaPath,alphaRecord);
   const fencedReply=await cli(beta,['reply','--session',beta.session,'--message',initial.message_id,'--if-revision',String(original.revision),'--body-file',bodyFile('fenced-reply','fenced reply'),'--idempotency-key','fenced-reply-0001']);
   assert.equal(fencedReply.recipient.session_incarnation,originalAlphaIncarnation);
-  const fencedReplyResult=await waitFor(async()=>{const v=await status(beta,fencedReply.message_id);return v.state==='rejected'?v:false;},'reply exact old source incarnation refused');assert.equal(fencedReplyResult.reason,'session-incarnation-conflict');
+  const fencedReplyResult=await waitForDelivery(beta,fencedReply.message_id,v=>v.state==='rejected','reply exact old source incarnation refused');assert.equal(fencedReplyResult.reason,'session-incarnation-conflict');
   assert(!JSON.parse(readFileSync(join(alpha.root,'coordination','registry.json'),'utf8')).messages.some(m=>m.message_id===fencedReply.message_id));
   alpha.incarnation=originalAlphaIncarnation;alphaRecord.runtime.launch_id=alpha.incarnation;privateWrite(alphaPath,alphaRecord);writeHeartbeat(join(alpha.root,'sessions',alpha.session,'coordination','heartbeat'),alpha.incarnation+':'+now()+'\n');checks.push('reply-origin-replacement-no-retarget');
   const bad=await fetch(beta.url+'/coordination/messages/receive/v1',{method:'POST',headers:{Authorization:`Bearer ${beta.operator}`,'Content-Type':'application/json'},body:'{}'});assert.equal(bad.status,401);checks.push('dedicated-ingress-required');
   for(const reason of ['origin-forbidden','coordination-unauthorized']){
     denyRelay=reason;const refused=await send(alpha,beta,'reject-'+reason);
-    const result=await waitFor(async()=>{const value=await status(alpha,refused.message_id);return value.state==='rejected'?value:false;},'terminal source rejection');assert.equal(result.reason,reason);
+    const result=await waitForDelivery(alpha,refused.message_id,v=>v.state==='rejected','terminal source rejection');assert.equal(result.reason,reason);
   }
   denyRelay=null;checks.push('authorization-rejection-terminal-status');
   denyRelay='rate-limited';const limited=await send(alpha,beta,'rate-limit-retry');
-  const limitedPending=await waitFor(async()=>{const v=await status(alpha,limited.message_id);return v.attempts>0?v:false;},'rate-limit remains queued');assert.equal(limitedPending.state,'queued');assert.equal(limitedPending.reason,'rate-limited');
+  const limitedPending=await waitForDelivery(alpha,limited.message_id,v=>v.attempts>0,'rate-limit remains queued');assert.equal(limitedPending.state,'queued');assert.equal(limitedPending.reason,'rate-limited');
   denyRelay=null;await delivered(alpha,limited.message_id);assert.equal(JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8')).messages.filter(m=>m.message_id===limited.message_id).length,1);checks.push('rate-limit-retry-once-delivery');
   dropOnce=true;const ambiguous=await send(alpha,beta,'lost-before-replacement');
   await waitFor(()=>JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8')).messages.some(m=>m.message_id===ambiguous.message_id),'commit before response loss');
-  await waitFor(async()=>(await status(alpha,ambiguous.message_id)).attempts>0,'unconfirmed attempt recorded');
+  await waitForDelivery(alpha,ambiguous.message_id,v=>v.attempts>0,'unconfirmed attempt recorded');
   const betaPath=join(beta.root,'sessions',beta.session,'session.json');const betaRecord=JSON.parse(readFileSync(betaPath,'utf8'));const originalBetaIncarnation=beta.incarnation;
   beta.incarnation=randomUUID();betaRecord.runtime.launch_id=beta.incarnation;privateWrite(betaPath,betaRecord);
-  const ambiguousResult=await waitFor(async()=>{const v=await status(alpha,ambiguous.message_id);return v.state==='delivery-unknown'?v:false;},'response loss plus replacement remains unknown');assert.equal(ambiguousResult.reason,'session-incarnation-conflict');
+  const ambiguousResult=await waitForDelivery(alpha,ambiguous.message_id,v=>v.state==='delivery-unknown','response loss plus replacement remains unknown');assert.equal(ambiguousResult.reason,'session-incarnation-conflict');
   assert.equal(JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8')).messages.filter(m=>m.message_id===ambiguous.message_id).length,1);
   beta.incarnation=originalBetaIncarnation;betaRecord.runtime.launch_id=beta.incarnation;privateWrite(betaPath,betaRecord);writeHeartbeat(join(beta.root,'sessions',beta.session,'coordination','heartbeat'),beta.incarnation+':'+now()+'\n');checks.push('lost-response-replacement-preserves-delivery-ambiguity');
   hold=true;const fenced=await send(alpha,beta,'replacement');
-  await waitFor(async()=>(await status(alpha,fenced.message_id)).attempts>0,'pending failed attempt');
+  await waitForDelivery(alpha,fenced.message_id,v=>v.attempts>0,'pending failed attempt');
   const recordPath=join(beta.root,'sessions',beta.session,'session.json');const record=JSON.parse(readFileSync(recordPath,'utf8'));beta.incarnation=randomUUID();record.runtime.launch_id=beta.incarnation;privateWrite(recordPath,record);
   hold=false;
-  const rejected=await waitFor(async()=>{const value=await status(alpha,fenced.message_id);return value.state==='delivery-unknown'?value:false;},'replacement cannot prove nondelivery');assert.equal(rejected.reason,'session-incarnation-conflict');
+  const rejected=await waitForDelivery(alpha,fenced.message_id,v=>v.state==='delivery-unknown','replacement cannot prove nondelivery');assert.equal(rejected.reason,'session-incarnation-conflict');
   assert(!JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8')).messages.some(m=>m.message_id===fenced.message_id));checks.push('exact-incarnation-no-retarget');
   // Owner metadata audit observes both lifecycle cases without reading bodies.
   beta.incarnation=originalBetaIncarnation;record.runtime.launch_id=beta.incarnation;privateWrite(recordPath,record);
@@ -322,7 +340,7 @@ await registryContentionAcceptance({alpha,beta,cli,bodyFile,delivered,waitFor,ch
   assert.deepEqual(readFileSync(betaRegistryPath),destinationBefore,'audit does not consume accepted orphan');
   assert(!JSON.stringify(destinationAudit).includes('audit-accepted-then-stopped'),'body never projected');
   const stoppedSubmission=await send(alpha,beta,'audit-stopped-target-submission');
-  const pendingStopped=await waitFor(async()=>{const v=await status(alpha,stoppedSubmission.message_id);return v.attempts>0&&v.reason==='remote-messaging-unavailable'?v:false;},'stopped target refusal stays source pending');
+  const pendingStopped=await waitForDelivery(alpha,stoppedSubmission.message_id,v=>v.attempts>0&&v.reason==='remote-messaging-unavailable','stopped target refusal stays source pending');
   assert.equal(pendingStopped.state,'queued');
   assert(!JSON.parse(readFileSync(betaRegistryPath,'utf8')).messages.some(m=>m.message_id===stoppedSubmission.message_id),'no fabricated destination unread');
   const sourceAuditResponse=await fetch(alpha.url+'/coordination/messages/audit/v1?include_healthy=true',{headers:{Authorization:`Bearer ${alpha.operator}`}});
