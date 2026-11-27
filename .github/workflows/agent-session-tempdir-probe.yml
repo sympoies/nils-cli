@@ -132,6 +132,10 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus" >> "$GITHUB_ENV"
           test -S "/run/user/${uid}/systemd/private"
 
+      - name: Build agent-hook test prerequisite
+        if: steps.changes.outputs.run_probe == 'true'
+        run: cargo build --locked -p nils-agent-hook --bin agent-hook
+
       - name: Run no-exemption agent-session tempdir probe
         if: steps.changes.outputs.run_probe == 'true'
         run: |
