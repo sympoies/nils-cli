@@ -800,3 +800,82 @@ fn ordinary_console_start_delegation_cannot_request_attestation() {
     assert_eq!(error.code(), "delegation-scope-denied");
     assert!(server.take_requests().is_empty());
 }
+
+#[test]
+fn ordinary_console_start_delegation_cannot_reconcile_attested_receipt() {
+    use nils_test_support::http::{HttpResponse, LoopbackServer};
+
+    let fixture = Fixture::new("claude");
+    let (_, delegation, _) = fixture.mint(vec![Operation::StartViaConsole], vec![]);
+    let capability = fs::read_to_string(&fixture.capability).unwrap();
+    let relay = LoopbackServer::new().unwrap();
+    relay.add_route(
+        "GET",
+        "/api/coordination/attested-create/v1",
+        HttpResponse::new(
+            200,
+            json!({
+                "schema_version": "agent-session.console-attested-create-capability.v1",
+                "ok": true,
+                "data": {"machine": "fixture-machine", "capability": "console-attested-create/v1"},
+            })
+            .to_string(),
+        ),
+    );
+    relay.add_route(
+        "POST",
+        "/api/coordination/sessions/v1",
+        HttpResponse::new(
+            201,
+            json!({
+                "ok": true,
+                "data": {"session": {
+                    "id": "fixture-steward",
+                    "role": "steward",
+                    "lineage": {"forge_context": {
+                        "initiator": "console-relay", "role": "steward", "attested_role": "steward"
+                    }}
+                }}
+            })
+            .to_string(),
+        ),
+    );
+    let config = super::super::remote::Config {
+        machine: "fixture-machine".into(),
+        url: relay.url(),
+        token: "synthetic-relay-token".into(),
+        ingress_token: "synthetic-ingress-token".into(),
+    };
+    let route = |token: &str, body: &Value| {
+        super::super::console_start::relay_route(
+            &fixture.context,
+            Some(&config),
+            "caller",
+            token,
+            body,
+        )
+    };
+    let operation = uuid::Uuid::now_v7().to_string();
+    route(
+        &capability,
+        &json!({
+            "operation_id": operation,
+            "attest_role": true,
+            "no_parent": true,
+            "session": {"id": "fixture-steward", "agent": "claude"},
+        }),
+    )
+    .unwrap();
+    assert_eq!(relay.take_requests().len(), 2);
+
+    let lookup = json!({"operation_id": operation, "reconcile": true});
+    assert_eq!(
+        route(&delegation, &lookup).unwrap_err().code(),
+        "delegation-scope-denied"
+    );
+    assert_eq!(
+        route(&capability, &lookup).unwrap()["session"]["id"],
+        "fixture-steward"
+    );
+    assert!(relay.take_requests().is_empty());
+}

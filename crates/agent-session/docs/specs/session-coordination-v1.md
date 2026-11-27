@@ -509,6 +509,10 @@ with the relay token as bearer and this body:
 }
 ```
 
+Every JSON object in an ordinary Console start request must use unique member
+names. A duplicate at any depth returns HTTP 400 with
+`console-create-invalid-body` before any relay request.
+
 The daemon route accepts `operation_id` (a canonical UUIDv7, optional),
 `machine` (a nonempty string, optional),
 `no_parent` (a boolean, optional), `work` (optional), and a `session` object;

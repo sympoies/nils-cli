@@ -168,7 +168,16 @@ impl Receipt {
                         "operation id is already bound to another start request",
                     ));
                 }
-                Ok((Self { name, value }, false))
+                let mut receipt = Self { name, value };
+                if body["reconcile"] != true
+                    && receipt.pending_attestation()
+                    && receipt.value["attested_retry_started"] != true
+                {
+                    // A subsequent attempt may dispatch before the first reply is saved.
+                    receipt.value["attested_retry_started"] = json!(true);
+                    receipt.save(context)?;
+                }
+                Ok((receipt, false))
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 let started_ms =
@@ -218,9 +227,24 @@ impl Receipt {
         if !path.try_exists().map_err(|_| store_unavailable())? {
             return Ok(());
         }
-        if self.pending_attestation() && result.is_err() {
-            // A refusal on this attempt need not resolve an earlier dispatch.
-            // Only a verified creation updates the attested receipt.
+        if self.pending_attestation()
+            && let Err(error) = result
+        {
+            let status = crate::serve::error_response::status_for(error);
+            if self.value["attested_retry_started"] == true
+                || attestation::refusal(status, error.code()).is_none()
+            {
+                return Ok(());
+            }
+            let current: Value = serde_json::from_slice(
+                &read_private_file(&path, MAX_RECEIPT_BYTES).map_err(|_| store_unavailable())?,
+            )
+            .map_err(|_| store_corrupt())?;
+            if current["state"] == "ambiguous" && current["attested_retry_started"] != true {
+                self.value["state"] = json!("refused");
+                self.value["failure"] = json!({"code":error.code(), "status":status.as_u16()});
+                return self.save(context);
+            }
             return Ok(());
         }
         if let Err(error) = result
@@ -304,6 +328,17 @@ impl Receipt {
         config: &super::Config,
         scope: &Scope,
     ) -> Result<Value, CliError> {
+        if self.is_attested() && self.value["state"] == "refused" {
+            let failure = &self.value["failure"];
+            let status = failure["status"]
+                .as_u64()
+                .and_then(|value| u16::try_from(value).ok())
+                .and_then(|value| reqwest::StatusCode::from_u16(value).ok());
+            let refusal = status
+                .zip(failure["code"].as_str())
+                .and_then(|(status, code)| attestation::refusal(status, code));
+            return Err(refusal.unwrap_or_else(store_corrupt));
+        }
         if let Some(error) = super::super::resume_preflight::forward_refusal(&self.value["failure"])
         {
             return Err(error);

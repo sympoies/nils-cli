@@ -260,3 +260,73 @@ fn console_attestation_preserves_typed_refusal_without_relay_diagnostics() {
     );
     assert_eq!(relay.seen().len(), 2);
 }
+
+#[test]
+fn ordinary_console_start_rejects_duplicate_members_before_relay() {
+    let fixture = Fixture::new();
+    let relay = Aggregator::start();
+    let serve = fixture.serve(&[], Some(&relay));
+    for body in [
+        r#"{"machine":"host-a","machine":"host-b","session":{"agent":"claude"}}"#,
+        r#"{"session":{"agent":"claude","agent":"codex"}}"#,
+    ] {
+        assert_error(
+            submit(&serve, body),
+            StatusCode::BAD_REQUEST,
+            "console-create-invalid-body",
+        );
+    }
+    assert!(relay.seen().is_empty());
+}
+
+#[test]
+fn console_attestation_reconciles_a_verified_first_refusal_without_redispatch() {
+    let fixture = Fixture::new();
+    let relay = Aggregator::start();
+    let serve = fixture.serve(&[], Some(&relay));
+    let refuse = || {
+        relay.reply_json(200, &capability(MACHINE));
+        relay.reply_json(
+            403,
+            &json!({"ok": false, "error": {
+                "code": "console-create-attestation-forbidden",
+                "message": "private fixture diagnostic"
+            }}),
+        );
+    };
+    let check_refusal = |response: (StatusCode, Value)| {
+        assert!(
+            !response
+                .1
+                .to_string()
+                .contains("private fixture diagnostic")
+        );
+        assert_error(
+            response,
+            StatusCode::FORBIDDEN,
+            "console-create-attestation-forbidden",
+        );
+    };
+
+    let body = request();
+    let lookup = json!({"operation_id": body["operation_id"], "reconcile": true});
+    refuse();
+    check_refusal(submit(&serve, &body.to_string()));
+    drop(serve);
+    let serve = fixture.serve(&[], Some(&relay));
+    check_refusal(submit(&serve, &lookup.to_string()));
+    check_refusal(submit(&serve, &body.to_string()));
+    assert_eq!(relay.seen().len(), 2);
+
+    let body = request();
+    let lookup = json!({"operation_id": body["operation_id"], "reconcile": true});
+    relay.reply_json(200, &capability(MACHINE));
+    relay.reply_json(201, &json!({"ok": true, "data": {"session": {"id": ID}}}));
+    assert_unavailable(submit(&serve, &body.to_string()));
+    refuse();
+    check_refusal(submit(&serve, &body.to_string()));
+    let (status, result) = submit(&serve, &lookup.to_string());
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(result["reconciliation"]["state"], "ambiguous");
+    assert_eq!(relay.seen().len(), 6);
+}

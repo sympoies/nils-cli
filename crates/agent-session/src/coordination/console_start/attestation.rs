@@ -164,10 +164,14 @@ pub(super) fn confirm(
 
 fn typed_refusal(status: StatusCode, body: &Value) -> Option<CliError> {
     let error = &body["error"];
-    let code = error["code"].as_str()?;
-    if body["ok"] != false
-        || !error["message"].is_string()
-        || !(super::is_code(code) || code == "identity_session_binding_untrusted")
+    if body["ok"] != false || !error["message"].is_string() {
+        return None;
+    }
+    refusal(status, error["code"].as_str()?)
+}
+
+pub(super) fn refusal(status: StatusCode, code: &str) -> Option<CliError> {
+    if !(super::is_code(code) || code == "identity_session_binding_untrusted")
         || matches!(
             code,
             UNAVAILABLE | "console-start-unavailable" | "create-outcome-unknown"
