@@ -94,7 +94,7 @@ fn json_evidence_mutations_default_to_compact_receipts_and_offer_full_record() {
             "--expected-failure",
             "a compact receipt",
             "--observed-failure",
-            "the historical arrays were returned",
+            "assertion failed: the historical arrays were returned",
             "--test-name",
             "mutation_receipt",
             "--format",
@@ -118,7 +118,7 @@ fn json_evidence_mutations_default_to_compact_receipts_and_offer_full_record() {
                         "exit_code": 101,
                         "summary": "receipt is still the full record",
                         "expected_failure": "a compact receipt",
-                        "observed_failure": "the historical arrays were returned",
+                        "observed_failure": "assertion failed: the historical arrays were returned",
                         "test_name": "mutation_receipt"
                     }
                 }
@@ -300,10 +300,10 @@ fn records_durable_v2_lifecycle_and_appends_scoped_evidence() {
     );
 
     for (test_name, observed_failure) in [
-        ("durable_contract", "record schema was v1"),
+        ("durable_contract", "assertion failed: record schema was v1"),
         (
-            "append_contract",
-            "second failing record replaced the first",
+            "timeout_is_respected",
+            "test timeout_is_respected ... FAILED\nassertion failed: expected an item before timeout",
         ),
     ] {
         let failing = run(
@@ -390,9 +390,32 @@ fn records_durable_v2_lifecycle_and_appends_scoped_evidence() {
         2
     );
 
-    let record = fs::read_to_string(out_dir.join("test-first-evidence.json")).expect("record");
+    let record_path = out_dir.join("test-first-evidence.json");
+    let record = fs::read_to_string(&record_path).expect("record");
     assert!(record.contains("\"schema_version\": \"test-first-evidence.record.v2\""));
     assert!(record.contains("\"status\": \"pass\""));
+
+    for (exit_code, observed) in [
+        (101, "error[E0308]: mismatched types"),
+        (1, "Lookup.java:3: error: cannot find symbol"),
+        (124, "test timed out"),
+    ] {
+        let mut retained: serde_json::Value = serde_json::from_str(&record).expect("record JSON");
+        retained["failing_tests"][0]["exit_code"] = json!(exit_code);
+        retained["failing_tests"][0]["observed_failure"] = json!(observed);
+        fs::write(&record_path, retained.to_string()).expect("write retained record");
+
+        let verify = run(
+            tmp.path(),
+            &["verify", "--out", &out_arg, "--format", "json"],
+        );
+        assert_eq!(verify.code, 1, "{observed}: {verify:?}");
+        assert_eq!(
+            verify.stdout_json()["error"]["details"]["missing"],
+            json!(["meaningful_failing_evidence"]),
+            "{observed}"
+        );
+    }
 }
 
 #[test]
@@ -609,7 +632,7 @@ fn strict_verify_rejects_invalid_raw_v2_fields() {
     "exit_code": 101,
     "summary": "red",
     "expected_failure": "missing behavior",
-    "observed_failure": "assertion mismatch"
+    "observed_failure": "assertion failed: mismatched result"
   }],
   "final_validations": [
     {"command": "cargo test", "status": "pass", "scope": "focused"}
@@ -656,7 +679,7 @@ fn strict_verify_rejects_blank_delta_and_padded_duplicate_identity() {
     "exit_code": 101,
     "summary": "red",
     "expected_failure": "missing behavior",
-    "observed_failure": "assertion mismatch"
+    "observed_failure": "assertion failed: mismatched result"
   }],
   "final_validations": [
     {"command": "cargo test", "status": "pass", "scope": "focused"}
@@ -761,7 +784,7 @@ fn cli_canonicalizes_duplicate_identities() {
             "--expected-failure",
             "missing behavior",
             "--observed-failure",
-            "assertion mismatch",
+            "assertion failed: mismatched result",
             "--test-name",
             "contract",
         ],
@@ -782,7 +805,7 @@ fn cli_canonicalizes_duplicate_identities() {
             "--expected-failure",
             "missing behavior",
             "--observed-failure",
-            "assertion mismatch",
+            "assertion failed: mismatched result",
             "--test-name",
             " contract ",
             "--format",
@@ -813,7 +836,7 @@ fn cli_canonicalizes_duplicate_identities() {
             "--expected-failure",
             "missing behavior",
             "--observed-failure",
-            "assertion mismatch",
+            "assertion failed: mismatched result",
             "--test-name",
             "contract",
             "--format",
@@ -932,7 +955,7 @@ fn strict_verify_rejects_empty_evidence_identities() {
     "exit_code": 101,
     "summary": "",
     "expected_failure": "missing behavior",
-    "observed_failure": "assertion mismatch"
+    "observed_failure": "assertion failed: mismatched result"
   }],
   "final_validations": [
     {"command": "", "status": "pass", "scope": "focused"}
@@ -996,7 +1019,7 @@ fn final_validation_retry_preserves_history_and_other_failures_block() {
             "--expected-failure",
             "new behavior missing",
             "--observed-failure",
-            "assertion mismatch",
+            "assertion failed: mismatched result",
         ],
         vec!["record-gap", "--out", &out_arg, "--none"],
     ] {
@@ -1150,7 +1173,7 @@ fn secret_like_inputs_are_redacted_in_outputs_and_record() {
             "--expected-failure",
             "secret value is redacted",
             "--observed-failure",
-            "OPENAI_API_KEY=sk-proj-supersecret was visible",
+            "assertion failed: OPENAI_API_KEY=sk-proj-supersecret was visible",
             "--format",
             "json",
         ],
@@ -1317,4 +1340,94 @@ fn completion_export_succeeds_outside_git_repo() {
         "missing completion header: {}",
         output.stdout_text()
     );
+}
+
+#[test]
+fn test_first_tiers_record_failing() {
+    for (exit, observed, refusal) in [
+        (
+            "101",
+            "error[E0308]: mismatched types\nerror: could not compile lookup",
+            Some("failing-test-compile-error"),
+        ),
+        (
+            "101",
+            "error[E0425]: cannot find function lookup in this scope",
+            Some("failing-test-missing-symbol"),
+        ),
+        ("124", "test timed out", Some("failing-test-timeout")),
+        (
+            "101",
+            "test lookup timed out after 30s",
+            Some("failing-test-timeout"),
+        ),
+        (
+            "101",
+            "test timeout_is_respected ... FAILED\nassertion failed: expected an item before timeout",
+            None,
+        ),
+        (
+            "1",
+            "Lookup.java:3: error: cannot find symbol",
+            Some("failing-test-missing-symbol"),
+        ),
+        (
+            "1",
+            "./lookup_test.go:8:10: undefined: lookup\nFAIL example [build failed]",
+            Some("failing-test-compile-error"),
+        ),
+        (
+            "1",
+            "test command exited with status 1",
+            Some("failing-test-unclassified"),
+        ),
+    ] {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let out = out_arg(tmp.path());
+        let init = run(
+            tmp.path(),
+            &["init", "--out", &out, "--classification", "bug-fix"],
+        );
+        assert_eq!(init.code, 0, "{init:?}");
+
+        let record = tmp.path().join("test-first-evidence.json");
+        let before = fs::read(&record).unwrap();
+        let result = run(
+            tmp.path(),
+            &[
+                "record-failing",
+                "--out",
+                &out,
+                "--command",
+                "cargo test timeout_is_respected",
+                "--exit-code",
+                exit,
+                "--summary",
+                "Lookup regression before the fix",
+                "--expected-failure",
+                "Expected an item",
+                "--observed-failure",
+                observed,
+                "--test-name",
+                "timeout_is_respected",
+                "--format",
+                "json",
+            ],
+        );
+        let envelope = result.stdout_json();
+        match refusal {
+            Some(code) => {
+                assert_eq!(envelope["error"]["code"], code, "{observed}: {result:?}");
+                assert_eq!(result.code, 65, "{result:?}");
+                assert_eq!(fs::read(&record).unwrap(), before);
+            }
+            None => {
+                assert_eq!(result.code, 0, "{result:?}");
+                assert_eq!(
+                    envelope["result"]["mutation"]["item"]["observed_failure"],
+                    observed
+                );
+            }
+        }
+    }
 }

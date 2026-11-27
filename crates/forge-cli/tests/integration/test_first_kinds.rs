@@ -939,3 +939,290 @@ fn test_kind_uses_target_base_instead_of_fork_base() {
         .unwrap();
     assert_eq!(verdict["code"], "test_first_evidence_required");
 }
+
+#[test]
+fn test_first_tiers_delivery() {
+    let temp = TempDir::new().unwrap();
+    let repo = init_subject_repo(
+        temp.path(),
+        "repo",
+        "https://github.com/example/project.git",
+    );
+    let body = "## Summary\nAdd lookup.\n\n## Acceptance and verification\nLookup returns the item.\n\n## Test changes\nAdd a lookup interface test.\n\n## Test plan\nsh tests/lookup.sh";
+    fs::write(
+        repo.join(".forge-cli.toml"),
+        "[test_first]\nrequire = true\n",
+    )
+    .unwrap();
+    fs::write(
+        repo.join("VALIDATION.toml"),
+        r#"[path_classes]
+production = ["src/**"]
+unmatched = "unknown"
+"#,
+    )
+    .unwrap();
+    fs::create_dir(repo.join("src")).unwrap();
+    fs::write(
+        repo.join("src/lookup.sh"),
+        "lookup() { printf 'missing'; }\n",
+    )
+    .unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "baseline"]);
+    install_local_remote(&repo, temp.path());
+    git(&repo, &["checkout", "-qb", "feat/sample"]);
+    let evidence = temp.path().join("evidence");
+    let evidence = evidence.to_str().unwrap();
+    let project = repo.to_str().unwrap();
+    let record = |args: &[&str]| {
+        let argv = [
+            vec!["test-first-evidence", args[0], "--out", evidence],
+            args[1..].to_vec(),
+        ]
+        .concat();
+        assert_eq!(
+            agent_workflow_primitives::test_first_evidence::run_with_args(argv),
+            0,
+            "{args:?}"
+        );
+    };
+    record(&[
+        "init",
+        "--classification",
+        "feature",
+        "--production-path",
+        "src/lookup.sh",
+        "--added-behavior",
+        "Lookup returns the item",
+    ]);
+    record(&[
+        "bind-baseline",
+        "--project-path",
+        project,
+        "--repository-id",
+        "github.com/example/project",
+    ]);
+    record(&[
+        "record-impact",
+        "--target",
+        "tests/lookup.sh",
+        "--disposition",
+        "add-missing",
+        "--protected-behavior",
+        "Lookup returns the item",
+        "--reason",
+        "New lookup behavior",
+    ]);
+    record(&[
+        "check",
+        "--phase",
+        "pre-edit",
+        "--project-path",
+        project,
+        "--path",
+        "src/lookup.sh",
+    ]);
+    fs::write(repo.join("src/lookup.sh"), "lookup() { printf 'item'; }\n").unwrap();
+    fs::create_dir(repo.join("tests")).unwrap();
+    fs::write(
+        repo.join("tests/lookup.sh"),
+        ". ./src/lookup.sh\ntest \"$(lookup)\" = item\n",
+    )
+    .unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "add lookup"]);
+    git(&repo, &["push", "-qu", "origin", "feat/sample"]);
+    let head = git(&repo, &["rev-parse", "HEAD"]);
+    let interface = nils_test_support::cmd::run_in_dir(
+        &repo,
+        std::path::Path::new("/bin/sh"),
+        &["tests/lookup.sh"],
+        &[],
+        None,
+    );
+    assert_eq!(interface.code, 0, "{interface:?}");
+    record(&[
+        "record-final",
+        "--scope",
+        "focused",
+        "--status",
+        "pass",
+        "--command",
+        "sh tests/lookup.sh",
+    ]);
+    record(&["record-gap", "--none"]);
+    record(&[
+        "bind-delivery",
+        "--project-path",
+        project,
+        "--repository-id",
+        "github.com/example/project",
+    ]);
+
+    let stub = StubEnv::new().gh_stub(
+        r#"#!/bin/sh
+case "$1 $2" in
+  "auth status") printf '%s\n' '  ✓ Logged in to github.com account reviewer (keyring)' >&2 ;;
+  "repo view") printf '%s\n' '{"name":"project","owner":{"login":"example"},"url":"https://github.com/example/project","defaultBranchRef":{"name":"main"},"mergeCommitAllowed":false,"squashMergeAllowed":true,"rebaseMergeAllowed":false}' ;;
+  "pr list") printf '%s\n' "$PR_LIST" ;;
+  "pr create") printf '%s\n' 'https://github.com/example/project/pull/3' ;;
+  "pr view") printf '%s\n' "$PR_VIEW" ;;
+  "api graphql")
+    case "$*" in
+      *ForgeCheckRequirements*) printf '%s\n' '{"data":{"repository":{"ref":{"branchProtectionRule":{"requiredStatusChecks":[{"context":"test","app":null}]}}}}}' ;;
+      *"authorAssociation body createdAt"*) printf '%s\n' '{"data":{"viewer":{"login":"reviewer"},"repository":{"pullRequest":{"comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}' ;;
+      *) printf '%s\n' 'unexpected GraphQL query' >&2; exit 99 ;;
+    esac ;;
+  "api repos/"*)
+    case "$2" in
+      */rules/branches/*) printf '%s\n' '[]' ;;
+      */actions/runs[?]*) printf '%s\n' '{"total_count":0,"workflow_runs":[]}' ;;
+      */commits/*/check-runs\?*) printf '%s\n' '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}' ;;
+      */commits/*/status\?*) printf '%s\n' '{"total_count":0,"statuses":[]}' ;;
+      *) printf 'unexpected API path: %s\n' "$2" >&2; exit 99 ;;
+    esac ;;
+  *) printf 'unexpected fake provider call: %s\n' "$*" >&2; exit 99 ;;
+esac
+"#,
+    );
+    for (kind, branch) in [("feature", "feat/sample"), ("bug", "fix/sample")] {
+        if kind == "bug" {
+            git(&repo, &["checkout", "-qb", branch]);
+            git(&repo, &["push", "-qu", "origin", branch]);
+        }
+        let view = serde_json::json!({
+            "number": 3, "url": "https://github.com/example/project/pull/3", "state": "OPEN",
+            "headRefName": branch, "headRefOid": head.trim(), "baseRefName": "main",
+            "title": "Add lookup", "body": body, "isDraft": true,
+        });
+        for (operation, adopt, dry_run) in [
+            ("create", false, false),
+            ("deliver", false, false),
+            ("deliver", true, false),
+            ("create", false, true),
+            ("deliver", false, true),
+        ] {
+            let list = if adopt {
+                format!("[{view}]")
+            } else {
+                "[]".into()
+            };
+            let mut args = vec![
+                "--provider",
+                "github",
+                "--host",
+                "github.com",
+                "--repo",
+                "example/project",
+                "--format",
+                "json",
+                "pr",
+                operation,
+                "--kind",
+                kind,
+                "--base",
+                "main",
+                "--title",
+                "Add lookup",
+                "--body",
+                body,
+                "--test-first-evidence",
+                evidence,
+            ];
+            if dry_run {
+                args.push("--dry-run");
+            }
+            if operation == "deliver" {
+                args.extend(["--no-merge", "--timeout", "5s"]);
+            }
+            let output = super::support::run_forge_cli_in_with_env(
+                &stub,
+                &args,
+                Some(&repo),
+                &[("PR_LIST", &list), ("PR_VIEW", &view.to_string())],
+            );
+            let envelope = parse_envelope(&output.stdout);
+            if dry_run && operation == "deliver" {
+                let verdict = envelope["data"]["local_preflight"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|v| v["rule"] == "test_first")
+                    .unwrap();
+                assert_eq!(verdict["ok"], kind == "feature", "{kind}: {output:?}");
+                if kind == "bug" {
+                    assert_eq!(verdict["code"], "test_first_evidence_incomplete");
+                }
+            } else if kind == "feature" {
+                assert_eq!(
+                    output.code, 0,
+                    "{operation} adopt={adopt} dry_run={dry_run}: {output:?}"
+                );
+                if operation == "create" && dry_run {
+                    let record_path =
+                        std::path::Path::new(evidence).join("test-first-evidence.json");
+                    let record = fs::read_to_string(&record_path).unwrap();
+                    let baseline = git(&repo, &["rev-parse", "main"]);
+                    for (field, replacement, code, message) in [
+                        (
+                            "/subject/deliveries/0/head",
+                            serde_json::json!(baseline.trim()),
+                            "test_first_evidence_subject_mismatch",
+                            "does not match the current repository and delivery",
+                        ),
+                        (
+                            "/contract_delta/added_behaviors",
+                            serde_json::json!([]),
+                            "test_first_evidence_incomplete",
+                            "changed_added_or_removed_behavior",
+                        ),
+                        (
+                            "/final_validations",
+                            serde_json::json!([]),
+                            "test_first_evidence_incomplete",
+                            "focused_final_validation",
+                        ),
+                    ] {
+                        let mut invalid: serde_json::Value = serde_json::from_str(&record).unwrap();
+                        *invalid.pointer_mut(field).unwrap() = replacement;
+                        fs::write(&record_path, invalid.to_string()).unwrap();
+
+                        let output = super::support::run_forge_cli_in_with_env(
+                            &stub,
+                            &args,
+                            Some(&repo),
+                            &[("PR_LIST", &list), ("PR_VIEW", &view.to_string())],
+                        );
+                        assert_eq!(output.code, 65, "{field}: {output:?}");
+                        let envelope = parse_envelope(&output.stdout);
+                        assert_eq!(envelope["error"]["code"], code, "{field}: {output:?}");
+                        assert!(
+                            envelope["error"]["message"]
+                                .as_str()
+                                .unwrap()
+                                .contains(message),
+                            "{field}: {output:?}"
+                        );
+                    }
+                    fs::write(&record_path, record).unwrap();
+                } else if operation == "deliver" {
+                    let step = if adopt { "adopt" } else { "create" };
+                    assert!(
+                        envelope["data"]["steps"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|entry| entry["step"] == step && entry["ok"] == true)
+                    );
+                }
+            } else {
+                assert_eq!(
+                    output.code, 65,
+                    "{operation} adopt={adopt} dry_run={dry_run}: {output:?}"
+                );
+                assert_eq!(envelope["error"]["code"], "test_first_evidence_incomplete");
+            }
+        }
+    }
+}

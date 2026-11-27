@@ -286,8 +286,27 @@ It retains log digests and chronology attestation without replacing prior bindin
 Classification is a closed set:
 `behavior-change|bug-fix|feature|docs-only|config-only|generated-only|refactor-only`.
 The first three are testable and must declare at least one changed, added, or
-removed behavior. Feature/bug forge delivery accepts only those testable
-classifications.
+removed behavior. The evidence tracks the test-first tiers:
+
+- **A (bug or regression fix, boundary contract, security)** requires a
+  meaningful red first from the expected assertion. Use `bug-fix` or
+  `behavior-change`, and record a waiver with substitute validation if a
+  meaningful red is impractical.
+- **B (feature)** authors write acceptance criteria first and run stable-interface
+  tests before merge. Use `feature`, capture the criteria in the contract delta,
+  and record passing focused validation. The verifier checks the declared
+  behavior change, test impact or reason for no existing tests, and passing
+  focused validation. A red record or waiver is optional.
+- **C (docs, config, generated output, small UI tweak, spike)** requires
+  repository checks only and no record.
+
+Pass the failing runner's exit code and output showing the expected assertion
+to `record-failing`. Recognized compiler and runner diagnostics return
+`failing-test-compile-error`, `failing-test-missing-symbol`, or
+`failing-test-timeout`. Output with no recognized result returns
+`failing-test-unclassified`. Each refusal exits 65. If the runner cannot
+provide a recognizable assertion result, use `record-waiver` with substitute
+validation.
 
 JSON responses from `record-failing`, `record-final`, and `bind-delivery`
 default to compact `cli.test-first-evidence.<command>.v3` mutation receipts.
@@ -323,7 +342,7 @@ test-first-evidence record-failing \
   --summary "bug reproduced before fix" \
   --test-name bug_repro \
   --expected-failure "new parser contract is not implemented" \
-  --observed-failure "assertion reported the v1 value" \
+  --observed-failure "assertion failed: expected the new value, got the v1 value" \
   --format json
 test-first-evidence record-final \
   --out "$AGENT_HOME/out/projects/acme__app/test-first" \
@@ -417,8 +436,8 @@ Stable subject reason codes are `subject-match`, `unbound-subject`,
 uses the repository's `[path_classes]` contract from the root
 `VALIDATION.toml` (the same contract drives `docs-impact`), and `delivery` is the
 phase-aware spelling of strict v2 completeness. Production paths require a
-contract delta, test-impact declaration, and meaningful failing evidence or a
-complete waiver; unknown and overlapping classes fail closed. A repository
+contract delta and test-impact declaration. Tier A also requires meaningful
+failing evidence or a complete waiver. Unknown and overlapping classes fail closed. A repository
 without a path-class contract reports `not-configured` without inventing
 language-specific rules.
 

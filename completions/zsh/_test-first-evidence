@@ -32,7 +32,7 @@ _test-first-evidence() {
 _arguments "${_arguments_options[@]}" : \
 '--out=[Evidence artifact directory containing \`test-first-evidence.json\`]:DIR:_files -/' \
 '--format=[Output format]:FORMAT:(text json)' \
-'--classification=[Change classification. Feature/bug delivery requires a testable classification]:CLASSIFICATION:(behavior-change bug-fix feature docs-only config-only generated-only refactor-only)' \
+'--classification=[Change classification. Use feature for tier B, and bug-fix or behavior-change for tier A]:CLASSIFICATION:(behavior-change bug-fix feature docs-only config-only generated-only refactor-only)' \
 '*--production-path=[Production path affected by the change. Repeat for multiple paths]:PATH:_files' \
 '*--note=[Optional note to keep with the record. Repeat for multiple notes]:TEXT:_default' \
 '*--retained-behavior=[Existing behavior or invariant that must remain unchanged. Repeatable]:TEXT:_default' \
@@ -53,12 +53,12 @@ _arguments "${_arguments_options[@]}" : \
 '--exit-code=[Exit code from the failing command]:CODE:_default' \
 '--summary=[Concise failure summary]:TEXT:_default' \
 '--expected-failure=[Failure that should occur because the intended behavior is not implemented yet]:TEXT:_default' \
-'--observed-failure=[Failure actually observed in the before-fix run]:TEXT:_default' \
+'--observed-failure=[Assertion failure actually observed in the before-fix run]:TEXT:_default' \
 '--test-name=[Optional test name or scenario identifier]:TEXT:_default' \
 '*--artifact=[Optional evidence artifact path. Repeat for multiple artifacts]:PATH:_files' \
 '--full-record[Return the complete evidence record in JSON instead of a compact mutation receipt]' \
-'-h[Print help]' \
-'--help[Print help]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
 (record-impact)
@@ -224,7 +224,7 @@ esac
 _test-first-evidence_commands() {
     local commands; commands=(
 'init:Create a deterministic evidence record' \
-'record-failing:Record a failing test or reproducible failure before the fix' \
+'record-failing:Record the expected assertion failure before the fix' \
 'record-impact:Record one materially affected test target or declare none exist' \
 'record-waiver:Record an explicit waiver when failing evidence is not practical' \
 'record-final:Record final validation after the implementation' \

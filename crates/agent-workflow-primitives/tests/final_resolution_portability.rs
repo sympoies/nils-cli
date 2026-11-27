@@ -54,7 +54,7 @@ fn resolved_fixture_with_commands(
             "--expected-failure",
             "portable investigation reference",
             "--observed-failure",
-            "machine-local reference in exported summary",
+            "assertion failed: machine-local reference in exported summary",
         ],
     );
     for &command in failed_commands {

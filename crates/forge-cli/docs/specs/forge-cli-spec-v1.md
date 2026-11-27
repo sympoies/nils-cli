@@ -1317,9 +1317,8 @@ per-invocation override.
 config opts in. When it resolves `true`, `pr create` and `pr deliver` (both the
 create and adopt paths, and the `--dry-run` preflight) require
 `--test-first-evidence <dir>` for kinds selected by `require_kinds`. If omitted,
-`require_kinds` defaults to `["feature", "bug"]`, preserving existing behavior.
-Set `require_kinds = ["bug"]` to require evidence only for bug PRs while allowing
-feature PRs without a record. The list accepts `feature`, `bug`, `docs`, `chore`,
+`require_kinds` defaults to `["feature", "bug"]`. Set
+`require_kinds = ["bug"]` to require evidence only for bug PRs. The list accepts `feature`, `bug`, `docs`, `chore`,
 `ci`, `refactor`, and `test`; unselected kinds are exempt. An empty list selects
 no kinds. Setting the list alone does not enable the gate: `require` must still
 resolve `true`.
@@ -1372,10 +1371,23 @@ The missing-evidence error names the selected `--kind` and directs the caller to
 `--test-first-evidence <dir>`.
 
 The directory must hold a verified v2 `test-first-evidence` record with a testable classification,
-an actual changed/added/removed behavior, an affected-test decision, meaningful
-failing evidence or an explicit waiver, scoped passing validation, and a
-residual-gap declaration. The record must also bind an immutable repository and
-pre-edit baseline plus a latest delivery head/tree/diff attestation matching
+an actual changed/added/removed behavior, an affected-test decision, scoped
+passing validation, and a residual-gap declaration.
+
+- **A (bug or regression fix, boundary contract, security)** requires a
+  meaningful red first from the expected assertion or an explicit waiver.
+  Compile errors, missing symbols, and timeouts are refused as red evidence.
+- **B (feature)** authors write acceptance criteria first and run stable-interface
+  tests before merge. For `--kind feature` with a `feature` record, the gate
+  checks the declared changed, added, or removed behavior, the test impact or
+  reason for no existing tests, passing focused validation, and the bound delivery
+  head. Review covers the order of the work and what the tests exercise.
+  A red record or waiver is optional.
+- **C (docs, config, generated output, small UI tweak, spike)** requires
+  repository checks only and no record under the default kind selection.
+
+The record must bind an immutable repository and pre-edit baseline plus a
+latest delivery head/tree/diff attestation matching
 the explicitly selected delivery ref. Create and adopt compare that attested
 head with the provider's immutable PR/MR head OID; deliver re-fetches it after
 checks and after ready, and merge uses the same OID as a compare-and-swap

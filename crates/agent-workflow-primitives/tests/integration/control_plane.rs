@@ -310,7 +310,7 @@ fn test_first_check_is_phase_and_path_class_aware() {
             "--expected-failure",
             "the new contract is not implemented",
             "--observed-failure",
-            "the regression assertion failed",
+            "assertion failed: regression reproduced",
         ],
     );
     assert_eq!(before_fix.code, 0, "stderr: {}", before_fix.stderr_text());

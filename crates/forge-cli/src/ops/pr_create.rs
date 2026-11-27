@@ -473,9 +473,10 @@ pub(crate) fn evidence_remote_url(
 
 /// Test-first gate. When the resolved policy requires evidence for this kind, the
 /// `--test-first-evidence` directory must hold a verified `test-first-evidence`
-/// v2 record with a testable classification, durable before-fix evidence,
-/// scoped passing validation, an explicit residual-gap declaration, and a
-/// baseline/delivery subject matching the current repository and head.
+/// record with a testable classification, scoped passing validation, an explicit
+/// residual-gap declaration, and a baseline/delivery subject matching the current
+/// repository and head. Only feature-kind delivery can use a record without
+/// before-fix evidence or a waiver.
 /// Kinds absent from the configured list are exempt.
 pub(crate) fn test_first_gate(
     kind: PrKind,
@@ -512,7 +513,20 @@ pub(crate) fn test_first_gate(
             None,
         ));
     };
-    match agent_workflow_primitives::test_first_evidence::verify_dir(Path::new(dir)) {
+    let verified = agent_workflow_primitives::test_first_evidence::verify_dir(Path::new(dir)).map(
+        |mut result| {
+            if kind != PrKind::Feature
+                && result.complete
+                && result.record.failing_tests.is_empty()
+                && result.record.waiver.is_none()
+            {
+                result.complete = false;
+                result.missing.push("failing_tests_or_waiver".to_string());
+            }
+            result
+        },
+    );
+    match verified {
         Ok(result) if result.record.schema_version == "test-first-evidence.record.v1" => {
             Err(ForgeError::validation(
                 schema_err(),
