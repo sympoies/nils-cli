@@ -500,11 +500,12 @@ fn unkeyed_wake_capture_loss_is_visible_until_composer_is_empty() {
     assert_eq!(output.code, 1);
     assert_eq!(output.stdout_json()["error"]["details"]["pasted"], true);
     assert_eq!(enter_count(&fixture), 0);
-    let tmux_model = fixture.root().join("tmux-model");
-    let script = fs::read_to_string(&tmux_model).unwrap();
-    let marker = "if command == 'has-session':";
-    assert!(script.contains(marker));
-    fs::write(&tmux_model, script.replace(marker, "if command == 'list-windows': print('modeled-guarded\\t0'); sys.exit(0)\nif command == 'has-session':")).unwrap();
+    // Keep patrol's bounded observations independent of Python startup.
+    fs::write(
+        fixture.root().join("tmux"),
+        include_str!("stranded-patrol-tmux.sh"),
+    )
+    .unwrap();
     assert_eq!(list_row(&fixture, text)["unsubmitted_attempt"], true);
     let board = run_resolved(
         "agent-session",
