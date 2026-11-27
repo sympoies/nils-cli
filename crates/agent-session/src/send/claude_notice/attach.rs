@@ -15,7 +15,7 @@ const STATE: &str = "not-attached";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Reason {
-    WritersDisabled,
+    HostRuleDisabled,
     ProviderVersionUnsupported,
     ProviderVersionUnreadable,
 }
@@ -23,7 +23,7 @@ pub(crate) enum Reason {
 impl Reason {
     fn as_str(self) -> &'static str {
         match self {
-            Self::WritersDisabled => "writers-disabled",
+            Self::HostRuleDisabled => "host-rule-disabled",
             Self::ProviderVersionUnsupported => "provider-version-unsupported",
             Self::ProviderVersionUnreadable => "provider-version-unreadable",
         }
@@ -31,7 +31,7 @@ impl Reason {
 
     fn parse(text: &str) -> Option<Self> {
         [
-            Self::WritersDisabled,
+            Self::HostRuleDisabled,
             Self::ProviderVersionUnsupported,
             Self::ProviderVersionUnreadable,
         ]
@@ -40,7 +40,7 @@ impl Reason {
     }
 
     fn version_related(self) -> bool {
-        self != Self::WritersDisabled
+        self != Self::HostRuleDisabled
     }
 }
 
@@ -150,7 +150,7 @@ pub(crate) fn mailbox_text_reason(
     }
     if let Some(recorded) = read(context, session) {
         return Some(match recorded.reason {
-            Reason::WritersDisabled => "notice-writers-disabled",
+            Reason::HostRuleDisabled => "notice-receiver-not-attached",
             Reason::ProviderVersionUnsupported | Reason::ProviderVersionUnreadable => {
                 "notice-provider-unsupported"
             }

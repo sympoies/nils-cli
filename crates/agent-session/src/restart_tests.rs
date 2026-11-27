@@ -216,7 +216,7 @@ fn idle_restart_relaunches_in_place_and_reports_a_ready_receipt() {
     assert_eq!(receipt["new"]["session_incarnation"], new_launch.as_str());
     assert_eq!(receipt["new"]["generation"], 3);
     assert_eq!(receipt["new"]["provider_version"], "9.9.9 (Fixture)");
-    assert_eq!(receipt["native_notice"]["reason"], "writers-disabled");
+    assert_eq!(receipt["native_notice"]["reason"], "host-rule-disabled");
     assert!(receipt["new"]["pane_pid"].is_i64());
     assert!(receipt["ready_at"].is_string());
     assert_eq!(

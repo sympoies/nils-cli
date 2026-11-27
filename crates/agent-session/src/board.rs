@@ -356,7 +356,7 @@ pub(crate) fn project_record(
         "launch_env": crate::launch_env::projection(view.get("launch_env")),
     });
     if let Some(
-        reason @ ("writers-disabled"
+        reason @ ("host-rule-disabled"
         | "provider-version-unsupported"
         | "provider-version-unreadable"),
     ) = view

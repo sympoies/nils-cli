@@ -180,7 +180,7 @@ pub(crate) fn prepare_launch(
         return Ok(None);
     }
     if !crate::cli::operator_rules::claude_native_notice() {
-        attach::record(state, record, Reason::WritersDisabled, None);
+        attach::record(state, record, Reason::HostRuleDisabled, None);
         return Ok(None);
     }
     let mut command = Command::new(agent_bin);

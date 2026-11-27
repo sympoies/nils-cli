@@ -130,9 +130,8 @@ migration time or rewrites the stored receipt.
 set and carries no message or runtime content.
 
 A configuration-only Claude text wake retains its route cause while queued,
-submitted, or unknown: `notice-writers-disabled` (writers disabled at launch or
-in the daemon), `notice-provider-unsupported` (the launch could not use the
-tested provider version), or `notice-receiver-not-attached` (no receiver was
+submitted, or unknown: `notice-writers-disabled` (writers disabled in the daemon), `notice-provider-unsupported` (the launch could not use the
+tested provider version), or `notice-receiver-not-attached` (the host rule disabled the module or no receiver was
 installed for that launch). A nonempty composer keeps the wake queued and the
 draft intact; an unknown attempted generation is never resent.
 

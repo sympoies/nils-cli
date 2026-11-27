@@ -114,7 +114,11 @@ elif command == 'kill-session':
     fs::create_dir_all(&provider).unwrap();
     let state = root.join("state");
     let rules = root.join("rules.json");
-    fs::write(&rules, json!({"schema_version":"agent-session.operator-rules.v1", "claude_native_notice": gate == "1"}).to_string()).unwrap();
+    let mut rule = json!({"schema_version":"agent-session.operator-rules.v1"});
+    if gate != "unset" {
+        rule["claude_native_notice"] = json!(gate == "1");
+    }
+    fs::write(&rules, rule.to_string()).unwrap();
     if resume {
         let session = state.join("sessions/synthetic");
         fs::create_dir_all(&session).unwrap();
@@ -246,7 +250,7 @@ fn claude_notice_supported_writer_launch_mounts_native_module() {
 
 #[test]
 fn claude_notice_gate_off_and_other_versions_do_not_mount_a_module() {
-    for (gate, version) in [("0", "2.1.296"), ("1", "2.1.295")] {
+    for (gate, version) in [("0", "2.1.296"), ("unset", "2.1.296"), ("1", "2.1.295")] {
         for resume in [false, true] {
             let (temp, _) = nils_test_support::short_socket_path("socket");
             let (output, calls) = launch_case(temp.path(), gate, version, resume);
@@ -258,10 +262,10 @@ fn claude_notice_gate_off_and_other_versions_do_not_mount_a_module() {
                 output.stderr_text()
             );
             assert_eq!(mounted_module(&calls), None);
-            if resume && gate == "0" {
+            if resume && gate != "1" {
                 assert_eq!(
-                    output.stdout_json()["data"]["native_notice"]["reason"],
-                    "writers-disabled"
+                    output.stdout_json()["data"]["native_notice"],
+                    json!({"state":"not-attached", "reason":"host-rule-disabled"})
                 );
                 let state = temp.path().join("state");
                 let tmux = temp.path().join("launch-tmux");
@@ -277,11 +281,25 @@ fn claude_notice_gate_off_and_other_versions_do_not_mount_a_module() {
                         args.extend(["--format", format]);
                         let view = run_resolved("agent-session", &args, &options);
                         assert_eq!(view.code, 0, "{}", view.stderr_text());
-                        assert!(
-                            view.stdout_text().contains("writers-disabled"),
-                            "{}",
-                            view.stdout_text()
-                        );
+                        if format == "json" {
+                            let body = view.stdout_json();
+                            let notice = if command == "glance" {
+                                &body["data"]["native_notice"]
+                            } else {
+                                &body["data"]["board"]["records"][0]["native_notice"]
+                            };
+                            assert_eq!(
+                                *notice,
+                                json!({"state":"not-attached", "reason":"host-rule-disabled"})
+                            );
+                        } else {
+                            assert!(
+                                view.stdout_text()
+                                    .contains("native_notice: not-attached (host-rule-disabled)"),
+                                "{}",
+                                view.stdout_text()
+                            );
+                        }
                     }
                 }
             }
@@ -880,7 +898,8 @@ fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
             "2.1.295",
         ),
         ("1", "garbled", false, "provider-version-unreadable", ""),
-        ("0", "2.1.296", false, "writers-disabled", ""),
+        ("0", "2.1.296", false, "host-rule-disabled", ""),
+        ("unset", "2.1.296", false, "host-rule-disabled", ""),
     ];
     let cases: Vec<_> = [false, true]
         .into_iter()
@@ -949,9 +968,9 @@ fn claude_notice_unattached_session_refuses_with_a_typed_reason() {
             Value::Null,
         ),
         (
-            Some(status("writers-disabled", None)),
+            Some(status("host-rule-disabled", None)),
             "notice-transport-unsupported",
-            "writers-disabled",
+            "host-rule-disabled",
             Value::Null,
         ),
         (

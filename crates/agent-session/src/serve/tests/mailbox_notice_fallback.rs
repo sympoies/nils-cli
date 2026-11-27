@@ -14,15 +14,15 @@ pub(super) fn bind_idle(fixture: &WakeFixture) {
 async fn claude_configuration_fallback_preserves_drafts_and_delivers_once() {
     use crate::send::claude_notice::attach::{self, Reason};
     let lock = GlobalStateLock::new();
-    for reason in [Reason::WritersDisabled, Reason::ProviderVersionUnsupported, Reason::ProviderVersionUnreadable] {
+    for reason in [Reason::HostRuleDisabled, Reason::ProviderVersionUnsupported, Reason::ProviderVersionUnreadable] {
         let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
         let fixture = WakeFixture::new(AgentKind::Claude).await;
         bind_idle(&fixture);
         let record = load_session_record(&fixture.state.context, "beta").unwrap();
         attach::record(&fixture.state.context.state_dir, &record, reason, None);
-        // A launch without writers stays unattached even if the daemon now enables them.
+        // A launch without the host rule stays unattached when daemon writers are enabled.
         let detail = match reason {
-            Reason::WritersDisabled => "notice-writers-disabled",
+            Reason::HostRuleDisabled => "notice-receiver-not-attached",
             Reason::ProviderVersionUnsupported | Reason::ProviderVersionUnreadable => "notice-provider-unsupported",
         };
         let draft = "generic operator draft";
