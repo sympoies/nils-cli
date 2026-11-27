@@ -27,9 +27,9 @@ pub(super) fn start_interactive_tmux(
         .arg("-F")
         .arg(TMUX_RUNTIME_IDENTITY_FORMAT)
         .arg("-s")
-        .arg(&record.tmux_session)
+        .arg(record.tmux_session.replace('#', "##"))
         .arg("-c")
-        .arg(&record.cwd);
+        .arg(record.cwd.replace('#', "##"));
     add_runtime_tmux_environment(&mut command, state_dir, record)?;
     begin_held_runtime(&mut command, state_dir, record)?;
 
@@ -131,9 +131,9 @@ pub(super) fn start_resume_tmux(
         .arg("-F")
         .arg(TMUX_RUNTIME_IDENTITY_FORMAT)
         .arg("-s")
-        .arg(&record.tmux_session)
+        .arg(record.tmux_session.replace('#', "##"))
         .arg("-c")
-        .arg(&record.cwd);
+        .arg(record.cwd.replace('#', "##"));
     add_runtime_tmux_environment(&mut command, state_dir, record)?;
     begin_held_runtime(&mut command, state_dir, record)?;
     add_interactive_agent_environment(&mut command);
@@ -598,5 +598,74 @@ mod tests {
             fs::read(argv).unwrap(),
             b"unset\nnew-session\n-e\nDEMO=label\xff\\;\n--\nexample\nlabel; with space\nlabel\\;\nlabel\\\\;\n\n"
         );
+    }
+}
+
+#[cfg(test)]
+mod literal_option_tests {
+    use super::*;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn tmux_new_session_options_are_literal() {
+        let lock = GlobalStateLock::new();
+        let _scope = EnvGuard::remove(&lock, "AGENT_SESSION_TMUX_SCOPE");
+        let temp = tempfile::tempdir().unwrap();
+        let tmux = temp.path().join("tmux");
+        let output = temp.path().join("argv");
+        fs::write(
+            &tmux,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > {}\nexit 1\n",
+                shell_words::quote(&output.to_string_lossy())
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        let record: SessionRecord = serde_json::from_value(json!({
+            "schema_version": SESSION_DOCUMENT_VERSION, "id":"fixture", "agent":"codex",
+            "mode":"interactive", "cwd":"/fixture/#(command)/#{host}",
+            "tmux_session":"fixture-#(command)-#{host}",
+            "prompt_file":"prompt", "log_file":"log",
+            "created_at":"2030-01-01T00:00:00Z", "updated_at":"2030-01-01T00:00:00Z",
+            "runtime":{"kind":"tmux", "tmux_session":"fixture", "generation":1,
+                "started_at":"2030-01-01T00:00:00Z", "launch_id":"fixture-launch"}
+        }))
+        .unwrap();
+        for launch in 0..3 {
+            let result = match launch {
+                0 => start_interactive_tmux(
+                    &tmux,
+                    Path::new("agent"),
+                    AgentKind::Codex,
+                    temp.path(),
+                    &record,
+                    &[],
+                    &[],
+                ),
+                1 => start_resume_tmux(&tmux, Path::new("agent"), temp.path(), &record, &[]),
+                _ => start_run_tmux(
+                    &tmux,
+                    Path::new("agent"),
+                    AgentKind::Codex,
+                    temp.path(),
+                    &record,
+                    &[],
+                ),
+            };
+            assert_eq!(result.unwrap_err().code(), "command-failed");
+            let args = fs::read_to_string(&output).unwrap();
+            let args: Vec<_> = args.lines().collect();
+            let name = args.iter().position(|arg| *arg == "-s").unwrap();
+            let cwd = args.iter().position(|arg| *arg == "-c").unwrap();
+            assert_eq!(
+                (args[name + 1], args[cwd + 1]),
+                (
+                    "fixture-##(command)-##{host}",
+                    "/fixture/##(command)/##{host}"
+                )
+            );
+        }
     }
 }
