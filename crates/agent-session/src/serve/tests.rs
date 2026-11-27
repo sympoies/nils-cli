@@ -14536,7 +14536,8 @@ async fn account_switch_statuses_match_across_providers() {
 #[tokio::test]
 async fn account_cli_claude_switch_queues_busy_refuses_and_restarts_idle() {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("runtime");
+    let _runtime = EnvGuard::set(&lock, "XDG_RUNTIME_DIR", tmp.path().to_str().unwrap());
     let cwd = tmp.path().join("repo");
     fs::create_dir_all(&cwd).unwrap();
     let broker = claude_broker_fixture(&lock, tmp.path());
@@ -14610,7 +14611,6 @@ async fn account_cli_claude_switch_queues_busy_refuses_and_restarts_idle() {
             .unwrap();
     assert_eq!(shown["claude_account"]["next"]["account"], "beta");
 
-    // Typed errors match the serve route.
     let stale = switch("beta", Some("stale-incarnation")).unwrap_err();
     assert_eq!(stale.code(), "claude-account-session-incarnation-conflict");
     let unknown = switch("delta", Some(&first_launch)).unwrap_err();
