@@ -31,9 +31,20 @@ pub struct PrClosePayload {
     pub state: &'static str,
 }
 
-pub fn run(global: &GlobalFlags, id: u64, format: OutputFormat) -> Result<i32, ForgeError> {
-    let runner = default_runner();
-    run_with(&runner, global, id, format, git_remote_url)
+pub fn run_command(
+    global: &GlobalFlags,
+    command: crate::cli::PrCommand,
+    format: OutputFormat,
+) -> Result<i32, ForgeError> {
+    match command {
+        crate::cli::PrCommand::Close { id } => {
+            run_with(&default_runner(), global, id, format, git_remote_url)
+        }
+        crate::cli::PrCommand::Reopen { id, expected_head } => {
+            reopen(global, id, &expected_head, format)
+        }
+        _ => unreachable!("only close and reopen are routed here"),
+    }
 }
 
 pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
@@ -43,32 +54,104 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     format: OutputFormat,
     remote_url_lookup: F,
 ) -> Result<i32, ForgeError> {
+    run_state_with(runner, global, id, format, remote_url_lookup, None)
+}
+
+pub fn reopen(
+    global: &GlobalFlags,
+    id: u64,
+    expected_head: &str,
+    format: OutputFormat,
+) -> Result<i32, ForgeError> {
+    run_state_with(
+        &default_runner(),
+        global,
+        id,
+        format,
+        git_remote_url,
+        Some(expected_head),
+    )
+}
+
+fn run_state_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
+    runner: &R,
+    global: &GlobalFlags,
+    id: u64,
+    format: OutputFormat,
+    remote_url_lookup: F,
+    expected_head: Option<&str>,
+) -> Result<i32, ForgeError> {
+    let reopen = expected_head.is_some();
+    if let Some(head) = expected_head
+        && (head.len() != 40 || !head.bytes().all(|b| b.is_ascii_hexdigit()))
+    {
+        return Err(reopen_error(
+            "invalid_expected_head",
+            "expected a full 40-character commit SHA",
+        ));
+    }
     let ctx = detect(
         global.provider_hint(),
         &global.remote,
         global.repo.as_deref(),
         remote_url_lookup,
     )?;
-    let call = build_close_call(&ctx, id);
+    let mut call = build_close_call(&ctx, id);
+    if reopen {
+        call.argv[1] = OsString::from("reopen");
+    }
 
     if global.dry_run {
         let payload = DryRunPayload::new(ctx.provider, &call);
         return Ok(emit_success(
-            schema_version_for(BINARY, SCHEMA, SCHEMA_VERSION),
+            schema_version_for(
+                BINARY,
+                if reopen { "pr.reopen" } else { SCHEMA },
+                SCHEMA_VERSION,
+            ),
             payload,
             format,
             |p| println!("would run: {plan}", plan = p.plan.join(" ")),
         ));
     }
 
+    if let Some(head) = expected_head {
+        let before = pr_view::parse_view_output(&ctx, &runner.run(&build_view_call(&ctx, id))?)?;
+        check_head(&before, head)?;
+        if before.state == "merged" || before.merged_at.is_some() {
+            return Err(reopen_error(
+                "pr_already_merged",
+                "merged PR cannot be reopened",
+            ));
+        }
+        if before.state != "closed" {
+            return Err(reopen_error(
+                "pr_already_open",
+                "PR must be closed before reopening",
+            ));
+        }
+    }
     let _ = runner.run(&call)?;
 
     // Re-fetch via the canonical `pr view` to populate the envelope shape.
     let view_call = build_view_call(&ctx, id);
     let view_output = runner.run(&view_call)?;
     let payload = pr_view::parse_view_output(&ctx, &view_output)?;
+    if let Some(head) = expected_head {
+        check_head(&payload, head)?;
+        if payload.state != "open" {
+            return Err(reopen_error(
+                "pr_reopen_state_mismatch",
+                "PR did not read back as open",
+            ));
+        }
+    }
     Ok(emit_success(
-        schema_version_for(BINARY, SCHEMA, SCHEMA_VERSION),
+        schema_version_for(
+            BINARY,
+            if reopen { "pr.reopen" } else { SCHEMA },
+            SCHEMA_VERSION,
+        ),
         PrClosePayload {
             provider: payload.provider,
             number: payload.number,
@@ -76,8 +159,35 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             state: payload.state,
         },
         format,
-        render_text,
+        |p| {
+            if reopen {
+                println!(
+                    "reopened {} #{} ({}): {}",
+                    p.provider, p.number, p.state, p.url
+                )
+            } else {
+                render_text(p)
+            }
+        },
     ))
+}
+
+fn reopen_error(kind: &'static str, message: &str) -> ForgeError {
+    ForgeError::runtime_failure(schema_version_for(BINARY, "error", 1), kind, message, None)
+}
+
+fn check_head(view: &pr_view::PrViewPayload, expected: &str) -> Result<(), ForgeError> {
+    if !view
+        .head_sha
+        .as_deref()
+        .is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
+    {
+        return Err(reopen_error(
+            "pr_head_changed",
+            "PR head does not match expected head",
+        ));
+    }
+    Ok(())
 }
 
 fn build_close_call(ctx: &ProviderContext, id: u64) -> BackendCall {
@@ -107,7 +217,7 @@ fn build_view_call(ctx: &ProviderContext, id: u64) -> BackendCall {
             OsString::from(id.to_string()),
             OsString::from("--json"),
             OsString::from(
-                "number,url,state,isDraft,title,headRefName,baseRefName,mergeable,mergedAt,labels",
+                "number,url,state,isDraft,title,headRefName,headRefOid,baseRefName,mergeable,mergedAt,labels",
             ),
         ],
         Provider::GitLab => vec![

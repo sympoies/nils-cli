@@ -121,6 +121,14 @@ pub enum PrCommand {
         /// Numeric id.
         id: u64,
     },
+    /// Reopen a closed PR / MR.
+    Reopen {
+        /// Numeric id.
+        id: u64,
+        /// Expected full PR head commit SHA.
+        #[arg(long)]
+        expected_head: String,
+    },
     /// One-shot snapshot of PR / MR check state.
     Checks(PrChecksArgs),
     /// Block until every required check reaches a terminal state.

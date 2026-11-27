@@ -383,3 +383,12 @@ Timeouts and cancellations cannot satisfy the full-validation gate.
 
 For local commands and prerequisites, see [DEVELOPMENT.md](../../DEVELOPMENT.md)
 and the [workspace maintenance reference](workspace-maintenance-reference.md).
+
+### Run the agent-session tempdir probe at an unchanged PR head
+
+To retrigger the pull-request workflows without pushing a new commit, close and
+reopen the pull request with `forge-cli pr close <number>` followed by
+`forge-cli pr reopen <number> --expected-head <sha>`, using the full SHA read
+from the PR. The command checks the head before and after the mutation; provider
+operations are not atomic with those reads. The agent-session tempdir probe runs
+at the PR head when its input paths qualify.
