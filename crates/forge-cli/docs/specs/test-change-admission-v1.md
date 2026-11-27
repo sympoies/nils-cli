@@ -83,6 +83,13 @@ Before requesting a review, run the read-only preview against the provider head:
 forge-cli pr review-handoff test-changes 123 --expected-head <full-head-sha>
 ```
 
+To generate a copyable section even when the current declaration is malformed, add
+`--emit-declaration`. Text output is a complete Markdown section; JSON output
+has `data.declaration`. Each detected row has a `<reason>` placeholder that
+must be replaced with a concrete reason before validation. With no findings the
+section contains `None.`. This preview is supported for GitHub; the local provider
+does not support review-handoff.
+
 It requires no assignment or existing review and writes no provider state. Text
 output prints exact file/kind rows and `Test changes confirmed: sha256:<digest>`.
 With `--format json`, `data` contains `number`, `head_sha`, `base_sha`, `findings`
@@ -105,7 +112,7 @@ when every finding is covered: the preview prints them and lists them in
 `warnings`, and admission writes them to standard error; they never fail an
 otherwise declared comparison. Give a concrete reason and describe the
 retained coverage or replacement owner. The reason must contain at least 12 characters.
-The diagnostic lists the required rows.
+Malformed and mismatched declarations report the exact detected rows with placeholders.
 
 ```markdown
 ## Test changes

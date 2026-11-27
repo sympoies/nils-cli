@@ -1154,7 +1154,14 @@ pub fn run(
         ));
     }
     if let PrReviewHandoffCommand::TestChanges(a) = &args.command {
-        return test_integrity::preview(&runner, &ctx, a.id, &a.expected_head, format);
+        return test_integrity::preview(
+            &runner,
+            &ctx,
+            a.id,
+            &a.expected_head,
+            format,
+            a.emit_declaration,
+        );
     }
     let id = match &args.command {
         PrReviewHandoffCommand::TestChanges(_) => unreachable!("preview returned above"),
@@ -1177,7 +1184,13 @@ pub fn run(
         .ok_or_else(|| fail("review_assignment_invalid", "provider head is missing"))?;
     if let PrReviewHandoffCommand::Check(a) = &args.command {
         require_head(head, &a.expected_head)?;
-        test_integrity::validate_declarations(view.body.as_deref().unwrap_or_default())?;
+        test_integrity::validate_for_check(
+            &runner,
+            &ctx,
+            id,
+            head,
+            view.body.as_deref().unwrap_or_default(),
+        )?;
     }
     let state = pr_review::read_review_loop_state_view(&runner, &ctx, &repository, id)?;
     let mut chain = state.chain;
