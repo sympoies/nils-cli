@@ -58,14 +58,13 @@ jobs:
   test:
     if: ${{ !inputs.macos_partitions_only }}
     runs-on: ubuntu-24.04
-    # Backstop for a hang outside a test, such as a stuck build, install, or
-    # audit step. A hung test is ended first by the `ci` nextest profile's
-    # `slow-timeout`, which names it. The slowest of 186 successful full-lane
-    # runs on 2026-09-28..30 took 21 minutes (19 with a cold cache). Keep the
-    # test job limits below the merge queue's 90 minute check timeout and the
-    # release PR's 60 minute check wait, so a waiter sees the job fail instead
-    # of reaching its own timeout.
-    timeout-minutes: 50
+    # Backstop for stuck setup, builds, audits, or tests. Per-test limits
+    # remain in the nextest ci profile.
+    # 23m47s setup/build (run 45961417194) + 21m43s from test start to job
+    # completion (v1.44.0 validation, run 45809621111) + 10m headroom =
+    # 55m30s, rounded up. This ceiling stays below both the release PR's
+    # 60-minute check wait and the merge queue's 90-minute check timeout.
+    timeout-minutes: 56
     permissions:
       contents: read
       checks: write

@@ -350,7 +350,8 @@ publishing a conflicting release. Never bypass a failed validation gate.
 | Job | Limit |
 | --- | --- |
 | Change detection | 60 minutes |
-| Linux validation | 50 minutes |
+| Linux CI validation (`ci.yml`) | 50 minutes |
+| Linux full validation (`full-validation.yml`) | 56 minutes |
 | Linux containment | 25 minutes |
 | Dependency policy | 15 minutes |
 | Full macOS test partition (two run in parallel) | 60 minutes |
@@ -364,10 +365,16 @@ parallel before the required `test` job. In the [v1.40.8 version PR merge-group
 run](https://github.com/sympoies/nils-cli/actions/runs/41797597406), the entry
 took 31.4 minutes end to end. The Linux full-validation `test` job was the
 critical path at 28.5 minutes; the macOS partitions took 26.1 and 17.7 minutes,
-and the required `test` job added about 2 minutes. The Linux job's 50-minute
-timeout left about 21.5 minutes of margin; the release PR's 60-minute check
-wait left about 28.6 minutes. Before the split, the single macOS job took
-about 60 minutes and set the entry's length.
+and the required `test` job added about 2 minutes. Before the split, the single
+macOS job took about 60 minutes and set the entry's length.
+
+The Linux full-validation ceiling rounds up 55m30s to 56 minutes. That adds
+10 minutes of headroom to 23m47s of setup and build in the
+[v1.45.0 queue run](https://github.com/sympoies/nils-cli/actions/runs/45961417194)
+and 21m43s from nextest start through job completion in the
+[v1.44.0 validation run](https://github.com/sympoies/nils-cli/actions/runs/45809621111).
+The ceiling remains below the release PR's 60-minute check wait and the merge
+queue's 90-minute check timeout.
 
 The nextest CI profile terminates an individual test after its configured
 10-minute slow-test bound; job limits also catch hung builds or tool installs.
