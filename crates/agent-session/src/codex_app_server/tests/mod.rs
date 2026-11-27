@@ -2965,7 +2965,7 @@ async fn proxy_acknowledges_system_ephemeral_thread_before_forwarding_its_respon
 
 #[tokio::test]
 async fn fresh_thread_binding_precedes_first_turn_authorization() {
-    let tmp = tempfile::tempdir_in("/tmp").unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("socket");
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -6220,7 +6220,7 @@ async fn manual_input_section_bypasses_reentrant_lock_until_sender_cleanup() {
 
 #[test]
 fn local_input_ownership_rejects_expiry_and_runtime_replacement() {
-    let tmp = tempfile::tempdir_in("/tmp").unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("socket");
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -6324,7 +6324,7 @@ fn manual_input_submission_detection_excludes_ordinary_text_and_keys() {
 
 #[test]
 fn manual_input_section_requires_live_proxy_capability_and_cleans_up() {
-    let tmp = tempfile::tempdir_in("/tmp").unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("socket");
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -6350,7 +6350,7 @@ fn manual_input_section_requires_live_proxy_capability_and_cleans_up() {
 
 #[test]
 fn manual_input_gate_finishes_before_lifecycle_unlock_and_marker_cleanup() {
-    let tmp = tempfile::tempdir_in("/tmp").unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("socket");
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -6396,7 +6396,7 @@ fn manual_input_gate_finishes_before_lifecycle_unlock_and_marker_cleanup() {
 
 #[test]
 fn manual_input_gate_timeout_releases_lifecycle_and_invalidates_marker() {
-    let tmp = tempfile::tempdir_in("/tmp").unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("socket");
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -6431,7 +6431,7 @@ fn manual_input_gate_timeout_releases_lifecycle_and_invalidates_marker() {
 
 #[test]
 fn delayed_proxy_claim_acknowledges_before_sender_retires_section() {
-    let tmp = tempfile::tempdir_in("/tmp").unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("socket");
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
@@ -6470,7 +6470,7 @@ fn delayed_proxy_claim_acknowledges_before_sender_retires_section() {
 
 #[test]
 fn stale_manual_marker_without_owner_lease_cannot_authorize_busy() {
-    let tmp = tempfile::tempdir_in("/tmp").unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("socket");
     let context = CliContext {
         state_dir: tmp.path().join("state"),
         host: None,
