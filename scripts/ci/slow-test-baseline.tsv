@@ -76,7 +76,6 @@ nils-agent-session::integration	start_resume::deleted_source::explicit_account_r
 nils-agent-session::remote_mailbox	two_root_http_federation_acceptance
 nils-agent-session::serve_binary_replaced	serve_bounds_the_drain_when_a_request_stays_open
 nils-agent-session::serve_usage_v1	a_reset_answers_within_its_budget_when_the_refresh_is_slow
-nils-agent-session::service_mailbox	service_mailbox_http_acceptance
 nils-agent-session::service_mailbox	service_mailbox_preserves_existing_machine_identity
 nils-codex-cli::integration	execution_capsule::shell_wrapped_extra_commands_do_not_match_exact_helper_events
 nils-codex-cli::integration	execution_capsule::supervisor_ignoring_termination_is_forcefully_reaped
