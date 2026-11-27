@@ -11,7 +11,7 @@ use serde_json::Value;
 mod serve_fixture;
 
 struct Fixture {
-    dir: tempfile::TempDir,
+    dir: nils_test_support::tempdir::ScopedTempDir,
     tmux: PathBuf,
     provider: PathBuf,
 }
@@ -27,10 +27,7 @@ impl Fixture {
 
     fn with_tmux(body: &str, tmux_bin: &Path) -> Self {
         // The serve fixture also uses this directory as the app-server runtime root.
-        let dir = tempfile::Builder::new()
-            .permissions(fs::Permissions::from_mode(0o700))
-            .tempdir_in("/tmp")
-            .unwrap();
+        let (dir, _) = nils_test_support::short_socket_path("socket");
         for name in ["repo", "home"] {
             fs::create_dir(dir.path().join(name)).unwrap();
         }

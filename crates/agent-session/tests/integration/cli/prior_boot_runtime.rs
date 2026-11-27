@@ -118,7 +118,7 @@ if [ "$1" = app-server ] && [ "$2" = --help ]; then printf '%s\n' '--listen <URL
 exit 0
 "#,
     );
-    let runtime_root = tempfile::tempdir_in("/tmp").expect("short socket tempdir");
+    let (runtime_root, _) = nils_test_support::short_socket_path("socket");
     fs::set_permissions(runtime_root.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let runtime_agent_session = runtime_root.path().join("agent-session");
     fs::create_dir(&runtime_agent_session).unwrap();
@@ -237,7 +237,7 @@ exit 0
 
 #[test]
 fn serve_recovers_a_recorded_running_session_from_a_prior_boot() {
-    let tmp = tempfile::tempdir_in("/tmp").unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("socket");
     let state = tmp.path().join("state");
     let cwd = tmp.path().join("repo");
     fs::create_dir(&cwd).unwrap();
@@ -743,7 +743,7 @@ fn serve_recovers_a_recorded_running_session_from_a_prior_boot() {
 
 #[test]
 fn recovered_private_tmux_runtime_survives_daemon_exit() {
-    let tmp = tempfile::tempdir_in("/tmp").unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("socket");
     let socket = tmp.path().join("tmux.sock");
     struct PrivateServer(PathBuf);
     impl Drop for PrivateServer {
