@@ -82,13 +82,13 @@ fn run_state_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     expected_head: Option<&str>,
 ) -> Result<i32, ForgeError> {
     let reopen = expected_head.is_some();
-    if let Some(head) = expected_head {
-        if head.len() != 40 || !head.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(reopen_error(
-                "invalid_expected_head",
-                "expected a full 40-character commit SHA",
-            ));
-        }
+    if let Some(head) = expected_head
+        && (head.len() != 40 || !head.bytes().all(|b| b.is_ascii_hexdigit()))
+    {
+        return Err(reopen_error(
+            "invalid_expected_head",
+            "expected a full 40-character commit SHA",
+        ));
     }
     let ctx = detect(
         global.provider_hint(),
