@@ -614,7 +614,8 @@ fn idle_account_event(record: &SessionRecord, id: &str, kind: &str) -> crate::ac
 #[tokio::test]
 async fn claude_idle_switch_reports_blockers_and_reissue_applies_immediately() {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("runtime");
+    let _runtime = EnvGuard::set(&lock, "XDG_RUNTIME_DIR", tmp.path().to_str().unwrap());
     let (st, broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
     let tmux = &st.tmux_bin;
     crate::activity::ingest_event(
