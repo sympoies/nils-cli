@@ -698,10 +698,10 @@ mod execution {
         }
         let lock = GlobalStateLock::new();
         let home = tempfile::tempdir().unwrap();
+        let (_keyring_dir, keyhome) = nils_test_support::short_socket_path("keyring");
         let repo = init_repo();
         let bins = StubBinDir::new();
         bins.write_exe("gh", "#!/bin/sh\nprintf '{\"login\":\"account-a\"}'\n");
-        let keyhome = home.path().join("keyring");
         fs::create_dir(&keyhome).unwrap();
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&keyhome, fs::Permissions::from_mode(0o700)).unwrap();
