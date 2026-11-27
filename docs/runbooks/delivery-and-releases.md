@@ -144,6 +144,13 @@ Do not require removed checks before their producers are restored.
 
 ## Release flow
 
+Before version preparation, write and review `docs/releases/vX.Y.Z.md` in an
+ordinary PR. Use merged PR bodies and devlog fragments to cover these sections:
+`## Upgrade notes`, `## New features`, `## Behavior changes`, `## Fixes`, and
+`## Limitations`. Write `None.` under Upgrade notes when no action is required.
+Preparation rejects a missing file or missing Upgrade notes heading. The release
+publishes the curated file followed by the generated changelog.
+
 Before opening a version-bump PR, the release owner must:
 
 1. Record the current `main` commit as the intended release base.

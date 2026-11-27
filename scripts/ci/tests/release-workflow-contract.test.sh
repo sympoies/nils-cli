@@ -13,7 +13,7 @@ assert_contains() {
   local pattern="$2"
   local label="$3"
   if ! rg -q --fixed-strings -- "$pattern" "$file"; then
-    echo "FAIL: $label" >&2
+    echo "assertion failed: $label" >&2
     echo "  missing from $file: $pattern" >&2
     exit 1
   fi
@@ -42,6 +42,34 @@ assert_contains .github/workflows/release.yml "RELEASE_TRIGGERING_ACTOR" \
 assert_contains .github/workflows/release.yml \
   'bash .github/scripts/validate-release-invocation.sh' \
   "release recovery uses the tested invocation validator"
+
+# Exercise preparation against synthetic release notes without touching a release.
+notes_fixture="$(mktemp -d)"
+trap 'rm -rf "$notes_fixture"' EXIT
+mkdir -p "$notes_fixture/docs/releases"
+notes_validator="$repo_root/scripts/ci/validate-release-notes.sh"
+assert_notes_rejected() {
+  local output
+  if output="$(cd "$notes_fixture" && bash "$notes_validator" 9.8.7 2>&1)"; then
+    echo "FAIL: invalid release notes accepted" >&2
+    exit 1
+  fi
+  [[ "$output" == *"docs/releases/v9.8.7.md"* && "$output" == *"## Upgrade notes"* ]] || {
+    echo "FAIL: refusal must identify the expected path and section: $output" >&2
+    exit 1
+  }
+}
+assert_notes_rejected
+printf '# Release\n' > "$notes_fixture/docs/releases/v9.8.7.md"
+assert_notes_rejected
+printf '## Upgrade notes\n\nNone.\n' > "$notes_fixture/docs/releases/v9.8.7.md"
+(cd "$notes_fixture" && bash "$notes_validator" 9.8.7)
+assert_contains .github/workflows/prepare-private-release.yml 'bash scripts/ci/validate-release-notes.sh "$VERSION"' \
+  "preparation validates the versioned notes"
+assert_contains .github/workflows/release.yml 'body_path: docs/releases/${{ github.ref_name }}.md' \
+  "publication uses curated notes from the release tag"
+assert_contains .github/workflows/release.yml 'generate_release_notes: true' \
+  "publication appends the generated changelog"
 
 validator=.github/scripts/validate-release-invocation.sh
 bash "$validator" push graysurf graysurf 1 refs/tags/v1.22.10
