@@ -391,10 +391,7 @@ fn run_options(
     };
 
     if options.dry_run {
-        if installation.is_none()
-            && let Err(err) = git_commit::preflight_target(options.repo.as_deref())
-        {
-            eprintln!("{err}");
+        if !git_commit::preflight_target(options.repo.as_deref()) {
             return EXIT_ERROR;
         }
 
@@ -538,6 +535,9 @@ fn run_cleanup(args: &[String], operation: CleanupOperation) -> i32 {
     };
 
     if options.dry_run {
+        if !git_commit::preflight_target(options.repo.as_deref()) {
+            return EXIT_ERROR;
+        }
         if options.output_format == OutputFormat::Json {
             print_cleanup_json_result(operation, true, None, target, staged_entries);
         }

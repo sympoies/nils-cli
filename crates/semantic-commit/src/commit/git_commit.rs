@@ -5,7 +5,17 @@ use std::io::Write;
 use std::path::Path;
 use std::process::ExitStatus;
 
-pub(super) fn preflight_target(repo: Option<&Path>) -> forge_identity::Result<()> {
+pub(super) fn preflight_target(repo: Option<&Path>) -> bool {
+    match select_target(repo) {
+        Ok(()) => true,
+        Err(err) => {
+            eprintln!("{err}");
+            false
+        }
+    }
+}
+
+fn select_target(repo: Option<&Path>) -> forge_identity::Result<()> {
     // Target selection is local. The real commit performs forge authorization.
     if forge_identity::load_ungated()?.is_some() {
         let remote = forge_identity::authoring_remote(repo)?;

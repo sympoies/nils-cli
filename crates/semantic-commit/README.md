@@ -178,7 +178,7 @@ semantic-commit default-branch \
 ```
 
 Use `--dry-run` without `--receipt-out` for full preflight and message
-validation. Dry-run emits only
+validation, including local authoring target selection when identity policy is active. Dry-run emits only
 `cli.semantic-commit.default-branch.preview.v1`; it never writes a receipt and
 cannot be adopted for provider delivery. Successful mutation writes the strict
 `cli.semantic-commit.default-branch.v1` receipt only after signature,
@@ -270,7 +270,7 @@ header.
 Options:
 
 - `--target <rev>` - target commit revision; required
-- `--dry-run` - validate target and staged checks without committing
+- `--dry-run` - validate target, staged changes, and local authoring target selection without committing
 - `--format <text|json>`, `--json` - output mode
 - `--summary <git-scope|git-show|none>`, `--no-summary` - text summary
 - `--allow-empty` - allow a cleanup commit without staged changes
