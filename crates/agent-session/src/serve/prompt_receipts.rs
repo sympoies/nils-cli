@@ -478,6 +478,8 @@ async fn dispatch_observing(
     let context = state.context.clone();
     let observed_proof = proof.clone();
     match tokio::task::spawn_blocking(move || {
+        #[cfg(test)]
+        let _budget = crate::send::test_budget::Scope::for_fixture(&context.state_dir);
         crate::send::send_owner_prompt_observing(
             &context,
             args,

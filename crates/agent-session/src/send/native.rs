@@ -26,6 +26,9 @@ pub(super) fn deliver(
     attempt: Attempt<'_>,
 ) -> Result<SendResult, CliError> {
     let observed = record.clone();
+    let budget = send_submit::HOLD_BUDGET;
+    #[cfg(test)]
+    let budget = test_budget::current().unwrap_or(budget);
     let admission = send_guard::Admission {
         stopped_idle: &Default::default(),
         context,
@@ -33,7 +36,7 @@ pub(super) fn deliver(
         args: &args.guards,
         tmux_bin,
         verify_composer: true,
-        deadline: attempt.started + send_submit::HOLD_BUDGET,
+        deadline: attempt.started + budget,
     };
     // This shared gate serializes both proxy turn/start and account mutation.
     // It is nonblocking while the session record lock is owned.

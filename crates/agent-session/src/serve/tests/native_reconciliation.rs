@@ -15,6 +15,8 @@ struct QueueFixture {
     watermark_reads: AtomicUsize,
     hold_idle_boundary_read: AtomicBool,
     entered_idle_boundary_read: AtomicBool,
+    turn_start_delay_ms: AtomicUsize,
+    disconnect_after_ack: AtomicBool,
 }
 
 struct Provider {
@@ -74,10 +76,15 @@ impl Provider {
                                 } else {
                                     ("receipt-thread", 0)
                                 };
-                                let result = match request["method"].as_str().unwrap() {
+                                let method = request["method"].as_str().unwrap();
+                                let result = match method {
                                     "initialize" => json!({}),
                                     "thread/loaded/list" => json!({"data":[thread_id],"nextCursor":null}),
                                     "turn/start" => {
+                                        let delay = queue.turn_start_delay_ms.load(Ordering::SeqCst);
+                                        if delay > 0 {
+                                            tokio::time::sleep(Duration::from_millis(delay as u64)).await;
+                                        }
                                         assert_eq!(request["params"]["threadId"], thread_id);
                                         assert_eq!(request["params"]["input"][0]["text"], "inspect the workspace");
                                         assert_eq!(writes.fetch_add(1, Ordering::SeqCst), prior_writes);
@@ -117,7 +124,9 @@ impl Provider {
                                     },
                                     method => panic!("unexpected native RPC: {method}"),
                                 };
-                                if socket.send(ClientMessage::Text(json!({"id":id,"result":result}).to_string().into())).await.is_err() {
+                                if socket.send(ClientMessage::Text(json!({"id":id,"result":result}).to_string().into())).await.is_err()
+                                    || (method == "turn/start" && queue.disconnect_after_ack.load(Ordering::SeqCst))
+                                {
                                     break;
                                 }
                             }
@@ -223,6 +232,11 @@ fn native_fixture(root: &Path) -> (Arc<ServeState>, String, fs::File, Provider) 
     let script = fs::read_to_string(&tmux).unwrap().replacen(
         "print('────────────────────────────\\n❯ ' + text + '\\n────────────────────────────')",
         "print('› ' + text + '\\n\\n  status')",
+        1,
+    );
+    let script = script.replacen(
+        "if args[0] == 'capture-pane':",
+        "if args[0] == 'capture-pane':\n    if (root / 'capture-delay').exists(): time.sleep(1.25)",
         1,
     );
     fs::write(&tmux, script).unwrap();
@@ -480,78 +494,112 @@ async fn native_reconciliation_rejects_unrelated_or_unfenced_evidence() {
         "no-ack",
         "partial-claim",
     ] {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let (st, launch, _lease, provider) = native_fixture(tmp.path());
-        provider.busy.store(false, Ordering::SeqCst);
-        if case == "no-ack" {
-            provider.acknowledge.store(false, Ordering::SeqCst);
-        }
-        let uri = "/sessions/native-receipt/prompt/v2";
-        let mut body = keyed_body(&launch);
-        body["require_idle"] = json!(true);
-        let (_, first) = call(
-            router(st.clone()),
-            post_json(uri, Some(TOKEN), body.clone()),
-        )
-        .await;
-        assert_eq!(
-            first["error"]["details"]["receipt"]["outcome"], "unknown",
-            "{case}: {first}"
-        );
-        assert_eq!(
-            first["error"]["details"]["receipt"]["confirmation_diagnostic"],
-            if case == "no-ack" {
-                "acceptance_unobservable"
-            } else {
-                "native_input_unconfirmed"
-            }
-        );
-        provider.visible.store(true, Ordering::SeqCst);
-        provider.history_kind.store(
-            match case {
-                "sibling" => 1,
-                "wrong-input" => 2,
-                "duplicate-turn" => 3,
-                "duplicate-input" => 4,
-                _ => 0,
-            },
-            Ordering::SeqCst,
-        );
-        let path = tmp.path().join("sessions/native-receipt/session.json");
-        let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        match case {
-            "runtime" => record["runtime"]["launch_id"] = json!("replacement-runtime"),
-            "provider" => record["provider_resume"]["session_id"] = json!("replacement-thread"),
-            "account" => record["codex_account_binding"]["revision"] = json!(2),
-            _ => {}
-        }
-        fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
-        if case == "partial-claim" {
-            for entry in fs::read_dir(tmp.path().join("sessions/native-receipt")).unwrap() {
-                let entry = entry.unwrap();
-                if entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("prompt-receipt-")
-                    && entry.path().extension().is_some_and(|ext| ext == "json")
-                {
-                    fs::write(entry.path(), b"{").unwrap();
-                }
-            }
-        }
-        let lookup = format!("{uri}/receipts/attempt-1?expected_session_incarnation={launch}");
-        let (_, receipt) = call(router(st.clone()), bearer_get(&lookup)).await;
-        assert_eq!(
-            receipt["data"]["receipt"]["outcome"], "unknown",
-            "{case}: {receipt}"
-        );
-        let (_, repeated) = call(router(st), post_json(uri, Some(TOKEN), body)).await;
-        assert_eq!(
-            repeated["error"]["details"]["receipt"]["outcome"], "unknown",
-            "{case}: {repeated}"
-        );
-        assert_eq!(provider.mutations.load(Ordering::SeqCst), 1, "{case}");
+        native_reconciliation_case(case, None).await;
     }
+}
+
+enum NativeDelay {
+    Capture,
+    Provider,
+}
+
+#[tokio::test]
+async fn native_reconciliation_no_ack_after_slow_capture() {
+    native_reconciliation_case("no-ack", Some(NativeDelay::Capture)).await;
+}
+
+#[tokio::test]
+async fn native_reconciliation_no_ack_after_slow_provider() {
+    native_reconciliation_case("no-ack", Some(NativeDelay::Provider)).await;
+}
+
+async fn native_reconciliation_case(case: &str, delay: Option<NativeDelay>) {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (st, launch, _lease, provider) = native_fixture(tmp.path());
+    // This test checks receipt evidence, so give its synthetic transport time to run
+    // under load. The provider ends confirmation explicitly when it sends an ack.
+    let _budget = crate::send::test_budget::Fixture::install(tmp.path(), Duration::from_secs(15));
+    provider
+        .queue
+        .disconnect_after_ack
+        .store(true, Ordering::SeqCst);
+    match delay {
+        Some(NativeDelay::Capture) => fs::write(tmp.path().join("capture-delay"), "").unwrap(),
+        Some(NativeDelay::Provider) => provider
+            .queue
+            .turn_start_delay_ms
+            .store(3000, Ordering::SeqCst),
+        None => {}
+    }
+    provider.busy.store(false, Ordering::SeqCst);
+    if case == "no-ack" {
+        provider.acknowledge.store(false, Ordering::SeqCst);
+    }
+    let uri = "/sessions/native-receipt/prompt/v2";
+    let mut body = keyed_body(&launch);
+    body["require_idle"] = json!(true);
+    let (_, first) = call(
+        router(st.clone()),
+        post_json(uri, Some(TOKEN), body.clone()),
+    )
+    .await;
+    assert_eq!(
+        first["error"]["details"]["receipt"]["outcome"], "unknown",
+        "{case}: {first}"
+    );
+    assert_eq!(
+        first["error"]["details"]["receipt"]["confirmation_diagnostic"],
+        if case == "no-ack" {
+            "acceptance_unobservable"
+        } else {
+            "native_input_unconfirmed"
+        }
+    );
+    provider.visible.store(true, Ordering::SeqCst);
+    provider.history_kind.store(
+        match case {
+            "sibling" => 1,
+            "wrong-input" => 2,
+            "duplicate-turn" => 3,
+            "duplicate-input" => 4,
+            _ => 0,
+        },
+        Ordering::SeqCst,
+    );
+    let path = tmp.path().join("sessions/native-receipt/session.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    match case {
+        "runtime" => record["runtime"]["launch_id"] = json!("replacement-runtime"),
+        "provider" => record["provider_resume"]["session_id"] = json!("replacement-thread"),
+        "account" => record["codex_account_binding"]["revision"] = json!(2),
+        _ => {}
+    }
+    fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
+    if case == "partial-claim" {
+        for entry in fs::read_dir(tmp.path().join("sessions/native-receipt")).unwrap() {
+            let entry = entry.unwrap();
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("prompt-receipt-")
+                && entry.path().extension().is_some_and(|ext| ext == "json")
+            {
+                fs::write(entry.path(), b"{").unwrap();
+            }
+        }
+    }
+    let lookup = format!("{uri}/receipts/attempt-1?expected_session_incarnation={launch}");
+    let (_, receipt) = call(router(st.clone()), bearer_get(&lookup)).await;
+    assert_eq!(
+        receipt["data"]["receipt"]["outcome"], "unknown",
+        "{case}: {receipt}"
+    );
+    let (_, repeated) = call(router(st), post_json(uri, Some(TOKEN), body)).await;
+    assert_eq!(
+        repeated["error"]["details"]["receipt"]["outcome"], "unknown",
+        "{case}: {repeated}"
+    );
+    assert_eq!(provider.mutations.load(Ordering::SeqCst), 1, "{case}");
 }
 
 #[tokio::test]
