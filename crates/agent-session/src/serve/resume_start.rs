@@ -1,6 +1,8 @@
 //! Prompt-free preflight and a versioned create endpoint that older daemons cannot misread.
 use super::*;
 
+#[path = "resume_start/move_origin.rs"]
+mod move_origin;
 #[path = "resume_start/move_routes.rs"]
 mod move_routes;
 use crate::start_resume::{PREFLIGHT_SCHEMA, Request, refusal};
@@ -20,6 +22,7 @@ pub(super) fn routes() -> Router<Arc<ServeState>> {
         .route("/sessions/resume/v1", post(create))
         .route("/sessions/{id}/console-resume/v1", post(console_create))
         .merge(move_routes::routes())
+        .merge(move_origin::routes())
 }
 
 fn response(result: Result<Value, CliError>) -> Response {

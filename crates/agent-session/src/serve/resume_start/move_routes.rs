@@ -6,11 +6,13 @@ use super::*;
 use crate::cli::resume_move::{canonical_uuid, transport};
 use crate::coordination::console_resume_move::{
     refusal::Failure,
-    wire::{BINDING_HEADER, Binding, START_SCHEMA, STATUS_SCHEMA, StartRequest, StartShape},
+    wire::{
+        BINDING_HEADER, Binding, MAX_START_BYTES, START_SCHEMA, STATUS_SCHEMA, StartRequest,
+        StartShape,
+    },
 };
 
-const RELAY_TOKEN_HEADER: &str = "x-agent-session-relay-token";
-const MAX_START_BYTES: usize = 16 * 1024;
+pub(super) const RELAY_TOKEN_HEADER: &str = "x-agent-session-relay-token";
 
 pub(super) fn routes() -> Router<Arc<ServeState>> {
     Router::new()
@@ -45,7 +47,7 @@ fn authorize(state: &ServeState, headers: &HeaderMap) -> Result<(), StatusCode> 
     Ok(())
 }
 
-fn single_header<'h>(headers: &'h HeaderMap, name: &str) -> Option<&'h str> {
+pub(super) fn single_header<'h>(headers: &'h HeaderMap, name: &str) -> Option<&'h str> {
     let values = headers.get_all(name);
     let mut values = values.iter();
     let value = values.next()?.to_str().ok()?;

@@ -34,6 +34,13 @@ impl Failure {
         }
     }
 
+    pub(crate) fn unresolved(status: StatusCode, code: &'static str) -> Self {
+        Self {
+            action: "reconcile_destination",
+            ..Self::read(status, code)
+        }
+    }
+
     pub(crate) fn unknown(state: Option<Outcome>) -> Self {
         Self {
             state,
@@ -76,7 +83,7 @@ impl Failure {
     }
 }
 
-fn allowlisted(code: &str) -> Option<(&'static str, &'static str)> {
+pub(super) fn allowlisted(code: &str) -> Option<(&'static str, &'static str)> {
     ALLOWLIST
         .iter()
         .copied()

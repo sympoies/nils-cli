@@ -13,12 +13,18 @@ pub struct StartView {
 pub(super) fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
     let format = args.format;
     if args.move_id.is_some() && args.via_console {
-        let command = if args.check_resume {
-            CHECK_COMMAND
-        } else {
-            START_COMMAND
+        if args.check_resume {
+            return render_error(CHECK_COMMAND, format, refusal("resume-move-unavailable"));
+        }
+        return match coordination::console_resume_move::client::run_start(context, &args) {
+            Ok(result) => render_single_success(START_COMMAND, format, &result, |data| {
+                format!(
+                    "started resumed session {} on {}\n",
+                    data["session_id"], data["machine"]
+                )
+            }),
+            Err(error) => render_error(START_COMMAND, format, error),
         };
-        return render_error(command, format, refusal("resume-move-unavailable"));
     }
     if args.check_resume {
         return run_check(context, &args);
@@ -150,7 +156,7 @@ const CHECK_COMMAND: &str = "resume-preflight";
 
 pub(super) fn refusal(code: &'static str) -> CliError {
     let message = match code {
-        "resume-move-unavailable" => "cross-host moves require direct local start",
+        "resume-move-unavailable" => "Console resume-move capability or routing is unavailable",
         "resume-move-aborted" => "the destination has recorded a terminal abort for this move",
         "resume-move-proof-missing" => "the exact destination move proof is unavailable",
         "resume-move-destination-reserved" => "the conversation is reserved for a destination move",

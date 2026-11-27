@@ -1,11 +1,17 @@
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use serde::{Deserialize, Deserializer, de::IgnoredAny};
+use serde::{Deserialize, Deserializer, Serialize, de::IgnoredAny};
+use serde_json::{Value, json};
 
 use crate::cli::resume_move::{Provider, canonical_uuid};
 
 pub(crate) const START_SCHEMA: &str = "agent-session.console-resume-move.v1";
+const CAPABILITY_SCHEMA: &str = "agent-session.console-resume-move-capability.v1";
+const CAPABILITY: &str = "resume-move-start/v1";
+pub(crate) const MAX_START_BYTES: usize = 16 * 1024;
+const OPERATION_CLOCK_SKEW: Duration = Duration::from_secs(60 * 60);
 pub(crate) const STATUS_SCHEMA: &str = "agent-session.console-resume-move-status.v1";
 const BINDING_SCHEMA: &str = "agent-session.console-resume-move-binding.v1";
 pub(crate) const BINDING_HEADER: &str = "x-agent-session-resume-move-binding";
@@ -51,19 +57,19 @@ pub(super) const ALLOWLIST: &[(&str, &str)] = &[
 #[serde(deny_unknown_fields)]
 pub(crate) struct StartRequest {
     schema_version: String,
-    operation_id: String,
-    machine: String,
+    pub(super) operation_id: String,
+    pub(super) machine: String,
     caller: Caller,
     pub(crate) session: Session,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Caller {
     session_id: String,
     session_incarnation: String,
     // The erratum assigns this particular forbidden member a binding refusal.
-    #[serde(default, deserialize_with = "member_present")]
+    #[serde(default, deserialize_with = "member_present", skip_serializing)]
     owner: bool,
 }
 
@@ -71,7 +77,7 @@ fn member_present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D:
     IgnoredAny::deserialize(deserializer).map(|_| true)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Session {
     pub(crate) move_id: String,
@@ -88,6 +94,37 @@ pub(crate) enum StartShape {
 }
 
 impl StartRequest {
+    pub(crate) fn matches_caller(&self, id: &str, incarnation: &str) -> bool {
+        self.caller.session_id == id && self.caller.session_incarnation == incarnation
+    }
+
+    /// An operation ID dated beyond the allowed clock skew would never age out
+    /// of the origin's binding index, so the origin refuses it.
+    pub(crate) fn operation_is_future_dated(&self) -> bool {
+        let limit_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .saturating_add(OPERATION_CLOCK_SKEW)
+            .as_millis();
+        operation_timestamp_ms(&self.operation_id)
+            .is_none_or(|timestamp| u128::from(timestamp) > limit_ms)
+    }
+
+    pub(super) fn caller_id(&self) -> &str {
+        &self.caller.session_id
+    }
+
+    pub(super) fn digest(&self) -> String {
+        let canonical = serde_json::to_vec(&(
+            "agent-session.console-resume-move-origin.v1",
+            &self.machine,
+            &self.caller,
+            &self.session,
+        ))
+        .expect("a parsed JSON request is serializable");
+        crate::cli::resume_move::sha256(&canonical)
+    }
+
     pub(crate) fn parse(body: &[u8]) -> Result<Self, StartShape> {
         let request: Self = serde_json::from_slice(body).map_err(|_| StartShape::Unsupported)?;
         if request.schema_version != START_SCHEMA
@@ -127,12 +164,14 @@ pub(crate) struct Binding {
     destination_machine: String,
     move_id: String,
     scope: Scope,
-    #[serde(default, deserialize_with = "present_string")]
+    #[serde(default, deserialize_with = "present")]
     operation_id: Option<String>,
 }
 
-fn present_string<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
-    String::deserialize(deserializer).map(Some)
+pub(super) fn present<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(deserializer).map(Some)
 }
 
 impl Binding {
@@ -170,8 +209,12 @@ impl Binding {
 }
 
 fn canonical_operation(value: &str) -> bool {
-    uuid::Uuid::parse_str(value)
-        .is_ok_and(|id| id.get_version_num() == 7 && id.to_string() == value)
+    operation_timestamp_ms(value).is_some()
+}
+
+pub(super) fn operation_timestamp_ms(value: &str) -> Option<u64> {
+    let id = uuid::Uuid::parse_str(value).ok()?;
+    (id.get_version_num() == 7 && id.to_string() == value).then(|| (id.as_u128() >> 80) as u64)
 }
 
 #[cfg(test)]
@@ -203,4 +246,50 @@ fn console_resume_move_allowlist_matches_frozen_spec() {
     let actual = ALLOWLIST.iter().copied().collect::<BTreeMap<_, _>>();
     assert_eq!(actual.len(), ALLOWLIST.len());
     pretty_assertions::assert_eq!(actual, expected);
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Success<T> {
+    pub(super) schema_version: String,
+    pub(super) ok: bool,
+    pub(super) data: T,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Capability {
+    machine: String,
+    capability: String,
+}
+
+pub(crate) fn capability(machine: &str) -> Value {
+    json!({"schema_version":CAPABILITY_SCHEMA,"ok":true,
+        "data":{"machine":machine,"capability":CAPABILITY}})
+}
+
+pub(super) fn has_capability(response: reqwest::blocking::Response, machine: &str) -> bool {
+    response.status() == reqwest::StatusCode::OK
+        && read_response::<Success<Capability>>(response).is_some_and(|reply| {
+            reply.schema_version == CAPABILITY_SCHEMA
+                && reply.ok
+                && reply.data.machine == machine
+                && reply.data.capability == CAPABILITY
+        })
+}
+
+pub(super) fn read_response<T: serde::de::DeserializeOwned>(
+    response: reqwest::blocking::Response,
+) -> Option<T> {
+    use std::io::Read as _;
+
+    let mut bytes = Vec::new();
+    response
+        .take(MAX_START_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() > MAX_START_BYTES {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
 }

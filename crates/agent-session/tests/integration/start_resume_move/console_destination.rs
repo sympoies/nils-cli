@@ -576,3 +576,6 @@ fn console_destination_preserves_missing_staged_history_refusal() {
         assert_eq!(f.launch_count(), 0);
     });
 }
+
+#[path = "console_origin.rs"]
+mod console_origin;

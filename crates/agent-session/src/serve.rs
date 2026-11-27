@@ -1165,10 +1165,10 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             crate::command_identity::executable(),
             state.machine
         );
-        if let Err(error) = crate::coordination::remote::write_endpoint(
-            &state.context,
-            listener.local_addr().expect("bound address"),
-        ) {
+        let address = listener.local_addr().expect("bound address");
+        if let Err(error) =
+            crate::coordination::remote::write_endpoint(&state.context, address, &state.machine)
+        {
             eprintln!("error: {}", error.message());
             return exit::RUNTIME;
         }

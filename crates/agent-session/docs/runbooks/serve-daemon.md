@@ -679,14 +679,32 @@ The normative endpoint surface is in [Serve API v1](../specs/serve-api-v1.md).
 Wire-level activity, coordination, turn-state, and maintenance contracts are
 indexed in the crate [documentation map](../README.md).
 
-## Console resume-move destination
+## Console resume-move
 
 A destination can advertise `data.capabilities.resume_move_start_v1` on
 `GET /sessions` after a daemon restart with relay ingress and the native
 resume-move host and verifier configured. The edge uses both the machine
 bearer and relay ingress token for the move start and read-only status routes.
-The origin CLI still requires direct local start for moves. See
+Restart the origin daemon with federation configured. From a managed caller,
+use `start --via-console --resume PROVIDER_SESSION_ID --move-id MOVE_ID` with
+an explicit `--machine`, `--account`, and absolute destination `--cwd`. The
+origin and relay discovery routes and the destination capability must all
+advertise v1. The CLI reports `resume-move-unavailable` if a first submission
+cannot use the route. Routed `--check-resume` is refused.
+
+For `resume-move-outcome-unknown`, repeat the same start from the same
+managed incarnation. The origin retains the original request for read-only
+reconciliation through the relay. A replacement incarnation uses native
+`resume-move status` at the destination. See
 [Console resume-move transport](../specs/console-resume-move-transport-v1.md).
+
+The origin keeps its fences per authenticated caller session ID. A caller may
+hold at most 8 unresolved moves, 128 retained moves and 32 operation-ID
+bindings (the oldest of its own is evicted first); a terminal move keeps
+only its digest fence and validated reply. Past a limit a first submission
+returns `resume-move-state-unavailable` without forwarding. Repeats of an
+existing move are never limited, and other callers are unaffected. The origin
+refuses an operation ID dated more than an hour ahead with `resume-unsupported`.
 
 ## Companion inbox producer
 

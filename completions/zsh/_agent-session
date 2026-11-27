@@ -89,7 +89,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 (start)
 _arguments "${_arguments_options[@]}" : \
 '--resume=[Resume this exact provider conversation in a new managed record]:PROVIDER_SESSION_ID:_default' \
-'--move-id=[Exact cross-host move ID for a direct, verified provider resume]:UUID:_default' \
+'--move-id=[Exact cross-host move ID for a verified provider resume]:UUID:_default' \
 '--workspace=[Public workspace slug; inherits the managed parent workspace when omitted]:SLUG:_default' \
 '--agent=[Agent to run; not used when reconciling a Console operation]:AGENT:(codex claude)' \
 '--cwd=[Working directory for the agent session. Defaults to the current directory]:PATH:_files -/' \
