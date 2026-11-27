@@ -1,12 +1,6 @@
 name: Agent-session tempdir probe
 
 on:
-  workflow_dispatch:
-    inputs:
-      pr_number:
-        description: Pull request number
-        required: true
-        type: string
   pull_request:
   merge_group:
     types: [checks_requested]
@@ -17,40 +11,22 @@ concurrency:
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   agent_session_tempdir_probe:
     # Report a skipped check for merge groups. The queue validates its own merge
     # candidate through the existing CI workflow.
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request'
     name: agent-session tempdir probe
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       CARGO_BUILD_JOBS: "4"
     steps:
-      - name: Resolve PR head
-        id: pr
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
-          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          case "$PR_NUMBER" in ''|*[!0-9]*) echo "Invalid PR number" >&2; exit 1 ;; esac
-          if [ "$EVENT_NAME" = pull_request ]; then
-            printf 'head=%s\nbase=%s\n' "$EVENT_HEAD" "$EVENT_BASE" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq '"head=\(.head.sha)\nbase=\(.base.sha)"' >> "$GITHUB_OUTPUT"
-
       - name: Checkout PR head
         uses: actions/checkout@v7
         with:
-          ref: ${{ steps.pr.outputs.head }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -62,9 +38,8 @@ jobs:
       - name: Detect agent-session probe inputs
         id: changes
         env:
-          BASE_SHA: ${{ steps.pr.outputs.base }}
-          HEAD_SHA: ${{ steps.pr.outputs.head }}
-          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
           echo "Checking PR head $HEAD_SHA against base $BASE_SHA"
@@ -115,7 +90,7 @@ jobs:
           matched = sorted(path for path in changed if path in inputs or roots.intersection(path.parents))
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              print("run_probe=" + str(bool(matched) or os.environ["EVENT_NAME"] == "workflow_dispatch").lower(), file=output)
+              print(f"run_probe={str(bool(matched)).lower()}", file=output)
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
               if matched:
                   print("Qualifying paths:\n", file=summary)
@@ -124,6 +99,13 @@ jobs:
               else:
                   print("No qualifying change.", file=summary)
           PY
+
+      - name: Restore Linux Cargo cache
+        if: steps.changes.outputs.run_probe == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-test
+          save-if: false
 
       - name: Set up Node.js
         if: steps.changes.outputs.run_probe == 'true'

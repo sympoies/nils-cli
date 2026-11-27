@@ -237,8 +237,7 @@ class DeliveryTests(unittest.TestCase):
             output = root / 'output'
             summary = root / 'summary'
             env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'],
-                       BASE_SHA='a' * 40, HEAD_SHA='b' * 40, EVENT_NAME='pull_request',
-                       CARGO_METADATA_FIXTURE=str(metadata),
+                       BASE_SHA='a' * 40, HEAD_SHA='b' * 40, CARGO_METADATA_FIXTURE=str(metadata),
                        GITHUB_OUTPUT=str(output), GITHUB_STEP_SUMMARY=str(summary))
             for path, expected in cases.items():
                 with self.subTest(path=path):
@@ -249,13 +248,6 @@ class DeliveryTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(output.read_text(), f'run_probe={str(expected).lower()}\n')
                     self.assertIn(json.dumps(path) if expected else 'No qualifying change.', summary.read_text())
-
-            output.write_text('')
-            result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=root,
-                                    env=dict(env, CHANGED_PATH='docs/unrelated.md', EVENT_NAME='workflow_dispatch'),
-                                    text=True, capture_output=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(output.read_text(), 'run_probe=true\n')
 
     def test_required_queue_check_reads_the_exact_gate_job_from_the_current_attempt(self):
         body = job(workflow('ci.yml'), 'test')

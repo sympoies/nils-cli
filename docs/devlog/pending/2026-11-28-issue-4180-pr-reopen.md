@@ -1,10 +1,10 @@
-## 2026-11-28 - Reopen pull requests and dispatch the tempdir probe
+## 2026-11-28 - Reopen pull requests and retrigger PR workflows
 <!-- devlog-id: 2026-11-28-issue-4180-pr-reopen -->
 
 ### Result
 
-- Added provider-neutral PR reopen with state read-back and a manual PR-head
-  probe trigger.
+- Added provider-neutral PR reopen with state read-back and documented how to
+  retrigger PR workflows at an unchanged head.
 
 ### Why / context
 
@@ -13,7 +13,7 @@
 
 ### Evidence
 
-- TODO
+- Provider-mocked close and reopen contract tests for GitHub and GitLab.
 
 ### Links
 
