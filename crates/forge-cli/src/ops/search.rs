@@ -364,12 +364,12 @@ fn run_github_refs_to<R: BackendRunner>(
             .ok_or_else(|| missing("timelineItems.nodes"))?;
         scanned += nodes.len();
         items.append(&mut payload.items);
-        if let Some(cap) = limit {
-            if scanned >= cap as usize {
-                items.truncate(cap as usize);
-                limited = has_next || scanned > cap as usize;
-                break;
-            }
+        if let Some(cap) = limit
+            && scanned >= cap as usize
+        {
+            items.truncate(cap as usize);
+            limited = has_next || scanned > cap as usize;
+            break;
         }
         if !has_next {
             limited = false;
