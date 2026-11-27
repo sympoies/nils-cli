@@ -254,6 +254,15 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
+    run_with_serve_credential(args, None)
+}
+
+#[doc(hidden)]
+pub fn run_with_serve_credential<I, T>(args: I, attested_create_token: Option<String>) -> i32
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
     let raw_args: Vec<OsString> = args.into_iter().map(Into::into).collect();
     let cli = match Cli::try_parse_from(raw_args.clone()) {
         Ok(cli) => cli,
@@ -281,33 +290,7 @@ where
             return emit_parse_error(SCHEMA, format, code, &message);
         }
     };
-    dispatch(cli)
-}
-fn dispatch(cli: Cli) -> i32 {
-    if let Some(code) = cli::operator_rules::prepare(&cli.command) {
-        return code;
-    }
-    if let Command::Completion(args) = cli.command {
-        return completion::run(args.shell);
-    }
-    let format = coordination_routing::command_format(&cli.command);
-    let context = match CliContext::resolve(cli.state_dir, cli.host) {
-        Ok(context) => context,
-        Err(err) => {
-            return render_error(
-                coordination_routing::command_name(&cli.command).unwrap_or("error"),
-                format,
-                err,
-            );
-        }
-    };
-    if matches!(
-        cli.command,
-        Command::Account(_) | Command::Resume(_) | Command::Restart(_) | Command::AutoResume(_)
-    ) {
-        account_broker::adopt_serve_brokers(&context.state_dir);
-    }
-    cli::dispatch::run(&context, cli.command)
+    cli::dispatch::parsed(cli, attested_create_token)
 }
 
 fn detect_format_from_args(args: &[OsString]) -> OutputFormat {
@@ -3159,7 +3142,7 @@ fn add_interactive_agent_environment(command: &mut ProcessCommand) {
     command
         .arg("sh")
         .arg("-c")
-        .arg("unset NO_COLOR AGENT_SESSION_TOKEN AGENT_SESSION_RELAY_URL AGENT_SESSION_RELAY_TOKEN AGENT_SESSION_RELAY_INGRESS_TOKEN AGENT_CONSOLE_COORDINATION_RELAYS; exec \"$@\"")
+        .arg("unset NO_COLOR AGENT_SESSION_TOKEN AGENT_SESSION_RELAY_URL AGENT_SESSION_RELAY_TOKEN AGENT_SESSION_RELAY_INGRESS_TOKEN AGENT_CONSOLE_COORDINATION_RELAYS AGENT_SESSION_CONSOLE_ATTESTED_CREATE_TOKEN; exec \"$@\"")
         .arg("agent-session-interactive");
 }
 

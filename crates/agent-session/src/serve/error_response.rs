@@ -1,6 +1,29 @@
 //! Shared HTTP error mapping, including pre-dispatch authentication quarantine.
 use super::*;
 
+/// Fail closed on authenticated endpoints with a missing or invalid bearer.
+pub(super) fn deny_unauthorized(state: &ServeState, headers: &HeaderMap) -> Option<Response> {
+    let Some(expected) = state.token.as_deref() else {
+        return Some(status_json(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "token-not-configured",
+            "server has no token configured; authenticated endpoints are disabled",
+        ));
+    };
+    let provided = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    match provided {
+        Some(token) if constant_time_eq(token, expected) => None,
+        _ => Some(status_json(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "missing or invalid bearer token",
+        )),
+    }
+}
+
 pub(crate) fn envelope_err(err: CliError) -> Response {
     let session_id = err
         .details()

@@ -1,11 +1,25 @@
-//! Ordinary HTTP creation, shared by fresh and account-bound resumed launches.
+//! HTTP creation, shared by fresh and account-bound resumed launches.
 use super::*;
+use axum::extract::{FromRequest, Request};
+
+pub(super) mod attested;
 
 pub(super) async fn create_handler(
     State(state): State<Arc<ServeState>>,
-    headers: HeaderMap,
-    Json(create_body::CheckedCreateBody(body)): Json<create_body::CheckedCreateBody>,
+    request: Request,
 ) -> Response {
+    let headers = request.headers().clone();
+    let (body, attestation) = if attested::selected(&headers) {
+        match attested::admit(&state, &headers, request).await {
+            Ok((body, verified)) => (body, Some(verified)),
+            Err(response) => return response,
+        }
+    } else {
+        match Json::<create_body::CheckedCreateBody>::from_request(request, &state).await {
+            Ok(Json(create_body::CheckedCreateBody(body))) => (body, None),
+            Err(rejection) => return rejection.into_response(),
+        }
+    };
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
     }
@@ -39,7 +53,12 @@ pub(super) async fn create_handler(
     };
     let context = state.context.clone();
     let before = load_session_record(&context, &id).ok();
-    let response = create_handler_inner(State(state), headers, Json(body), origin).await;
+    let is_attested = attestation.is_some();
+    let mut response =
+        create_handler_inner(State(state), headers, Json(body), origin, attestation).await;
+    if is_attested && response.status() == StatusCode::OK {
+        *response.status_mut() = StatusCode::CREATED;
+    }
     crate::lifecycle::response(&context, &id, operation, before, response).await
 }
 
@@ -48,6 +67,7 @@ pub(super) async fn create_handler_inner(
     headers: HeaderMap,
     Json(mut body): Json<CreateBody>,
     origin: crate::origin::Fields,
+    attestation: Option<attested::Verified>,
 ) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
@@ -165,6 +185,9 @@ pub(super) async fn create_handler_inner(
         Ok(initial_lineage) => initial_lineage,
         Err(err) => return envelope_err(err),
     };
+    if let Some(verified) = attestation {
+        verified.set_lineage(&state.machine, &mut initial_lineage);
+    }
     initial_lineage.origin = origin;
     if let Some(provider_resume_id) = body.provider_resume_id {
         if body.cwd.is_some() {

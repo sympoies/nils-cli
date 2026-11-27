@@ -1262,7 +1262,7 @@ fn activity_events_are_runtime_bound_private_and_deterministic() {
     assert!(
         new_session
             .iter()
-            .any(|arg| arg == "unset NO_COLOR AGENT_SESSION_TOKEN AGENT_SESSION_RELAY_URL AGENT_SESSION_RELAY_TOKEN AGENT_SESSION_RELAY_INGRESS_TOKEN AGENT_CONSOLE_COORDINATION_RELAYS; exec \"$@\""),
+            .any(|arg| arg == "unset NO_COLOR AGENT_SESSION_TOKEN AGENT_SESSION_RELAY_URL AGENT_SESSION_RELAY_TOKEN AGENT_SESSION_RELAY_INGRESS_TOKEN AGENT_CONSOLE_COORDINATION_RELAYS AGENT_SESSION_CONSOLE_ATTESTED_CREATE_TOKEN; exec \"$@\""),
         "interactive agent panes must not inherit a controller-only NO_COLOR flag: {new_session:?}"
     );
     let launching_helper = nils_test_support::bin::resolve("agent-session");
@@ -9532,7 +9532,7 @@ fn resume_recovers_provider_identity_from_durable_sidecar() {
     assert!(
         new_session
             .iter()
-            .any(|arg| arg == "unset NO_COLOR AGENT_SESSION_TOKEN AGENT_SESSION_RELAY_URL AGENT_SESSION_RELAY_TOKEN AGENT_SESSION_RELAY_INGRESS_TOKEN AGENT_CONSOLE_COORDINATION_RELAYS; exec \"$@\""),
+            .any(|arg| arg == "unset NO_COLOR AGENT_SESSION_TOKEN AGENT_SESSION_RELAY_URL AGENT_SESSION_RELAY_TOKEN AGENT_SESSION_RELAY_INGRESS_TOKEN AGENT_CONSOLE_COORDINATION_RELAYS AGENT_SESSION_CONSOLE_ATTESTED_CREATE_TOKEN; exec \"$@\""),
         "resumed interactive panes must restore provider colour output: {new_session:?}"
     );
     assert!(

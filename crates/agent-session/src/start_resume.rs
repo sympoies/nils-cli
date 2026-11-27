@@ -121,7 +121,14 @@ pub(super) fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
             role: args.role.clone(),
             attested_role: args.attest_role.then(|| args.role.clone()).flatten(),
         };
-        if let Err(err) = context.validate() {
+        let validation = if initiator == forge_identity::CONSOLE_RELAY_INITIATOR {
+            Err(nils_common::forge_identity::Error::new(
+                "identity_session_binding_invalid",
+            ))
+        } else {
+            context.validate()
+        };
+        if let Err(err) = validation {
             return render_error(START_COMMAND, format, forge_identity::error(err));
         }
         initial_lineage.seed.set_forge_context(Some(context));

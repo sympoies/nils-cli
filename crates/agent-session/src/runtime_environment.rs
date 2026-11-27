@@ -77,6 +77,7 @@ pub(super) fn add_runtime_tmux_environment(
         "AGENT_SESSION_RELAY_URL",
         "AGENT_SESSION_RELAY_TOKEN",
         "AGENT_SESSION_RELAY_INGRESS_TOKEN",
+        "AGENT_SESSION_CONSOLE_ATTESTED_CREATE_TOKEN",
         "AGENT_CONSOLE_COORDINATION_RELAYS",
     ] {
         command.env_remove(key).arg("-e").arg(key);
