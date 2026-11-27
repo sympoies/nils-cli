@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 entrypoint="$repo_root/scripts/ci/nils-cli-checks-entrypoint.sh"
+# Set BASH_3_2 to a Bash 3.2 executable when the platform shell is newer.
 if [[ -z "${BASH_3_2:-}" ]] && /bin/bash -c '(( BASH_VERSINFO[0] == 3 && BASH_VERSINFO[1] == 2 ))'; then
   BASH_3_2=/bin/bash
 fi
@@ -15,6 +16,8 @@ if [[ -n "${BASH_3_2:-}" ]]; then
     printf 'AssertionError: Bash 3.2 should fail immediately with the version diagnostic; got status %s: %s\n' "$status" "$output" >&2
     exit 1
   fi
+else
+  echo 'SKIP: Bash 3.2 diagnostic (set BASH_3_2 to a Bash 3.2 executable)'
 fi
 
 fixture="$(mktemp -d)"
