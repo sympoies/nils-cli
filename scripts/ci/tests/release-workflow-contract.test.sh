@@ -62,6 +62,8 @@ assert_notes_rejected() {
 assert_notes_rejected
 printf '# Release\n' > "$notes_fixture/docs/releases/v9.8.7.md"
 assert_notes_rejected
+printf '## Upgrade notes\n' > "$notes_fixture/docs/releases/v9.8.7.md"
+assert_notes_rejected
 printf '## Upgrade notes\n\n   \n## Fixes\nDetails\n' > "$notes_fixture/docs/releases/v9.8.7.md"
 assert_notes_rejected
 printf '## Upgrade notes\n\nNone.\n' > "$notes_fixture/docs/releases/v9.8.7.md"
