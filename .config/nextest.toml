@@ -94,6 +94,23 @@ test-group = "process-capacity"
 filter = 'package(nils-agent-session) & test(/(two_root_http_federation_acceptance|generated_200_mib_history_converges_through_catalog_refresh_reload_reducer_and_title)/)'
 priority = 50
 
+# Linux federation passed in 54-58 s locally and 85.194 s on the slow hosted
+# retry (#4155). Allow the fixture's 120 s fairness wait plus setup and cleanup.
+# The status poll already retries typed lock contention, so cap the whole
+# acceptance at 150 s without another attempt.
+[[profile.ci.overrides]]
+filter = 'package(=nils-agent-session) & binary(=remote_mailbox) & test(=two_root_http_federation_acceptance)'
+slow-timeout = { period = "75s", terminate-after = 2 }
+retries = 0
+
+# Auth recovery can wait for four 15 s patrol ticks across its two cases.
+# The slow hosted attempt passed in 60.331 s (#4155). Allow 30 s of headroom
+# without spending another attempt on a stalled daemon.
+[[profile.ci.overrides]]
+filter = 'package(=nils-agent-session) & binary(=activity_hook_ingress) & test(=auth_loss_real_hook_notifies_owner_once_and_reports_recovery)'
+slow-timeout = { period = "90s", terminate-after = 1 }
+retries = 0
+
 # This full-window fixture has its own 60 s deadline so timeout failures
 # unwind and clean up. Keep a two-minute runner backstop without a retry.
 [[profile.ci.overrides]]
