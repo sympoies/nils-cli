@@ -491,6 +491,15 @@ fn run_record_gap(args: RecordGapArgs) -> i32 {
                 None,
             ));
         }
+        if record.gap_declarations.is_empty() {
+            record.gap_declarations.extend(
+                record
+                    .residual_gaps
+                    .iter()
+                    .cloned()
+                    .map(|gap| GapDeclaration::Gap { gap }),
+            );
+        }
         if record.no_residual_gaps && record.gap_declarations.is_empty() {
             record
                 .gap_declarations

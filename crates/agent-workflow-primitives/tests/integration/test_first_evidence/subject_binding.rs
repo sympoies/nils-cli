@@ -696,3 +696,37 @@ fn gap_after_none_updates_current_state_and_preserves_history() {
         "fixture failure"
     );
 }
+
+#[test]
+fn existing_gaps_are_retained_in_declaration_history() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let evidence = tmp.path().join("evidence");
+    complete_record(tmp.path(), &evidence);
+    let path = evidence.join("test-first-evidence.json");
+    let mut record: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    record.as_object_mut().unwrap().remove("gap_declarations");
+    record.as_object_mut().unwrap().remove("no_residual_gaps");
+    record["residual_gaps"] =
+        serde_json::json!([{ "gap": "first", "reason": "existing", "follow_up": "issue #1" }]);
+    fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let result = run(
+        tmp.path(),
+        &[
+            "record-gap",
+            "--out",
+            evidence.to_str().unwrap(),
+            "--gap",
+            "second",
+            "--reason",
+            "later",
+            "--follow-up",
+            "issue #2",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    let history = &result.stdout_json()["result"]["record"]["gap_declarations"];
+    assert_eq!(history[0]["gap"]["gap"], "first");
+    assert_eq!(history[1]["gap"]["gap"], "second");
+}
