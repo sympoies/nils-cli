@@ -760,21 +760,27 @@ ordinary delete and stopped-only behavior.
 
 ### Retire a running idle session
 
-Use `--if-idle` for a running managed Codex session. Supply the exact runtime
-incarnation. Add `--if-unread-empty` when unread mail should preserve the session.
+Use `--if-idle` for a running managed Claude or Codex session. Supply the exact
+runtime incarnation. Add `--if-unread-empty` when unread mail should preserve the session.
 
 ```bash
 agent-session delete <id> --if-idle --expected-incarnation <incarnation> --if-unread-empty --format json
 ```
 
-The owner rechecks the incarnation, running state, runtime-bound provider
-activity, and the live primary thread. It requires an observably empty
-composer and no pending provider ingress. The lifecycle lock serializes resume,
-managed input, and mailbox delivery. The Codex proxy fences native provider
-requests such as turn starts, reviews, shell commands, and compaction.
-Read-only inspection requests can pass through. The locks stay held through
-ownership-checked teardown and removal. Success returns the ordinary delete
-receipt with `deleted: true` and `killed: true`.
+The owner rechecks the incarnation, running state, and runtime-bound provider
+activity. It requires an observably empty composer and no pending provider
+ingress. The lifecycle lock serializes resume, managed input, and mailbox
+delivery. The locks stay held through ownership-checked teardown and removal.
+
+- Claude requires settled hook activity for the bound conversation with no
+  open tool call or pending attention. Fresh `claude agents --json` reads
+  verify native idleness before and after the composer capture.
+- Codex verifies the live primary thread. The proxy fences native provider
+  requests such as turn starts, reviews, shell commands, and compaction.
+  Read-only inspection requests can pass through.
+
+Success returns the ordinary delete receipt with `deleted: true` and
+`killed: true`.
 
 Predicate refusals return nonzero with a JSON error and retain the runtime and
 session record.
@@ -788,9 +794,9 @@ session record.
 | `send-composer-unobservable` | An empty composer could not be verified. |
 | `session-mailbox-not-empty` | The optional unread predicate found unread mail. |
 | `session-mailbox-unknown` | The optional unread predicate could not verify the mailbox. |
-| `session-idle-delete-unsupported` | The runtime lacks a live Codex proxy with retirement support. |
+| `session-idle-delete-unsupported` | The runtime is not a managed Claude terminal or a live Codex proxy with retirement support. |
 
-Claude, raw tmux and older proxies return `session-idle-delete-unsupported`
+Unmanaged runtimes and older Codex proxies return `session-idle-delete-unsupported`
 when running. The child, process-ownership and interrupted-termination checks
 also apply. `--if-idle` and `--if-stopped` are mutually exclusive.
 

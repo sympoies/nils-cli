@@ -12,6 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio_tungstenite::tungstenite::Message;
 
+#[path = "delete_idle_claude.rs"]
+mod claude;
+
 const ID: &str = "guarded-delete";
 const THREAD: &str = "fixture-conversation";
 
@@ -209,7 +212,12 @@ fn delete_at(
         "json",
     ];
     args.extend_from_slice(guard);
-    run(cwd, &args, &[])
+    let claude = cwd.join("claude");
+    run(
+        cwd,
+        &args,
+        &[("AGENT_SESSION_CLAUDE_BIN", claude.to_str().unwrap())],
+    )
 }
 
 fn assert_refused(fixture: &mut Fixture, guard: &[&str], code: &str) -> Value {
@@ -398,6 +406,9 @@ fn idle_delete_refuses_a_draft_missing_composer_or_pending_ingress() {
 #[test]
 fn idle_delete_refuses_unfenced_runtime_or_unverified_liveness() {
     let mut fixture = Fixture::new();
+    fixture.record["agent"] = json!("codex");
+    fixture.record["provider_resume"]["provider"] = json!("codex");
+    write_record(&fixture);
     let runtime = incarnation(&fixture).to_owned();
     let guard = ["--if-idle", "--expected-incarnation", &runtime];
     fs::write(&fixture.name_status, "running").unwrap();

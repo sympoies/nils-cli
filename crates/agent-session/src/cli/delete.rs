@@ -14,7 +14,7 @@ pub struct DeleteArgs {
     )]
     pub if_stopped: bool,
 
-    /// Retire a running managed Codex session only when provider idleness and an
+    /// Retire a running managed Claude or Codex session only when provider idleness and an
     /// empty composer are verified. Requires --expected-incarnation.
     #[arg(
         long,

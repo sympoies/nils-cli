@@ -2,6 +2,8 @@ use super::*;
 use crate::activity::{Confidence, SourceKind, TurnPhase};
 use crate::codex_app_server::{self, guarded};
 
+mod claude;
+
 pub(super) fn delete_if_idle(
     context: &CliContext,
     args: &cli::DeleteArgs,
@@ -35,10 +37,18 @@ pub(super) fn delete_if_idle(
         "stopped" => return Err(active(&record, "stopped")),
         _ => return Err(unknown(&record)),
     }
-    if record.mode != "interactive" || !codex_app_server::retirement::supported(context, &record) {
+    let claude =
+        record.agent == "claude" && record.runtime.as_ref().is_some_and(|r| r.kind == "tmux");
+    if record.mode != "interactive"
+        || !(claude || codex_app_server::retirement::supported(context, &record))
+    {
         return Err(CliError::data(
             "session-idle-delete-unsupported",
-            "conditional idle deletion requires a live managed Codex proxy",
+            if record.agent == "codex" {
+                "conditional idle deletion requires a live managed Codex proxy"
+            } else {
+                "conditional idle deletion requires a managed Claude terminal or live managed Codex proxy"
+            },
             Some(json!({"id": record.id})),
         ));
     }
@@ -62,17 +72,30 @@ pub(super) fn delete_if_idle(
 
     // The proxy and hook writers can acquire their gates before lifecycle.
     // Probe both of those gates without waiting while holding lifecycle.
-    let _provider =
-        codex_app_server::acquire_account_mutation_gate(context, &record.id).map_err(|error| {
-            if error.code() == "codex-account-session-busy" {
-                active(&record, "working")
-            } else {
-                unknown(&record)
-            }
-        })?;
-    let _requests = codex_app_server::retirement::probe_requests(context, &record)
-        .map_err(|_| unknown(&record))?
-        .ok_or_else(|| active(&record, "working"))?;
+    let _provider = if claude {
+        None
+    } else {
+        Some(
+            codex_app_server::acquire_account_mutation_gate(context, &record.id).map_err(
+                |error| {
+                    if error.code() == "codex-account-session-busy" {
+                        active(&record, "working")
+                    } else {
+                        unknown(&record)
+                    }
+                },
+            )?,
+        )
+    };
+    let _requests = if claude {
+        None
+    } else {
+        Some(
+            codex_app_server::retirement::probe_requests(context, &record)
+                .map_err(|_| unknown(&record))?
+                .ok_or_else(|| active(&record, "working"))?,
+        )
+    };
     let _activity = activity::acquire_coordination_activity_lock(context, &record.id)
         .map_err(|_| unknown(&record))?;
     let _ingress = activity::pending::probe_lock(context, &record.id)
@@ -82,22 +105,15 @@ pub(super) fn delete_if_idle(
     if activity::pending::unsettled(context, &record).ok_or_else(|| unknown(&record))? {
         return Err(active(&record, "provider-event-pending"));
     }
-    require_waiting_activity(context, &record)?;
+    if claude {
+        claude::require_waiting(context, &record)?;
+        claude::require_native_idle(&record)?;
+    } else {
+        require_waiting_activity(context, &record)?;
+    }
     let deadline = Instant::now() + crate::send::guarded_hold_budget(&record, false);
-    let thread = guarded::Client::connect(&record, deadline)
-        .and_then(|mut client| client.idle_thread(false))
-        .map_err(|error| match error {
-            guarded::Error::NotIdle => active(&record, "working"),
-            _ => unknown(&record),
-        })?;
-    // Guarded sends also admit a loaded thread in systemError. Retirement
-    // requires the provider's explicit idle status.
-    if thread
-        .pointer("/thread/status/type")
-        .and_then(Value::as_str)
-        != Some("idle")
-    {
-        return Err(unknown(&record));
+    if !claude {
+        require_codex_idle(&record, deadline)?;
     }
     let composer_guard = send_guard::Admission {
         stopped_idle: &Default::default(),
@@ -118,6 +134,11 @@ pub(super) fn delete_if_idle(
             _ => unknown(&record),
         })?;
 
+    if claude {
+        // Refuse native work that appeared while capturing the composer.
+        claude::require_native_idle(&record)?;
+    }
+
     let resolved = resolve_session_record_path(context, &record.id)?;
     let mut deleted = delete_session_locked_with_timeouts(
         context,
@@ -129,6 +150,25 @@ pub(super) fn delete_if_idle(
     )?;
     deleted.children = Some(children);
     Ok(deleted)
+}
+
+fn require_codex_idle(record: &SessionRecord, deadline: Instant) -> Result<(), CliError> {
+    let thread = guarded::Client::connect(record, deadline)
+        .and_then(|mut client| client.idle_thread(false))
+        .map_err(|error| match error {
+            guarded::Error::NotIdle => active(record, "working"),
+            _ => unknown(record),
+        })?;
+    // Guarded sends also admit a loaded thread in systemError. Retirement
+    // requires the provider's explicit idle status.
+    if thread
+        .pointer("/thread/status/type")
+        .and_then(Value::as_str)
+        != Some("idle")
+    {
+        return Err(unknown(record));
+    }
+    Ok(())
 }
 
 fn require_waiting_activity(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {

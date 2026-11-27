@@ -37,13 +37,13 @@ const INHERITED_ENV: [&str; 3] = ["HOME", "PATH", "TMPDIR"];
 const PERMISSION_PROMPT: &str = "permission prompt";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum WaitingFor {
+pub(crate) enum WaitingFor {
     PermissionPrompt,
     Other,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum AgentState {
+pub(crate) enum AgentState {
     Idle,
     Busy,
     Waiting(WaitingFor),
@@ -51,7 +51,7 @@ pub(super) enum AgentState {
 
 /// Why the structured source gave no state for a session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Unavailable {
+pub(crate) enum Unavailable {
     BinaryMissing,
     Timeout,
     Failed,
@@ -213,6 +213,21 @@ fn snapshot(bin: PathBuf, config_dir: Option<PathBuf>) -> Fetched {
 
 /// Structured state of one Claude session, matched by provider session id.
 pub(super) fn state_for(record: &SessionRecord) -> Result<(AgentState, String), Unavailable> {
+    let (provider_session_id, bin, config_dir) = target_for(record)?;
+    let snapshot = snapshot(bin, config_dir)?;
+    Ok((
+        snapshot.state(provider_session_id)?,
+        snapshot.observed_at.clone(),
+    ))
+}
+
+/// Retirement must sample the provider while holding its admission locks.
+pub(crate) fn fresh_state_for(record: &SessionRecord) -> Result<AgentState, Unavailable> {
+    let (provider_session_id, bin, config_dir) = target_for(record)?;
+    fetch(&bin, config_dir.as_deref(), FETCH_TIMEOUT)?.state(provider_session_id)
+}
+
+fn target_for(record: &SessionRecord) -> Result<(&str, PathBuf, Option<PathBuf>), Unavailable> {
     let provider_session_id = record
         .provider_resume
         .as_ref()
@@ -223,11 +238,7 @@ pub(super) fn state_for(record: &SessionRecord) -> Result<(AgentState, String), 
     let config_dir = crate::session_effective_provider_config_dir(record)
         .or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from));
     let bin = crate::agent_bin::resolve_agent_bin(AgentKind::Claude, None);
-    let snapshot = snapshot(bin, config_dir)?;
-    Ok((
-        snapshot.state(provider_session_id)?,
-        snapshot.observed_at.clone(),
-    ))
+    Ok((provider_session_id, bin, config_dir))
 }
 
 pub(super) fn observation(state: AgentState, phase: &TurnPhase) -> ShadowObservationView {
