@@ -30,6 +30,7 @@ Completion obligations for those binaries are tracked in
 | Area | Binaries | Use when |
 | ---- | -------- | -------- |
 | API testing | `api-rest`, `api-gql`, `api-grpc`, `api-websocket`, `api-test` | Run protocol-specific API checks or orchestrate a mixed API test suite. |
+| Remote execution | `remote-cli` | Run a literal command or a local script over OpenSSH. |
 | Git tooling | `git-scope`, `git-cli`, `git-summary`, `git-lock` | Inspect changes, run Git helper flows, summarize commits, or manage repo-local commit locks. |
 | Forge automation | `forge-cli`, `github-app-cli` | Drive PR/MR + Issue lifecycle and repository label catalog maintenance on GitHub (via `gh`) or GitLab (via `glab`), or mint GitHub App installation tokens. |
 | Agent policy and evidence | `agent-runtime`, `agent-hook`, `agent-memory`, `agent-out`, `agent-session`, `agent-scope-lock`, `agent-run`, `test-first-evidence`, `web-evidence`, `browser-session`, `canary-check`, `docs-impact`, `heuristic-inbox`, `model-cross-check`, `repo-retro`, `review-evidence`, `review-specialists`, `skill-usage`, `evidence` | Render/install/audit runtime-kit surfaces, dispatch one shared cross-provider hook policy, manage local agent memory stores, run project commands through explicit env handling, allocate artifact paths, start tmux-backed agent sessions, enforce edit scope, inspect repo retrospectives, merge specialist review evidence, persist deterministic workflow evidence, or migrate and query the durable skill-usage evidence archive. |
@@ -112,6 +113,7 @@ Each crate is either a standalone CLI binary, a multi-binary crate, or a shared 
   `validate`, `clear`).
 - [crates/research-cli](crates/research-cli): Provider-selectable search, bounded public URL reading, and cited briefs through one
   CLI/HTTP engine (`search`, `read-url`, `brief`, `serve`, `completion`).
+- [crates/remote-cli](crates/remote-cli): Non-interactive OpenSSH command and script execution.
 - [crates/web-evidence](crates/web-evidence): Redacted static HTTP evidence capture for agent workflows (`capture`, `completion`).
 - [crates/nils-evidence](crates/nils-evidence): Durable workflow-evidence archive and query CLI (`evidence`).
 - [crates/agent-workflow-primitives](crates/agent-workflow-primitives): Multi-binary local-first agent workflow primitives

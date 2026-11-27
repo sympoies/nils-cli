@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+case "$1" in
+  -lc)
+    export REMOTE_PROFILE=loaded
+    shift
+    exec /bin/sh -c "$@"
+    ;;
+  -s) exec /bin/sh -s ;;
+  *) exit 98 ;;
+esac

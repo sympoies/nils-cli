@@ -2687,6 +2687,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "nils-remote-cli"
+version = "1.44.0"
+dependencies = [
+ "clap",
+ "clap_complete",
+ "getrandom 0.4.3",
+ "jiff",
+ "libc",
+ "nils-build-info",
+ "nils-common",
+ "nils-test-support",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "nils-research-cli"
 version = "1.44.0"
 dependencies = [
