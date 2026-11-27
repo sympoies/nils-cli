@@ -455,22 +455,21 @@ fn run_record_gap(args: RecordGapArgs) -> i32 {
                     None,
                 ));
             }
-            if !record.residual_gaps.is_empty() {
-                return Err(CliError::data(
-                    "gap-none-after-gaps",
-                    "cannot declare no residual gaps after recording a gap",
-                    None,
-                ));
+            if record.gap_declarations.is_empty() {
+                record.gap_declarations.extend(
+                    record
+                        .residual_gaps
+                        .iter()
+                        .cloned()
+                        .map(|gap| GapDeclaration::Gap { gap }),
+                );
             }
+            record.residual_gaps.clear();
             record.no_residual_gaps = true;
+            record
+                .gap_declarations
+                .push(GapDeclaration::None { none: true });
             return Ok(());
-        }
-        if record.no_residual_gaps {
-            return Err(CliError::data(
-                "gap-after-none",
-                "cannot record a residual gap after declaring none",
-                None,
-            ));
         }
         let gap = required_text(args.gap.as_deref(), "--gap", "missing-residual-gap")?;
         let reason = required_text(args.reason.as_deref(), "--reason", "missing-gap-reason")?;
@@ -495,6 +494,15 @@ fn run_record_gap(args: RecordGapArgs) -> i32 {
                 None,
             ));
         }
+        if record.no_residual_gaps && record.gap_declarations.is_empty() {
+            record
+                .gap_declarations
+                .push(GapDeclaration::None { none: true });
+        }
+        record.no_residual_gaps = false;
+        record
+            .gap_declarations
+            .push(GapDeclaration::Gap { gap: gap.clone() });
         record.residual_gaps.push(gap);
         record
             .residual_gaps
@@ -668,6 +676,7 @@ fn init_record(args: &InitArgs) -> Result<RecordResult, CliError> {
         final_validation: None,
         residual_gaps: Vec::new(),
         no_residual_gaps: false,
+        gap_declarations: Vec::new(),
         subject: None,
     };
     write_record(&record_file, &record)?;
@@ -1725,6 +1734,8 @@ pub struct EvidenceRecord {
     pub residual_gaps: Vec<ResidualGap>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub no_residual_gaps: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gap_declarations: Vec<GapDeclaration>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<EvidenceSubject>,
 }
@@ -1870,6 +1881,13 @@ pub struct FinalValidation {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum GapDeclaration {
+    None { none: bool },
+    Gap { gap: ResidualGap },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ResidualGap {
     pub gap: String,
     pub reason: String,
@@ -1984,6 +2002,7 @@ mod tests {
             final_validation: None,
             residual_gaps: Vec::new(),
             no_residual_gaps: false,
+            gap_declarations: Vec::new(),
             subject: None,
         };
         assert_eq!(
@@ -2053,6 +2072,7 @@ mod tests {
             final_validation: None,
             residual_gaps: Vec::new(),
             no_residual_gaps: true,
+            gap_declarations: Vec::new(),
             subject: None,
         };
         assert_eq!(

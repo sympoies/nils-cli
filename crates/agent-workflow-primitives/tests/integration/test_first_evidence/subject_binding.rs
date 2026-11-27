@@ -598,3 +598,87 @@ fn strict_subject_verification_rejects_unbound_and_other_local_repositories() {
     assert_eq!(mismatch.code, 65);
     assert_eq!(mismatch.stdout_json()["error"]["code"], "subject-mismatch");
 }
+
+#[test]
+fn gap_after_none_updates_current_state_and_preserves_history() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let repo = init_repo(tmp.path(), "repo", None);
+    let evidence = tmp.path().join("evidence");
+    complete_record(tmp.path(), &evidence);
+    let out = evidence.to_str().unwrap();
+    let project = repo.to_str().unwrap();
+    let baseline = run(
+        tmp.path(),
+        &["bind-baseline", "--out", out, "--project-path", project],
+    );
+    assert_eq!(baseline.code, 0, "{}", baseline.stderr_text());
+    let gap = run(
+        tmp.path(),
+        &[
+            "record-gap",
+            "--out",
+            out,
+            "--gap",
+            "fixture failure",
+            "--reason",
+            "unrelated",
+            "--follow-up",
+            "issue #1",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(gap.code, 0, "{}", gap.stdout_text());
+    let record = &gap.stdout_json()["result"]["record"];
+    assert!(record.get("no_residual_gaps").is_none());
+    assert_eq!(record["residual_gaps"][0]["gap"], "fixture failure");
+    assert_eq!(record["gap_declarations"][0]["none"], true);
+    assert_eq!(
+        record["gap_declarations"][1]["gap"]["gap"],
+        "fixture failure"
+    );
+    let delivery = run(
+        tmp.path(),
+        &[
+            "bind-delivery",
+            "--out",
+            out,
+            "--project-path",
+            project,
+            "--format",
+            "json",
+            "--full-record",
+        ],
+    );
+    assert_eq!(delivery.code, 0, "{}", delivery.stdout_text());
+    assert_eq!(
+        delivery.stdout_json()["result"]["record"]["residual_gaps"][0]["gap"],
+        "fixture failure"
+    );
+    let verify = run(
+        tmp.path(),
+        &[
+            "verify",
+            "--out",
+            out,
+            "--project-path",
+            project,
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(verify.code, 0, "{}", verify.stdout_text());
+    assert_eq!(
+        verify.stdout_json()["result"]["record"]["residual_gaps"][0]["gap"],
+        "fixture failure"
+    );
+    let none = run(
+        tmp.path(),
+        &["record-gap", "--out", out, "--none", "--format", "json"],
+    );
+    assert_eq!(none.code, 0, "{}", none.stdout_text());
+    let record = &none.stdout_json()["result"]["record"];
+    assert_eq!(record["no_residual_gaps"], true);
+    assert!(record.get("residual_gaps").is_none());
+    assert_eq!(record["gap_declarations"][2]["none"], true);
+}
