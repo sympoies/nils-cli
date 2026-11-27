@@ -1,6 +1,14 @@
 use super::*;
 use pretty_assertions::{assert_eq, assert_ne};
 
+fn account_switch_tempdir(
+    lock: &GlobalStateLock,
+) -> (nils_test_support::tempdir::ScopedTempDir, EnvGuard) {
+    let (tmp, _) = nils_test_support::short_socket_path("runtime");
+    let runtime = EnvGuard::set(lock, "XDG_RUNTIME_DIR", tmp.path().to_str().unwrap());
+    (tmp, runtime)
+}
+
 pub(super) fn verified_broker(root: &Path, broker: &Path) -> String {
     for account in ["alpha", "beta"] {
         let mut value = crate::claude_account::generation::tests::envelope(1);
@@ -33,7 +41,7 @@ esac
 fn failed_claude_switch_then_new_resume_explicitly_abandons_pending_account() {
     use clap::Parser;
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch_tempdir(&lock);
     let broker = claude_broker_fixture(&lock, tmp.path());
     let context = CliContext {
         state_dir: tmp.path().into(),
@@ -135,7 +143,7 @@ fn queued_claude_switch_without_publication_capability_applies_at_idle() {
 
 fn compatible_switch(queued: bool) {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch_tempdir(&lock);
     let (st, broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
     // The account-broker.v2 list is valid without optional capabilities.
     // Use the underlying broker, not the publication-advertising wrapper.
@@ -206,7 +214,7 @@ mod refusal;
 #[test]
 fn claude_switch_refuses_unverified_credentials_before_stopping() {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch_tempdir(&lock);
     let (st, _broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
     let mut publication = crate::claude_account::generation::tests::envelope(1);
     publication["account"] = json!("beta");
@@ -242,7 +250,7 @@ fn claude_switch_refuses_unverified_credentials_before_stopping() {
 #[test]
 fn claude_switch_rechecks_busy_turn_after_credential_preflight() {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch_tempdir(&lock);
     let (st, _broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
     crate::activity::ingest_event(
         &st.context,
@@ -279,7 +287,7 @@ fn claude_switch_rechecks_busy_turn_after_credential_preflight() {
 #[test]
 fn failed_claude_switch_retry_requires_current_credential_preflight() {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch_tempdir(&lock);
     let _broker = claude_broker_fixture(&lock, tmp.path());
     let context = CliContext {
         state_dir: tmp.path().into(),
@@ -339,7 +347,7 @@ fn failed_claude_switch_retry_requires_current_credential_preflight() {
 fn claude_switch_preserves_unverified_replacement_cleanup_failure() {
     use crate::coordination::broker::test_support;
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch_tempdir(&lock);
     let cwd = tmp.path().join("repo");
     fs::create_dir_all(&cwd).unwrap();
     let _broker = claude_broker_fixture(&lock, tmp.path());
@@ -382,7 +390,7 @@ fn resume_after_bounded_helper_exit(stale_heartbeat: bool) {
     use crate::coordination::broker::test_support;
     use pretty_assertions::{assert_eq, assert_ne};
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch_tempdir(&lock);
     let cwd = tmp.path().join("repo");
     fs::create_dir_all(&cwd).unwrap();
     let broker = claude_broker_fixture(&lock, tmp.path());
@@ -476,7 +484,7 @@ fn claude_switch_retry_after_helper_exit_proves_stopped_with_a_stale_heartbeat()
 #[tokio::test]
 async fn queued_claude_switch_applies_after_stop_and_structured_idle() {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch_tempdir(&lock);
     let (st, broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
     let tmux = st.tmux_bin.clone();
     let log = tmp.path().join("tmux.log");
@@ -614,7 +622,7 @@ fn idle_account_event(record: &SessionRecord, id: &str, kind: &str) -> crate::ac
 #[tokio::test]
 async fn claude_idle_switch_reports_blockers_and_reissue_applies_immediately() {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch_tempdir(&lock);
     let (st, broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
     let tmux = &st.tmux_bin;
     crate::activity::ingest_event(
@@ -670,7 +678,7 @@ async fn claude_idle_switch_reports_blockers_and_reissue_applies_immediately() {
 #[tokio::test]
 async fn claude_idle_switch_does_not_apply_a_cancelled_intent() {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch_tempdir(&lock);
     let (st, broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
     crate::activity::ingest_event(
         &st.context,
@@ -700,7 +708,7 @@ async fn claude_idle_switch_does_not_apply_a_cancelled_intent() {
 #[tokio::test]
 async fn claude_idle_switch_keeps_stopped_and_unknown_turns_queued() {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch_tempdir(&lock);
     let (st, broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
     fs::remove_file(crate::session_dir(&st.context, &record.id).join("activity.json")).unwrap();
     let queued =
@@ -736,7 +744,7 @@ async fn claude_idle_switch_keeps_stopped_and_unknown_turns_queued() {
 async fn claude_idle_switch_keeps_starting_and_needs_input_queued() {
     let lock = GlobalStateLock::new();
     for needs_input in [false, true] {
-        let tmp = tempfile::TempDir::new().unwrap();
+        let (tmp, _runtime) = account_switch_tempdir(&lock);
         let (st, broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
         let (phase, reason) = if needs_input {
             crate::activity::ingest_event(
@@ -781,7 +789,7 @@ async fn claude_idle_switch_keeps_starting_and_needs_input_queued() {
 #[tokio::test]
 async fn claude_idle_switch_backs_off_persistent_preflight_refusal() {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch_tempdir(&lock);
     let (st, broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
     // Every tick sees the same live idle runtime; refusal prevents any stop.
     let tmux = logging_tmux(tmp.path(), &tmp.path().join("tmux.log"));
@@ -828,7 +836,7 @@ async fn claude_idle_switch_backs_off_persistent_preflight_refusal() {
 async fn claude_idle_switch_retry_window_bounds_broker_and_stop_attempts() {
     let lock = GlobalStateLock::new();
     for account in ["gamma", "beta"] {
-        let tmp = tempfile::TempDir::new().unwrap();
+        let (tmp, _runtime) = account_switch_tempdir(&lock);
         let (st, broker, record, probe) = idle_account_fixture(&lock, tmp.path());
         // Without the stopped probe, the fake live pane lacks identity
         // evidence, so beta's verified stop is refused before any signal.
@@ -900,7 +908,7 @@ async fn claude_idle_switch_retry_window_bounds_broker_and_stop_attempts() {
 #[tokio::test]
 async fn claude_idle_switch_backoff_does_not_fence_new_intent_or_runtime() {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch_tempdir(&lock);
     let (st, broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
     let tmux = logging_tmux(tmp.path(), &tmp.path().join("tmux.log"));
     crate::activity::ingest_event(
