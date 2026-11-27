@@ -455,16 +455,13 @@ fn run_record_gap(args: RecordGapArgs) -> i32 {
                     None,
                 ));
             }
-            if record.gap_declarations.is_empty() {
-                record.gap_declarations.extend(
-                    record
-                        .residual_gaps
-                        .iter()
-                        .cloned()
-                        .map(|gap| GapDeclaration::Gap { gap }),
-                );
+            if !record.residual_gaps.is_empty() {
+                return Err(CliError::data(
+                    "gap-none-after-gaps",
+                    "cannot declare no residual gaps after recording a gap",
+                    None,
+                ));
             }
-            record.residual_gaps.clear();
             record.no_residual_gaps = true;
             record
                 .gap_declarations

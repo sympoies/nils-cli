@@ -676,9 +676,23 @@ fn gap_after_none_updates_current_state_and_preserves_history() {
         tmp.path(),
         &["record-gap", "--out", out, "--none", "--format", "json"],
     );
-    assert_eq!(none.code, 0, "{}", none.stdout_text());
-    let record = &none.stdout_json()["result"]["record"];
-    assert_eq!(record["no_residual_gaps"], true);
-    assert!(record.get("residual_gaps").is_none());
-    assert_eq!(record["gap_declarations"][2]["none"], true);
+    assert_eq!(none.code, 65, "{}", none.stdout_text());
+    assert_eq!(none.stdout_json()["error"]["code"], "gap-none-after-gaps");
+    let unchanged = run(
+        tmp.path(),
+        &[
+            "verify",
+            "--out",
+            out,
+            "--project-path",
+            project,
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(unchanged.code, 0, "{}", unchanged.stdout_text());
+    assert_eq!(
+        unchanged.stdout_json()["result"]["record"]["residual_gaps"][0]["gap"],
+        "fixture failure"
+    );
 }
