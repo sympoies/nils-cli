@@ -548,7 +548,9 @@ agent-session restart <id> --force --stop-timeout 30 --ready-timeout 60
   exact resume identity. See the [account recovery acceptance recipe](codex-account-recovery-acceptance.md).
 - Success returns an `agent-session.restart.v1` receipt with the old and new
   incarnation, generation, pane pid, and provider version, plus timestamps
-  and `stop_method` (`provider-exit` or `terminated`). The provider version is
+  and `stop_method` (`provider-exit` or `terminated`). A Claude launch without
+  the native notice module also reports `native_notice` with its reason in
+  restart, resume, board, and glance output. The provider version is
   probed from the installed binary; an old version is known only for a runtime
   that a previous restart launched.
   `provider_session_id` is null while a fresh recovery has no identity and

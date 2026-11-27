@@ -113,6 +113,8 @@ elif command == 'kill-session':
     let provider = root.join("provider-config");
     fs::create_dir_all(&provider).unwrap();
     let state = root.join("state");
+    let rules = root.join("rules.json");
+    fs::write(&rules, json!({"schema_version":"agent-session.operator-rules.v1", "claude_native_notice": gate == "1"}).to_string()).unwrap();
     if resume {
         let session = state.join("sessions/synthetic");
         fs::create_dir_all(&session).unwrap();
@@ -163,7 +165,11 @@ elif command == 'kill-session':
         &CmdOptions::new()
             .with_cwd(root)
             .with_env_remove_prefix("AGENT_SESSION_")
-            .with_env("AGENT_SESSION_NOTICE_WRITERS", gate)
+            .with_env("AGENT_SESSION_RULES_FILE", rules.to_str().unwrap())
+            .with_env(
+                "AGENT_SESSION_NOTICE_WRITERS",
+                if gate == "1" { "0" } else { "1" },
+            )
             .with_env("AGENT_SESSION_FAKE_TMUX_LOG", log.to_str().unwrap())
             .with_env("AGENT_SESSION_CODEX_CAPTURE_TIMEOUT_MS", "100")
             .with_env("AGENT_HOME", root.join("agent-home").to_str().unwrap())
@@ -252,6 +258,33 @@ fn claude_notice_gate_off_and_other_versions_do_not_mount_a_module() {
                 output.stderr_text()
             );
             assert_eq!(mounted_module(&calls), None);
+            if resume && gate == "0" {
+                assert_eq!(
+                    output.stdout_json()["data"]["native_notice"]["reason"],
+                    "writers-disabled"
+                );
+                let state = temp.path().join("state");
+                let tmux = temp.path().join("launch-tmux");
+                let options = CmdOptions::new()
+                    .with_env_remove_prefix("AGENT_SESSION_")
+                    .with_env("AGENT_SESSION_TMUX_BIN", tmux.to_str().unwrap());
+                for command in ["glance", "board"] {
+                    for format in ["json", "text"] {
+                        let mut args = vec!["--state-dir", state.to_str().unwrap(), command];
+                        if command == "glance" {
+                            args.push("synthetic");
+                        }
+                        args.extend(["--format", format]);
+                        let view = run_resolved("agent-session", &args, &options);
+                        assert_eq!(view.code, 0, "{}", view.stderr_text());
+                        assert!(
+                            view.stdout_text().contains("writers-disabled"),
+                            "{}",
+                            view.stdout_text()
+                        );
+                    }
+                }
+            }
         }
     }
 }

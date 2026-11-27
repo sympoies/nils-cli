@@ -61,6 +61,8 @@ struct Receipt {
     stop_method: Option<&'static str>,
     old: Incarnation,
     new: Incarnation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_notice: Option<crate::send::claude_notice::attach::Diagnostic>,
     started_at: String,
     stopped_at: Option<String>,
     relaunched_at: Option<String>,
@@ -78,7 +80,7 @@ pub(crate) fn run(context: &CliContext, args: RestartArgs) -> i32 {
 
 fn render_text(receipt: &Receipt) -> String {
     let unknown = || "unknown".to_string();
-    format!(
+    let mut text = format!(
         "{}: restarted {} -> {} (provider {})\n",
         receipt.id,
         receipt
@@ -92,7 +94,11 @@ fn render_text(receipt: &Receipt) -> String {
             .clone()
             .unwrap_or_else(unknown),
         receipt.new.provider_version.clone().unwrap_or_else(unknown),
-    )
+    );
+    if let Some(notice) = &receipt.native_notice {
+        text.push_str(&notice.text());
+    }
+    text
 }
 
 pub(crate) enum ResumeStatus {
@@ -396,6 +402,7 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
         stop_method: None,
         old,
         new: Incarnation::default(),
+        native_notice: None,
         started_at,
         stopped_at: None,
         relaunched_at: None,
@@ -569,6 +576,7 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
         }
     };
     receipt.new = incarnation(&relaunched);
+    receipt.native_notice = crate::send::claude_notice::attach::diagnostic(context, &relaunched);
     release_bootstrap(resumed.bootstrap, record_lock);
 
     let ready_deadline = Instant::now() + Duration::from_secs(args.ready_timeout);

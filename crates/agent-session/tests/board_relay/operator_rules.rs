@@ -222,6 +222,10 @@ fn operator_rules_check_is_shared_by_cli_and_serve_and_reports_effective_source(
         assert_eq!(output.code, 0, "{}", output.stdout_text());
         assert_eq!(output.stdout_json()["data"]["source"], "built_in");
         assert_eq!(
+            output.stdout_json()["data"]["rules"]["claude_native_notice"],
+            false
+        );
+        assert_eq!(
             output.stdout_json()["data"]["rules"]["coordinator_requires_root"],
             true
         );
@@ -234,7 +238,20 @@ fn operator_rules_check_is_shared_by_cli_and_serve_and_reports_effective_source(
         false
     );
     assert!(output.stdout_text().contains("rules.json"));
+    write_rules(
+        &fixture,
+        r#"{"schema_version":"agent-session.operator-rules.v1","claude_native_notice":true}"#,
+    );
+    let output = fixture.run("rules", &["--format", "json"], false);
+    assert_eq!(
+        output.stdout_json()["data"]["rules"]["claude_native_notice"],
+        true
+    );
     for (raw, key) in [
+        (
+            r#"{"schema_version":"agent-session.operator-rules.v1","claude_native_notice":"yes"}"#,
+            "claude_native_notice",
+        ),
         (INVALID, "unexpected"),
         ("{", "$document"),
         (r#"{"schema_version":"unknown"}"#, "schema_version"),

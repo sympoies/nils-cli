@@ -113,6 +113,29 @@ fn read(context: &CliContext, session: &SessionRecord) -> Option<Recorded> {
     })
 }
 
+/// The recorded launch outcome, independent of the inspecting process environment.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct Diagnostic {
+    state: &'static str,
+    reason: &'static str,
+}
+
+pub(crate) fn diagnostic(context: &CliContext, session: &SessionRecord) -> Option<Diagnostic> {
+    if session.agent != "claude" {
+        return None;
+    }
+    read(context, session).map(|recorded| Diagnostic {
+        state: STATE,
+        reason: recorded.reason.as_str(),
+    })
+}
+
+impl Diagnostic {
+    pub(crate) fn text(&self) -> String {
+        format!("native_notice: {} ({})\n", self.state, self.reason)
+    }
+}
+
 /// A known launch/configuration absence permits the mailbox's guarded text
 /// wake. An installed module with missing readiness remains uncertain.
 pub(crate) fn mailbox_text_reason(

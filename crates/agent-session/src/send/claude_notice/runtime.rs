@@ -179,7 +179,7 @@ pub(crate) fn prepare_launch(
     if record.agent != "claude" {
         return Ok(None);
     }
-    if !crate::notice::writers_enabled() {
+    if !crate::cli::operator_rules::claude_native_notice() {
         attach::record(state, record, Reason::WritersDisabled, None);
         return Ok(None);
     }

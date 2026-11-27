@@ -427,7 +427,12 @@ fn run_logs(context: &CliContext, args: cli::LogsArgs) -> i32 {
 fn run_glance(context: &CliContext, args: cli::GlanceArgs) -> i32 {
     let format = args.format;
     match glance_session(context, args) {
-        Ok(result) => render_single_success(GLANCE_COMMAND, format, &result, render_glance_text),
+        Ok(result) => render_single_success(
+            GLANCE_COMMAND,
+            format,
+            &result,
+            resume_session::render_glance_text,
+        ),
         Err(err) => render_error(GLANCE_COMMAND, format, err),
     }
 }
@@ -436,7 +441,12 @@ fn run_resume(context: &CliContext, args: cli::ResumeArgs) -> i32 {
     let format = args.format;
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     match resume_session_by_id(context, &args.id, &tmux_bin) {
-        Ok(result) => render_single_success(RESUME_COMMAND, format, &result, render_resumed_text),
+        Ok(result) => render_single_success(
+            RESUME_COMMAND,
+            format,
+            &result,
+            resume_session::render_resumed_text,
+        ),
         Err(err) => render_error(RESUME_COMMAND, format, err),
     }
 }
@@ -1199,6 +1209,8 @@ struct DurableResumeRecord {
 
 #[derive(Debug, Serialize)]
 pub struct SessionView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_notice: Option<send::claude_notice::attach::Diagnostic>,
     /// Present on fresh start results; contains no private receipt metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     launch_notice: Option<notice::start::LaunchNotice>,
@@ -1346,6 +1358,8 @@ struct LogsResult {
 
 #[derive(Debug, Serialize)]
 struct GlanceResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_notice: Option<send::claude_notice::attach::Diagnostic>,
     id: String,
     agent: String,
     title: Option<String>,
@@ -3963,6 +3977,7 @@ fn glance_session(context: &CliContext, args: cli::GlanceArgs) -> Result<GlanceR
     };
     let last_terminal_activity_at = last_terminal_activity_at(&tmux_bin, &record, &status);
     Ok(GlanceResult {
+        native_notice: send::claude_notice::attach::diagnostic(context, &record),
         id: record.id.clone(),
         agent: record.agent.clone(),
         title: record.title.clone(),
@@ -5958,6 +5973,7 @@ fn session_view_from_parts(
     });
     let (auth_incident, auth_detection_health) = auth_incident::projection(context, record);
     SessionView {
+        native_notice: send::claude_notice::attach::diagnostic(context, record),
         launch_notice: None,
         origin: origin::Fields::of(record),
         context_usage,
@@ -11417,22 +11433,6 @@ fn render_send_text(result: &SendResult) -> String {
         ),
         None => format!("sent {detail} to {}\n", result.id),
     }
-}
-
-fn render_glance_text(result: &GlanceResult) -> String {
-    let mut text = format!("{} {} [{}]\n", result.id, result.agent, result.status);
-    text.push_str(&result.tail);
-    if !result.tail.is_empty() && !result.tail.ends_with('\n') {
-        text.push('\n');
-    }
-    text
-}
-
-fn render_resumed_text(result: &SessionView) -> String {
-    format!(
-        "resumed {} session {}\ntmux: {}\nattach: {}\n",
-        result.agent, result.id, result.tmux_session, result.attach_command
-    )
 }
 
 fn render_activity_text(result: &activity::ActivityResult) -> String {

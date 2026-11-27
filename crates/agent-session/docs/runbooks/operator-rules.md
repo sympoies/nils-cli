@@ -15,7 +15,8 @@ This file is separate from the deployment inputs supplied by `serve --config`.
 ```json
 {
   "schema_version": "agent-session.operator-rules.v1",
-  "coordinator_requires_root": true
+  "coordinator_requires_root": true,
+  "claude_native_notice": false
 }
 ```
 
@@ -25,6 +26,11 @@ require a root lineage during local and Console starts, daemon relays, HTTP
 create/resume, and display metadata role updates. Setting it to false allows
 those roles on parented sessions. Lineage depth, authentication, work references,
 and other launch restrictions retain their existing behavior.
+
+`claude_native_notice` controls whether Claude launches attach the native notice
+module. It defaults to false and is independent of the calling shell's notice writer environment. Set it to true on hosts where native notice
+readers and the daemon writer are enabled; keep the writer gate enabled for
+the daemon separately. Restart or resume a session to apply a changed setting.
 
 Only the documented keys and types are accepted. The document must be a JSON
 object no larger than 64 KiB. The loader never applies part of an invalid file.
