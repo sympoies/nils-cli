@@ -86,9 +86,16 @@ impl ScopedTempDir {
 /// `0700` whatever the umask, because it lives in the shared `/tmp`.
 #[cfg(unix)]
 pub fn short_socket_path(file_name: impl AsRef<Path>) -> (ScopedTempDir, PathBuf) {
+    let dir = short_runtime_dir();
+    let path = dir.path().join(file_name);
+    (dir, path)
+}
+
+#[cfg(unix)]
+pub(crate) fn short_runtime_dir() -> ScopedTempDir {
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = ScopedTempDir {
+    ScopedTempDir {
         inner: Some(
             tempfile::Builder::new()
                 .prefix("cx-")
@@ -96,9 +103,7 @@ pub fn short_socket_path(file_name: impl AsRef<Path>) -> (ScopedTempDir, PathBuf
                 .tempdir_in("/tmp")
                 .expect("create short Unix socket tempdir"),
         ),
-    };
-    let path = dir.path().join(file_name);
-    (dir, path)
+    }
 }
 
 fn tempdir_outside_git_ancestry(

@@ -87,7 +87,7 @@ impl Default for HermeticHome {
     }
 }
 
-fn allowed(name: &str, extra: &[String]) -> bool {
+pub(crate) fn allowed(name: &str, extra: &[String]) -> bool {
     ENV_ALLOWLIST.contains(&name)
         || PLATFORM_ALLOWLIST.contains(&name)
         || ENV_ALLOW_PREFIXES

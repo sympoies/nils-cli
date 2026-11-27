@@ -101,7 +101,7 @@ fn git_output_with_env(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> Outp
     cmd.output().expect("git command failed to spawn")
 }
 
-fn git_command() -> &'static Path {
+pub(crate) fn git_command() -> &'static Path {
     GIT_PATH.get_or_init(resolve_git_path).as_path()
 }
 

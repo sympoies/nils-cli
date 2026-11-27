@@ -1,6 +1,7 @@
 use crate::common;
 use common::{commit_file, git, init_repo, run_git_lock, run_git_lock_output};
 use nils_test_support::cmd::{CmdOptions, run_with};
+use nils_test_support::fixture::Fixture;
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -76,9 +77,10 @@ fn tag_overwrite_prompt() {
 
     run_git_lock(repo.path(), &["lock", "wip"], &env, None);
 
-    let status = std::process::Command::new("git")
+    let fixture = Fixture::new();
+    let status = fixture
+        .git_command(repo.path())
         .args(["tag", "-a", "v1.0.0", "-m", "tag"])
-        .current_dir(repo.path())
         .status()
         .expect("tag command");
     assert!(status.success());

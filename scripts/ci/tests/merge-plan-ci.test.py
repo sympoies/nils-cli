@@ -688,9 +688,11 @@ else:
     def canonical_fixture(self):
         for path in ('scripts/ci/nils-cli-checks-entrypoint.sh',
                      'scripts/ci/nils-cli-merge-plan-checks.py',
-                     'scripts/ci/test-shell-portability-audit.py'):
+                     'scripts/ci/test-shell-portability-audit.py',
+                     'scripts/ci/fixture-isolation-audit.py'):
             (self.repo / path).write_bytes((ROOT / path).read_bytes())
         (self.repo / 'scripts/ci/test-shell-portability-allowlist.json').write_text('[]\n')
+        (self.repo / 'scripts/ci/fixture-isolation-allowlist.tsv').write_text('')
         verify = self.repo / 'scripts/ci/nils-cli-verification.sh'
         verify.write_text('#!/usr/bin/env bash\nprintf \'{"kind":"full"}\\n\' >> "$FAKE_CARGO_LOG"\n')
         # Admission is a fixture, not a local gate: no compiler or live slot is
