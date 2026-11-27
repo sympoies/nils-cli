@@ -410,7 +410,11 @@ esac
         );
         if case == "malformed test scopes" {
             let message = refusal.and_then(|item| item["message"].as_str()).unwrap();
-            assert!(message.contains("invalid test_first.test_paths"), "{out:?}");
+            assert_eq!(
+                message.split_once(". The fetched base").unwrap().1,
+                " has invalid test_first.test_paths in .forge-cli.toml. Use a list of normalized directory scopes to enable additional test paths.",
+                "{out:?}"
+            );
         }
     }
 }

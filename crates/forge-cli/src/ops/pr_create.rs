@@ -502,7 +502,7 @@ pub(crate) fn test_first_gate(
     }
     let Some(dir) = evidence_dir else {
         let invalid_scope = if policy.invalid_test_paths {
-            ". The fetched base has invalid test_first.test_paths in .forge-cli.toml. +             Use a list of normalized directory scopes to enable additional test paths."
+            ". The fetched base has invalid test_first.test_paths in .forge-cli.toml. Use a list of normalized directory scopes to enable additional test paths."
         } else {
             ""
         };
