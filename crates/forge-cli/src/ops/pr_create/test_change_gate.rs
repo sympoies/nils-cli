@@ -2,9 +2,11 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::config::TestFirstPolicy;
+use crate::config::{ForgeConfig, TestFirstPolicy};
 use crate::error::ForgeError;
-use crate::ops::pr_review_handoff::test_integrity::{declarations, diff, validate_declarations};
+use crate::ops::pr_review_handoff::test_integrity::{
+    body_section, declarations, diff, validate_declarations,
+};
 use crate::provider::{Provider, ProviderContext};
 use crate::validations::PrKind;
 
@@ -16,8 +18,8 @@ pub(crate) fn policy(
     kind: PrKind,
     workdir: &Path,
     remote: &str,
-    base: &str,
-    head: &str,
+    (base, head): (&str, &str),
+    body: &str,
 ) -> Result<(TestFirstPolicy, Option<VerifiedDeliverySubject>), ForgeError> {
     let mut effective = policy.clone();
     if policy.invalid_require_kinds
@@ -65,8 +67,14 @@ pub(crate) fn policy(
     let comparison = format!("{}...{}", fetched.trim(), head_oid.trim());
     let paths = comparison_diff(workdir, &comparison, &["--name-only", "-z"])?;
     let changed_paths = paths.split_terminator('\0');
+    // Only the fetched target base can extend the scope of the evidence exemption.
+    let base_config = super::find_git_toplevel(workdir)
+        .map(|root| ForgeConfig::load_from_git_ref(&root, &root, fetched.trim()))
+        .unwrap_or_default();
+    let review_evidence = has_test_only_evidence(body);
+    let fixture_review = |path: &str| review_evidence && base_config.declares_test_path(path);
     let test_sources_only = changed_paths.clone().all(|path| {
-        dedicated_test_path(path)
+        (dedicated_test_path(path) || base_config.declares_test_path(path))
             && diff::source(path)
             && !path
                 .split('/')
@@ -74,7 +82,11 @@ pub(crate) fn policy(
     });
     // Python permits redefining a test name. Compare appended definitions with
     // the whole old file to distinguish a new test from a replacement.
-    let context = if changed_paths.clone().any(|path| path.ends_with(".py")) {
+    // Fixture review also needs to identify tests outside the changed hunks.
+    let context = if changed_paths
+        .clone()
+        .any(|path| path.ends_with(".py") || fixture_review(path))
+    {
         "--unified=2147483647"
     } else {
         "--unified=3"
@@ -83,11 +95,10 @@ pub(crate) fn policy(
     // Bind its head too, so a stale tracking ref cannot admit a different PR diff.
     if (paths.is_empty() && !policy.required_for(kind))
         || (test_sources_only
-            && diff::additive_coverage(&comparison_diff(
-                workdir,
-                &comparison,
-                &["--patch", context],
-            )?)?)
+            && diff::additive_coverage(
+                &comparison_diff(workdir, &comparison, &["--patch", context])?,
+                fixture_review,
+            )?)
     {
         effective
             .require_kinds
@@ -104,6 +115,27 @@ pub(crate) fn policy(
         effective.require_kinds.push(kind);
     }
     Ok((effective, None))
+}
+
+fn has_test_only_evidence(body: &str) -> bool {
+    let section = body_section(body, "## Test-only evidence");
+    [
+        "- Base command ",
+        "- Added coverage command ",
+        "- Mutation command ",
+    ]
+    .into_iter()
+    .all(|prefix| {
+        section.lines().any(|line| {
+            line.trim()
+                .strip_prefix(prefix)
+                .and_then(|line| line.strip_prefix('`'))
+                .and_then(|line| line.split_once('`'))
+                .is_some_and(|(command, result)| {
+                    !command.trim().is_empty() && !result.trim().is_empty()
+                })
+        })
+    })
 }
 
 fn dedicated_test_path(path: &str) -> bool {

@@ -1335,6 +1335,46 @@ Python tests can be appended as complete top-level definitions with new
 names. Fixture directories, non-test paths, removed lines, file mode changes,
 and test-change detector findings require evidence.
 
+Repositories can extend the dedicated source directories with
+`[test_first].test_paths` in the root `.forge-cli.toml` on the target base.
+
+```toml
+[test_first]
+test_paths = ["scripts/test/", "packages/*/test/"]
+```
+
+Each entry is a normalized repository-relative directory ending in `/`. A
+`*` matches one directory component. Each entry needs a literal component.
+A malformed list grants no additional scopes. Land the declaration on the
+target base before opening a PR that uses it. It applies alongside the built-in
+scopes and uses the same additive-coverage checks.
+
+A **test-only addition** covers behavior that already passes on the base.
+Include the passing base test command, the command that runs the new case
+against unchanged behavior, and the temporary mutation that makes the new case's
+expected assertion fail in `## Test plan`. Keep the mutation outside the
+submitted diff. Pure additions qualify for the exemption from product-behavior
+evidence.
+
+Fixture wiring can support new coverage in an existing JavaScript or TypeScript
+test in a declared scope. The gate accepts complete insertions with new
+assertions and no detector findings when the body also has this section:
+
+```markdown
+## Test-only evidence
+
+- Base command `node --test scripts/test/example.test.js` passed on the base.
+- Added coverage command `node --test scripts/test/example.test.js` passed with the new assertions.
+- Mutation command `node --test scripts/test/example.test.js` failed the new assertion after changing the sample response to zero.
+```
+
+Have the reviewer inspect the new fixture wiring and its effect on existing
+assertions and reproduce the three runs. The CLI checks the insertion shape
+and the presence of runnable commands. This review costs less to maintain
+than static analysis of fixture behavior for each test framework. Comparisons
+that fail the additive checks follow the usual evidence gate. A test race fix
+is **A, red first**.
+
 A new assertion in `tests/calculation.rs` for an already-correct result
 qualifies. Adding a guard around an existing assertion requires evidence,
 even if the same file also gains an assertion.

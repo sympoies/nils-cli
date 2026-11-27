@@ -338,6 +338,10 @@ fn warn(warnings: &[String]) {
 }
 
 pub(crate) fn declarations(body: &str) -> String {
+    body_section(body, "## Test changes")
+}
+
+pub(crate) fn body_section(body: &str, heading: &str) -> String {
     let mut active = false;
     let mut fence = None;
     let mut lines = Vec::new();
@@ -356,7 +360,7 @@ pub(crate) fn declarations(body: &str) -> String {
             continue;
         }
         if line.starts_with("## ") {
-            active = line.trim() == "## Test changes";
+            active = line.trim() == heading;
         } else if active {
             lines.push(line);
         }

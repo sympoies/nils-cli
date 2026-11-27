@@ -1,7 +1,7 @@
 //! Conservative boundaries for test coverage inserted in an existing file.
 use std::collections::BTreeSet;
 
-use super::{File, Language, cases, signals};
+use super::{File, Language, cases, scopes, signals, syntax::LexicalState};
 
 pub(super) fn file_adds_coverage(file: &File) -> bool {
     let (cases, assertions, _) = signals(
@@ -29,6 +29,56 @@ pub(super) fn file_adds_coverage(file: &File) -> bool {
         }
     }
     true
+}
+
+/// Complete JS/TS insertions with new assertions can add fixture wiring.
+/// The reviewer uses the runs in the PR body to confirm the wiring's effect.
+pub(super) fn file_adds_fixture_coverage(file: &File) -> bool {
+    let language = Language::of(&file.new);
+    if language != Language::JavaScript || file.old == "/dev/null" {
+        return false;
+    }
+    let (existing_cases, _, _) = signals(file.before.iter().map(String::as_str), language, true);
+    let (_, assertions, _) = signals(file.additions.iter().map(String::as_str), language, true);
+    !existing_cases.is_empty()
+        && !assertions.is_empty()
+        && file
+            .additions
+            .split(|line| line == cases::HUNK)
+            .all(complete_fixture_insertion)
+}
+
+fn complete_fixture_insertion(lines: &[String]) -> bool {
+    let mut lexical = LexicalState::default();
+    let mut closing = Vec::new();
+    let mut last_token = None;
+    for line in lines {
+        let masked = lexical.mask(line, Language::JavaScript);
+        let compact = scopes::compact(&masked);
+        if compact.starts_with("else") || compact.contains("return;") {
+            return false;
+        }
+        let original = scopes::compact(line);
+        if ["skip:", "'skip':", "\"skip\":"]
+            .iter()
+            .any(|option| original.contains(option))
+        {
+            return false;
+        }
+        for token in compact.chars() {
+            match token {
+                '(' => closing.push(')'),
+                '[' => closing.push(']'),
+                '{' => closing.push('}'),
+                ')' | ']' | '}' if closing.pop() != Some(token) => return false,
+                _ => {}
+            }
+            last_token = Some(token);
+        }
+    }
+    lexical.is_closed()
+        && closing.is_empty()
+        && last_token.is_none_or(|token| matches!(token, ';' | ',' | '}'))
 }
 
 fn coverage_insertion(added: &[String], extension: &str) -> bool {

@@ -742,8 +742,8 @@ pub fn run_with<R: BackendRunner>(
         kind,
         &env.workdir,
         &global.remote,
-        &base,
-        resolved_head.local_branch,
+        (&base, resolved_head.local_branch),
+        &body,
     )?;
     let gate_applies = policy.required_for(kind);
     let remote_url = evidence_remote_url(
@@ -915,8 +915,8 @@ fn compute_with_subject_inner<R: BackendRunner>(
         kind,
         &env.workdir,
         &global.remote,
-        &base,
-        resolved_head.local_branch,
+        (&base, resolved_head.local_branch),
+        &body,
     )?;
     let gate_applies = policy.required_for(kind);
     let remote_url = evidence_remote_url(

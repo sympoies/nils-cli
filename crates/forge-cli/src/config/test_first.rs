@@ -1,4 +1,4 @@
-//! Kind selection for the opt-in test-first evidence gate.
+//! Kind selection and declared test directories for test-first admission.
 
 use nils_common::git::PrKind;
 
@@ -29,6 +29,17 @@ impl TestFirstPolicy {
 }
 
 impl ForgeConfig {
+    pub(crate) fn declares_test_path(&self, path: &str) -> bool {
+        self.test_first_test_paths.iter().flatten().any(|scope| {
+            let mut path_parts = path.split('/');
+            scope.trim_end_matches('/').split('/').all(|part| {
+                path_parts
+                    .next()
+                    .is_some_and(|name| part == "*" || part == name)
+            }) && path_parts.next().is_some()
+        })
+    }
+
     pub fn resolve_test_first_policy(&self) -> TestFirstPolicy {
         TestFirstPolicy {
             require: self.resolve_test_first_required(None),
@@ -41,6 +52,27 @@ impl ForgeConfig {
                 .unwrap_or_else(|| TestFirstPolicy::default().require_kinds),
         }
     }
+}
+
+pub(super) fn parse_test_paths(value: &toml::Value) -> Option<Vec<String>> {
+    value
+        .as_array()?
+        .iter()
+        .map(|value| {
+            let pattern = value.as_str()?;
+            let scope = pattern.strip_suffix('/')?;
+            let parts = scope.split('/');
+            let valid = parts.clone().any(|part| part != "*")
+                && parts.into_iter().all(|part| {
+                    part == "*"
+                        || (!matches!(part, "" | "." | "..")
+                            && part.bytes().all(|byte| {
+                                byte.is_ascii_graphic() && !b"*?[]\\\"|".contains(&byte)
+                            }))
+                });
+            valid.then(|| pattern.to_owned())
+        })
+        .collect()
 }
 
 #[cfg(test)]

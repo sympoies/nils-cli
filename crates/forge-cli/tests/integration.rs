@@ -10,6 +10,7 @@ mod integration {
     mod completion_sync;
     mod completions;
     mod conformance;
+    mod declared_test_scopes;
     mod exit_codes;
     mod exit_codes_full;
     mod fixture_lint;

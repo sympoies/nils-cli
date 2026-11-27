@@ -304,8 +304,8 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
             args.kind.into_kind(),
             workdir,
             &global.remote,
-            &expected_base,
-            resolved_head.local_branch,
+            (&expected_base, resolved_head.local_branch),
+            view.body.as_deref().unwrap_or(""),
         ) {
             Ok(policy) => policy,
             Err(err) => {
@@ -1027,8 +1027,8 @@ fn build_dry_run_payload(
         args.kind.into_kind(),
         workdir,
         &global.remote,
-        args.base.as_deref().unwrap_or("HEAD"),
-        local_branch,
+        (args.base.as_deref().unwrap_or("HEAD"), local_branch),
+        &body,
     );
     let policy_failed = policy_result.is_err();
     let test_first_policy = match policy_result {
