@@ -181,6 +181,9 @@ archives, audit third-party notices, upload assets, publish the GitHub Release,
 and confirm that a tap update workflow actually started. Crates.io publication
 is a separate authorized [`publish-crates.yml`](../../.github/workflows/publish-crates.yml) flow.
 
+After a release, upgrade hosts that run reviewers to the new forge-cli version
+before starting new reviews.
+
 ### Devlog fold review admission and recovery
 
 Designated review is required for ordinary PRs and manual backlog folds.

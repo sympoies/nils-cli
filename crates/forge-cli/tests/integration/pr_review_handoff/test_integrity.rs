@@ -257,8 +257,9 @@ fn pre_review_test_changes_prints_findings_and_digest_without_a_review_or_writes
             .starts_with("sha256:")
     );
     let confirmation = format!(
-        "Test changes confirmed: {}",
-        value["data"]["digest"].as_str().unwrap()
+        "Test changes confirmed: {} (forge-cli {})",
+        value["data"]["digest"].as_str().unwrap(),
+        env!("CARGO_PKG_VERSION")
     );
     let admitted = check(
         &integrity_fixture(DECLARATIONS, &confirmation, "contributor"),

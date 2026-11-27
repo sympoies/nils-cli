@@ -28,6 +28,7 @@ pub(super) fn published<R: BackendRunner>(
                     | "designated_final_approval_required"
                     | "test_changes_undeclared"
                     | "test_changes_unconfirmed"
+                    | "test_changes_version_mismatch"
             ) =>
         {
             Ok(None)
