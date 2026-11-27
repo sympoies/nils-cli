@@ -108,15 +108,17 @@ fn comparison<R: BackendRunner>(
 }
 
 fn digest(subject: &Subject, patch: &str) -> String {
-    sha256_digest(
-        format!(
-            "{}\n{}\n{patch}\n{}",
-            subject.base,
-            subject.head,
-            declarations(&subject.body)
-        )
-        .as_bytes(),
-    )
+    let mut input = format!(
+        "{}\n{}\n{patch}\n{}",
+        subject.base,
+        subject.head,
+        declarations(&subject.body)
+    );
+    if let Some(evidence) = test_only_evidence(&subject.body) {
+        input.push_str("\n## Test-only evidence\n");
+        input.push_str(&evidence);
+    }
+    sha256_digest(input.as_bytes())
 }
 
 /// Read-only author preview: no assignment, ledger or review is required.
@@ -141,6 +143,7 @@ pub(super) fn preview<R: BackendRunner>(
     validate_with_findings(&subject.body, &findings)?;
     let digest = digest(&subject, &patch);
     let confirmation = format!("Test changes confirmed: {digest}");
+    let reproduce = test_only_evidence(&subject.body).is_some();
     let warnings = row_warnings(&findings, &declared_rows(&declarations(&subject.body)));
     let payload = serde_json::json!({"warnings": warnings, "number": number, "head_sha": head, "base_sha": subject.base, "findings": findings, "digest": digest, "confirmation": confirmation, "provenance_import": provenance::summary(&patch)});
     Ok(crate::envelope::emit_success(
@@ -165,6 +168,9 @@ pub(super) fn preview<R: BackendRunner>(
                 );
             }
             println!("{}", p["confirmation"].as_str().unwrap());
+            if reproduce {
+                println!("Test-only evidence reproduced: {digest}");
+            }
             for warning in p["warnings"].as_array().unwrap() {
                 println!("warning: {}", warning.as_str().unwrap());
             }
@@ -200,7 +206,8 @@ pub(super) fn ensure<R: BackendRunner>(
     validate_with_findings(&subject.body, &findings)?;
     let declarations = declarations(&subject.body);
     let rows = declared_rows(&declarations);
-    if findings.is_empty() && provenance::summary(&patch).is_none() {
+    let reproduce = test_only_evidence(&subject.body).is_some();
+    if findings.is_empty() && provenance::summary(&patch).is_none() && !reproduce {
         warn(&row_warnings(&findings, &rows));
         return Ok(());
     }
@@ -229,14 +236,23 @@ pub(super) fn ensure<R: BackendRunner>(
     warn(&row_warnings(&findings, &rows));
     let digest = digest(&subject, &patch);
     let confirmation = format!("Test changes confirmed: {digest}");
+    let reproduction = format!("Test-only evidence reproduced: {digest}");
     if subject.author.eq_ignore_ascii_case(review_author)
         || !report.lines().any(|line| line.trim() == confirmation)
+        || (reproduce && !report.lines().any(|line| line.trim() == reproduction))
     {
+        let evidence_hint = if reproduce {
+            format!(
+                "\n{reproduction}\nIndependently reproduce the base, added coverage, and mutation runs before confirming test-only evidence."
+            )
+        } else {
+            String::new()
+        };
         return Err(error(
             "test_changes_unconfirmed",
             "the designated independent reviewer must confirm the declared test changes in the published passing report",
             Some(format!(
-                "{confirmation}\nRead-only pre-review preview: `forge-cli pr review-handoff test-changes {number} --expected-head {head}`. Review every declared/allowlisted change and publish that exact line in the designated review report. Confirmation expires when the head, base, diff or declaration changes."
+                "{confirmation}{evidence_hint}\nRead-only pre-review preview: `forge-cli pr review-handoff test-changes {number} --expected-head {head}`. Review every declared/allowlisted change and publish the required confirmation in the designated review report. Confirmation expires when the head, base, diff, declaration or evidence changes."
             )),
         ));
     }
@@ -341,7 +357,29 @@ pub(crate) fn declarations(body: &str) -> String {
     body_section(body, "## Test changes")
 }
 
-pub(crate) fn body_section(body: &str, heading: &str) -> String {
+pub(crate) fn test_only_evidence(body: &str) -> Option<String> {
+    let section = body_section(body, "## Test-only evidence");
+    [
+        "- Base command ",
+        "- Added coverage command ",
+        "- Mutation command ",
+    ]
+    .into_iter()
+    .all(|prefix| {
+        section.lines().any(|line| {
+            line.trim()
+                .strip_prefix(prefix)
+                .and_then(|line| line.strip_prefix('`'))
+                .and_then(|line| line.split_once('`'))
+                .is_some_and(|(command, result)| {
+                    !command.trim().is_empty() && !result.trim().is_empty()
+                })
+        })
+    })
+    .then_some(section)
+}
+
+fn body_section(body: &str, heading: &str) -> String {
     let mut active = false;
     let mut fence = None;
     let mut lines = Vec::new();

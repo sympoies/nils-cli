@@ -5,7 +5,7 @@ use std::process::Command;
 use crate::config::{ForgeConfig, TestFirstPolicy};
 use crate::error::ForgeError;
 use crate::ops::pr_review_handoff::test_integrity::{
-    body_section, declarations, diff, validate_declarations,
+    declarations, diff, test_only_evidence, validate_declarations,
 };
 use crate::provider::{Provider, ProviderContext};
 use crate::validations::PrKind;
@@ -71,7 +71,11 @@ pub(crate) fn policy(
     let base_config = super::find_git_toplevel(workdir)
         .map(|root| ForgeConfig::load_from_git_ref(&root, &root, fetched.trim()))
         .unwrap_or_default();
-    let review_evidence = has_test_only_evidence(body);
+    effective.invalid_test_paths = base_config
+        .warnings
+        .iter()
+        .any(|warning| warning.starts_with("invalid-config-value:test_first.test_paths:"));
+    let review_evidence = ctx.provider == Provider::GitHub && test_only_evidence(body).is_some();
     let fixture_review = |path: &str| review_evidence && base_config.declares_test_path(path);
     let test_sources_only = changed_paths.clone().all(|path| {
         (dedicated_test_path(path) || base_config.declares_test_path(path))
@@ -115,27 +119,6 @@ pub(crate) fn policy(
         effective.require_kinds.push(kind);
     }
     Ok((effective, None))
-}
-
-fn has_test_only_evidence(body: &str) -> bool {
-    let section = body_section(body, "## Test-only evidence");
-    [
-        "- Base command ",
-        "- Added coverage command ",
-        "- Mutation command ",
-    ]
-    .into_iter()
-    .all(|prefix| {
-        section.lines().any(|line| {
-            line.trim()
-                .strip_prefix(prefix)
-                .and_then(|line| line.strip_prefix('`'))
-                .and_then(|line| line.split_once('`'))
-                .is_some_and(|(command, result)| {
-                    !command.trim().is_empty() && !result.trim().is_empty()
-                })
-        })
-    })
 }
 
 fn dedicated_test_path(path: &str) -> bool {

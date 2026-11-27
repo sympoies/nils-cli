@@ -77,6 +77,23 @@ fn declared_scopes_admit_passing_additive_coverage() {
 
 #[test]
 fn declared_scopes_keep_behavior_change_evidence() {
+    let before_assertion = |insertion: &str| {
+        BROWSER_ADDITION.replace(
+            "  assert.ok(fixture.outboxReads > 0, 'visible view polls the outbox');",
+            &format!(
+                "  {insertion}\n  assert.ok(fixture.outboxReads > 0, 'visible view polls the outbox');"
+            ),
+        )
+    };
+    let exits = before_assertion("process.exit(0);");
+    let returns = before_assertion("return fixture;");
+    let exclusive_test =
+        format!("{BROWSER_ADDITION}\ntest.only('extra', () => {{ assert.ok(true); }});\n");
+    let replaces_assertion = before_assertion("assert.equal = () => {};");
+    let duplicate_key = BROWSER_ADDITION.replace(
+        "    visible: true,",
+        "    visible: true,\n    visible: false,",
+    );
     let wrapped = BROWSER_ADDITION.replace(
         "  assert.ok(fixture.outboxReads > 0, 'visible view polls the outbox');\n",
         "  if (visible) {\n  assert.ok(fixture.outboxReads > 0, 'visible view polls the outbox');\n  }\n",
@@ -109,6 +126,11 @@ fn declared_scopes_keep_behavior_change_evidence() {
             "test('renders cells', () => {\n  render(waitForCells);\n  assert.ok(cellsReady());\n});\n",
         ),
         ("wrapped existing assertion", BROWSER_TEST, &wrapped),
+        ("early exit", BROWSER_TEST, &exits),
+        ("early return", BROWSER_TEST, &returns),
+        ("exclusive test", BROWSER_TEST, &exclusive_test),
+        ("assertion replacement", BROWSER_TEST, &replaces_assertion),
+        ("duplicate fixture key", BROWSER_TEST, &duplicate_key),
         (
             "mixed product",
             VISIBILITY,
@@ -131,12 +153,23 @@ fn declared_scopes_keep_behavior_change_evidence() {
 
 #[test]
 fn declared_scopes_require_base_configuration() {
-    for (base_scopes, path, head_config) in [
-        ("", SCRIPT_TEST, false),
-        ("", SCRIPT_TEST, true),
-        (SCOPES, "packages/widget/nested/test/test_sample.py", false),
-        (SCOPES, "scripts/test-support/test_sample.py", false),
+    for (case, base_scopes, path, head_config) in [
+        ("undeclared", "", SCRIPT_TEST, false),
+        ("head-only declaration", "", SCRIPT_TEST, true),
         (
+            "nested wildcard mismatch",
+            SCOPES,
+            "packages/widget/nested/test/test_sample.py",
+            false,
+        ),
+        (
+            "directory prefix mismatch",
+            SCOPES,
+            "scripts/test-support/test_sample.py",
+            false,
+        ),
+        (
+            "malformed test scopes",
             "test_paths = [\"scripts/test/\", \"../src/\"]\n",
             SCRIPT_TEST,
             false,
@@ -153,7 +186,7 @@ fn declared_scopes_require_base_configuration() {
             git(&repo, &["add", ".forge-cli.toml"]);
             git(&repo, &["commit", "-qm", "declare scope on the head"]);
         }
-        check_routes(&repo, true, path, BODY);
+        check_routes(&repo, true, case, BODY);
     }
 }
 
@@ -344,14 +377,13 @@ esac
             ],
         );
         let envelope = parse_envelope(&out.stdout);
-        let code = if operation == "deliver" && dry_run {
+        let refusal = if operation == "deliver" && dry_run {
             assert_eq!(out.code, 0, "{case}: {out:?}");
             envelope["data"]["local_preflight"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .find(|item| item["rule"] == "test_first" && item["ok"] == false)
-                .and_then(|item| item["code"].as_str())
         } else {
             assert_eq!(
                 out.code,
@@ -368,12 +400,17 @@ esac
                     "{out:?}"
                 );
             }
-            envelope["error"]["code"].as_str()
+            Some(&envelope["error"])
         };
+        let code = refusal.and_then(|item| item["code"].as_str());
         assert_eq!(
             code,
             required.then_some("test_first_evidence_required"),
             "{case}, {operation}: {out:?}"
         );
+        if case == "malformed test scopes" {
+            let message = refusal.and_then(|item| item["message"].as_str()).unwrap();
+            assert!(message.contains("invalid test_first.test_paths"), "{out:?}");
+        }
     }
 }

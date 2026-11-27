@@ -6,6 +6,7 @@
 - The test-kind evidence gate recognizes test directories declared on the
   fetched target base. Fixture wiring for additional JavaScript or TypeScript
   assertions has a review path with reproducible base and mutation runs.
+  Designated review binds independent reproduction to the comparison.
 
 ### Why / context
 

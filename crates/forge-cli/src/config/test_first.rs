@@ -10,6 +10,8 @@ pub struct TestFirstPolicy {
     pub require_kinds: Vec<PrKind>,
     /// Any invalid list in the layered config must be fixed before an enabled gate runs.
     pub invalid_require_kinds: bool,
+    /// The fetched target base declared malformed additional test scopes.
+    pub invalid_test_paths: bool,
 }
 
 impl Default for TestFirstPolicy {
@@ -18,6 +20,7 @@ impl Default for TestFirstPolicy {
             require: false,
             require_kinds: vec![PrKind::Feature, PrKind::Bug],
             invalid_require_kinds: false,
+            invalid_test_paths: false,
         }
     }
 }
@@ -46,6 +49,7 @@ impl ForgeConfig {
             invalid_require_kinds: self.warnings.iter().any(|warning| {
                 warning.starts_with("invalid-config-value:test_first.require_kinds:")
             }),
+            invalid_test_paths: false,
             require_kinds: self
                 .test_first_require_kinds
                 .clone()

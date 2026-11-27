@@ -501,13 +501,18 @@ pub(crate) fn test_first_gate(
         return Ok(None);
     }
     let Some(dir) = evidence_dir else {
+        let invalid_scope = if policy.invalid_test_paths {
+            ". The fetched base has invalid test_first.test_paths in .forge-cli.toml. +             Use a list of normalized directory scopes to enable additional test paths."
+        } else {
+            ""
+        };
         return Err(ForgeError::validation(
             schema_err(),
             "test_first_evidence_required",
             format!(
                 "test-first evidence is required for --kind {}; pass \
              --test-first-evidence <dir> pointing at a verified test-first-evidence \
-             v2 record with a testable classification and complete durable evidence",
+             v2 record with a testable classification and complete durable evidence{invalid_scope}",
                 kind.as_str()
             ),
             None,
