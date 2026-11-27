@@ -145,6 +145,8 @@ fn commit_source(source_root: &Path) {
             .arg(source_root)
             .env("GIT_CONFIG_GLOBAL", &config)
             .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_remove("GIT_CONFIG_COUNT")
+            .env_remove("GIT_CONFIG_PARAMETERS")
             .args(args)
             .status()
             .unwrap();
