@@ -3,6 +3,10 @@ use super::*;
 #[cfg(target_os = "linux")]
 pub(crate) mod codex_daemons;
 mod idle;
+#[cfg(target_os = "macos")]
+mod macos_codex_daemons;
+#[cfg(target_os = "macos")]
+mod macos_orphans;
 mod shared_daemons;
 
 #[derive(Clone, Copy, Debug)]
@@ -240,6 +244,8 @@ impl ProcessSummary {
 struct ProcessScan {
     processes: Vec<ProcessSummary>,
     shared_daemons: Vec<shared_daemons::RetainedDaemon>,
+    #[cfg(target_os = "macos")]
+    orphan_pids: Vec<libc::pid_t>,
     complete: bool,
     inspected: usize,
     uninspected: usize,
@@ -640,6 +646,19 @@ fn delete_leaving_processes(
     })
 }
 
+pub(super) fn prepare_session_close(
+    context: &CliContext,
+    record: &mut SessionRecord,
+    tmux_bin: &Path,
+    verify_timeout: Duration,
+) -> Result<(), CliError> {
+    #[cfg(target_os = "macos")]
+    macos_orphans::terminate(context, record)?;
+    gracefully_shutdown_profiled_tmux_session(context, record, tmux_bin, verify_timeout).map_err(
+        |reason| session_termination_error(record, reason, SessionTerminationOperation::Delete),
+    )
+}
+
 pub(super) fn finish_session_delete(
     context: &CliContext,
     record: SessionRecord,
@@ -667,6 +686,10 @@ fn finish_session_delete_with_scan(
     close_reason: board::CloseReason,
     scan: ProcessScan,
 ) -> Result<DeleteResult, CliError> {
+    #[cfg(target_os = "macos")]
+    if !scan.orphan_pids.is_empty() {
+        return Err(macos_orphans::refusal(&record, scan));
+    }
     if !scan.processes.is_empty() {
         return Err(termination_error_with_scan(
             &record,
@@ -838,12 +861,18 @@ fn associated_processes(record: &SessionRecord, context: Option<&CliContext>) ->
     else {
         return ProcessScan::default();
     };
-    let policy = context
-        .filter(|_| marker_only_boundary(record))
-        .and_then(|context| {
-            shared_daemons::DaemonPaths::for_session(Path::new(&record.cwd), &context.state_dir)
-        });
+    let policy = context.and_then(|context| daemon_policy(record, context));
     scan_processes(&record.id, &runtime.launch_id, policy.as_ref())
+}
+
+fn daemon_policy(
+    record: &SessionRecord,
+    context: &CliContext,
+) -> Option<shared_daemons::DaemonPaths> {
+    if !marker_only_boundary(record) {
+        return None;
+    }
+    shared_daemons::DaemonPaths::for_session(Path::new(&record.cwd), &context.state_dir)
 }
 
 fn marker_only_boundary(record: &SessionRecord) -> bool {
@@ -1111,9 +1140,8 @@ fn scan_macos_processes(
             pid,
             &fields.collect::<Vec<_>>().join(" "),
             &bytes,
-            id,
-            runtime,
-            policy.filter(|_| parent == Some(1)),
+            (id, runtime),
+            (parent == Some(1), policy),
         );
         if scan.processes.len() + scan.shared_daemons.len() >= 128 {
             scan.incomplete("entry-limit-reached", 0);
@@ -1130,26 +1158,26 @@ fn classify_macos_environment(
     pid: libc::pid_t,
     command: &str,
     bytes: &[u8],
-    id: &str,
-    runtime: &str,
-    policy: Option<&shared_daemons::DaemonPaths>,
+    (id, runtime): (&str, &str),
+    (orphan, policy): (bool, Option<&shared_daemons::DaemonPaths>),
 ) {
     match macos_environment(bytes) {
         Some(environment) => {
             scan.inspected += 1;
             if matches_runtime(environment, id, runtime) {
-                let executable = bytes
-                    .get(4..)
-                    .and_then(|value| value.split(|byte| *byte == 0).next())
-                    .and_then(|value| std::str::from_utf8(value).ok())
-                    .and_then(|value| shared_daemons::gnupg_executable(Path::new(value), policy));
-                if let Some(command) = executable {
+                if orphan
+                    && let Some(command) = macos_shared_daemon(pid, bytes, environment, policy)
+                {
                     scan.shared_daemons.push(shared_daemons::RetainedDaemon {
                         pid,
                         command,
                         reason: "shared-daemon-retained",
                     });
                     return;
+                }
+                #[cfg(target_os = "macos")]
+                if orphan {
+                    scan.orphan_pids.push(pid);
                 }
                 scan.processes.push(ProcessSummary {
                     pid,
@@ -1164,6 +1192,27 @@ fn classify_macos_environment(
         // A successful argv read can still omit the environment under SIP.
         None => scan.incomplete("argv-only-or-sip-redacted", 1),
     }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_shared_daemon(
+    _pid: libc::pid_t,
+    bytes: &[u8],
+    environment: &[u8],
+    policy: Option<&shared_daemons::DaemonPaths>,
+) -> Option<String> {
+    let executable = bytes.get(4..)?.split(|byte| *byte == 0).next()?;
+    let executable = Path::new(std::str::from_utf8(executable).ok()?);
+    if shared_daemons::macos_sccache_server(executable, environment) {
+        return Some("sccache".to_string());
+    }
+    #[cfg(target_os = "macos")]
+    if executable.file_name().is_some_and(|name| name == "codex")
+        && let Some(command) = macos_codex_daemons::classify(_pid)
+    {
+        return Some(command.to_owned());
+    }
+    shared_daemons::gnupg_executable(executable, policy)
 }
 
 #[cfg(target_os = "macos")]
@@ -1241,6 +1290,8 @@ fn scan_processes(_: &str, _: &str, _: Option<&shared_daemons::DaemonPaths>) -> 
 mod tests {
     #[cfg(target_os = "linux")]
     mod codex_daemons;
+    #[cfg(target_os = "macos")]
+    mod macos_close;
     use super::*;
     use pretty_assertions::assert_eq;
 
@@ -1679,9 +1730,8 @@ mod tests {
             child.0.id() as libc::pid_t,
             "/bin/sleep",
             &bytes,
-            "platform-marker",
-            &runtime,
-            None,
+            ("platform-marker", &runtime),
+            (false, None),
         );
         if redacted {
             assert!(!scan.complete);
@@ -2167,9 +2217,8 @@ mod tests {
                 41,
                 "/bin/provider",
                 &bytes,
-                "session",
-                "runtime",
-                None,
+                ("session", "runtime"),
+                (false, None),
             );
             let inventory = scan.inventory();
             if let Some(environment) = environment {

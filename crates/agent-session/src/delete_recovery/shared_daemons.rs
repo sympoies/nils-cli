@@ -112,6 +112,16 @@ pub(super) fn linux_shared_daemon(
     Some("sccache".to_string())
 }
 
+#[cfg(any(target_os = "macos", test))]
+pub(super) fn macos_sccache_server(executable: &std::path::Path, environment: &[u8]) -> bool {
+    // The sccache client sets this only in the child it starts in server mode.
+    executable.is_absolute()
+        && executable.file_name() == Some(std::ffi::OsStr::new("sccache"))
+        && environment
+            .split(|byte| *byte == 0)
+            .any(|entry| entry == b"SCCACHE_START_SERVER=1")
+}
+
 pub(super) fn is_gnupg(name: &str) -> bool {
     matches!(name, "gpg-agent" | "dirmngr" | "keyboxd")
 }
