@@ -125,13 +125,6 @@ jobs:
                   print("No qualifying change.", file=summary)
           PY
 
-      - name: Restore Linux Cargo cache
-        if: steps.changes.outputs.run_probe == 'true'
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-test
-          save-if: false
-
       - name: Set up Node.js
         if: steps.changes.outputs.run_probe == 'true'
         uses: actions/setup-node@v7
