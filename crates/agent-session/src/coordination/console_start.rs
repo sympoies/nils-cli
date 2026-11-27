@@ -18,6 +18,7 @@ use super::remote::{self, Config};
 use crate::lineage::{self, LineageSeed, WorkRequest};
 use crate::{CliContext, CliError};
 
+pub(crate) mod attestation;
 pub(crate) mod diagnostics;
 mod operation;
 mod retention;
@@ -159,6 +160,10 @@ fn is_code(code: &str) -> bool {
 
 /// The JSON body of a response, read to at most `MAX_BODY_BYTES`.
 pub(super) fn read_json(response: reqwest::blocking::Response) -> Option<Value> {
+    read_body(response)
+}
+
+fn read_body<T: serde::de::DeserializeOwned>(response: reqwest::blocking::Response) -> Option<T> {
     let mut bytes = Vec::new();
     response
         .take(MAX_BODY_BYTES + 1)
@@ -224,7 +229,7 @@ fn checked_request(body: &Value) -> Option<(Option<&str>, ChildLineage, &Map<Str
     if request.keys().any(|key| {
         !matches!(
             key.as_str(),
-            "machine" | "session" | "no_parent" | "work" | "role" | "operation_id"
+            "machine" | "session" | "no_parent" | "work" | "role" | "operation_id" | "attest_role"
         )
     }) {
         return None;
@@ -352,15 +357,26 @@ fn relay_operation(
     body: &Value,
     operation_id: &str,
 ) -> Result<Value, CliError> {
-    let (caller, incarnation) = super::delegation::authenticate_token(
-        context,
-        Some(session),
-        token,
-        super::delegation::Use::StartViaConsole,
-        true,
-    )?;
+    let (caller, incarnation) = if body["attest_role"] == true {
+        // A worker's ordinary Console start delegation does not grant the
+        // delegating session's authority to sponsor an attested root.
+        super::authenticate_token(context, session, token)
+    } else {
+        super::delegation::authenticate_token(
+            context,
+            Some(session),
+            token,
+            super::delegation::Use::StartViaConsole,
+            true,
+        )
+    }?;
+    let attested_id = attestation::requested_id(body)?;
     let Some(config) = federation else {
-        return Err(disabled());
+        return Err(if attested_id.is_some() {
+            attestation::unavailable()
+        } else {
+            disabled()
+        });
     };
     let scope = operation::Scope::Session {
         caller: session,
@@ -376,25 +392,48 @@ fn relay_operation(
         let origin = operation::Origin::session(session, &incarnation, &caller.created_at, false);
         let (receipt, _) =
             operation::Receipt::begin(context, &origin, operation_id, body, &config.machine)?;
+        if receipt.is_attested() && super::delegation::is_delegation(token) {
+            return Err(super::delegation::scope_denied());
+        }
         return receipt.reconcile(config, &scope);
     }
-    let (machine, lineage, child) = checked_request(body).ok_or_else(invalid)?;
+    let (machine, lineage, child) = checked_request(body).ok_or_else(|| {
+        if attested_id.is_some() {
+            attestation::invalid_body()
+        } else {
+            invalid()
+        }
+    })?;
     lineage::require_root_for_role(lineage.role.as_deref(), !lineage.no_parent)?;
     let mut child = child_session(&config.machine, &caller, &lineage, child)?;
-    let origin =
+    let mut origin =
         operation::Origin::session(session, &incarnation, &caller.created_at, lineage.no_parent);
-    let (mut receipt, submit) = operation::Receipt::begin(
-        context,
-        &origin,
-        operation_id,
-        body,
-        machine.unwrap_or(&config.machine),
-    )?;
-    if !submit {
+    let destination = machine.unwrap_or(&config.machine);
+    if let Some(id) = attested_id {
+        // The sponsor is identified by the dispatch, while the destination owns the root lineage.
+        child.remove("origin");
+        child.remove("lineage");
+        origin.bind_attestation(id, &child)?;
+    }
+    let (mut receipt, submit) =
+        operation::Receipt::begin(context, &origin, operation_id, body, destination).map_err(
+            |error| match (attested_id, error.code()) {
+                (
+                    Some(_),
+                    "coordination-unavailable"
+                    | "coordination-store-corrupt"
+                    | "coordination-lock-timeout",
+                ) => attestation::unavailable(),
+                _ => error,
+            },
+        )?;
+    // An unconfirmed attested create can only send the exact submission back
+    // to the relay, where the operation receipt and destination-ID fence apply.
+    if !submit && !receipt.pending_attestation() {
         return receipt.reconcile(config, &scope);
     }
     let result = (|| {
-        if child.contains_key("resume") {
+        if attested_id.is_none() && child.contains_key("resume") {
             let request =
                 super::resume_preflight::request_from_session(&Value::Object(child.clone()))?;
             let data = super::resume_preflight::relay_authenticated(
@@ -411,10 +450,14 @@ fn relay_operation(
             child.insert("account".into(), data["account"].clone());
         }
         let source = json!({"source_session_id": session, "source_incarnation": incarnation});
-        relay_create(config, source, machine, child, operation_id)
+        relay_create(config, source, machine, child, operation_id, attested_id)
     })();
     if receipt.finish(context, &result).is_err() {
-        return Err(persist_failed(&result));
+        return Err(if attested_id.is_some() {
+            attestation::unavailable()
+        } else {
+            persist_failed(&result)
+        });
     }
     result
 }
@@ -443,6 +486,7 @@ fn relay_create(
     machine: Option<&str>,
     child: Map<String, Value>,
     operation_id: &str,
+    attested_id: Option<&str>,
 ) -> Result<Value, CliError> {
     let mut request = json!({ "session": child });
     request
@@ -452,21 +496,38 @@ fn relay_create(
     if let Some(machine) = machine {
         request["machine"] = json!(machine);
     }
-    let response = client()?
+    let client = client().map_err(|error| {
+        if attested_id.is_some() {
+            attestation::unavailable()
+        } else {
+            error
+        }
+    })?;
+    let destination = machine.unwrap_or(&config.machine);
+    if attested_id.is_some() {
+        attestation::discover(&client, config)?;
+        request["attest_role"] = json!(true);
+        request["no_parent"] = json!(true);
+        request["machine"] = json!(destination);
+    }
+    let response = client
         .post(format!("{}/api/coordination/sessions/v1", config.url))
         .header("x-agent-session-operation-id", operation_id)
         .bearer_auth(&config.token)
         .json(&request)
-        .send()
-        .map_err(|_| {
-            unavailable(
-                "aggregator_request",
-                "transport_failed",
-                "the console aggregator request failed; inspect Console before retrying",
-                false,
-                false,
-            )
-        })?;
+        .send();
+    if let Some(id) = attested_id {
+        return attestation::confirm(response, destination, id);
+    }
+    let response = response.map_err(|_| {
+        unavailable(
+            "aggregator_request",
+            "transport_failed",
+            "the console aggregator request failed; inspect Console before retrying",
+            false,
+            false,
+        )
+    })?;
     let status = response.status();
     let body = read_json(response).ok_or_else(|| {
         unavailable(

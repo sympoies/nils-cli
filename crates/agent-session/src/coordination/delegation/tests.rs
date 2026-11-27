@@ -770,3 +770,33 @@ fn notification_history_registry_fences_older_writers_and_preserves_its_version(
         "agent-session.coordination-registry.v5"
     );
 }
+
+#[test]
+fn ordinary_console_start_delegation_cannot_request_attestation() {
+    use nils_test_support::http::LoopbackServer;
+
+    let fixture = Fixture::new("claude");
+    let (_, token, _) = fixture.mint(vec![Operation::StartViaConsole], vec![]);
+    let server = LoopbackServer::new().unwrap();
+    let config = super::super::remote::Config {
+        machine: "fixture-machine".into(),
+        url: server.url(),
+        token: "synthetic-relay-token".into(),
+        ingress_token: "synthetic-ingress-token".into(),
+    };
+    let request = json!({
+        "attest_role": true,
+        "no_parent": true,
+        "session": {"id": "fixture-steward", "agent": "claude"},
+    });
+    let error = super::super::console_start::relay_route(
+        &fixture.context,
+        Some(&config),
+        "caller",
+        &token,
+        &request,
+    )
+    .unwrap_err();
+    assert_eq!(error.code(), "delegation-scope-denied");
+    assert!(server.take_requests().is_empty());
+}

@@ -8,7 +8,7 @@ use super::super::{
     coordination_root, digest_bytes, lock_private_store, read_private_file, store_corrupt,
     store_unavailable,
 };
-use super::{RESULT_SCHEMA, client, read_json};
+use super::{RESULT_SCHEMA, attestation, client, read_json};
 use crate::{CliContext, CliError};
 
 pub(super) const PREFIX: &str = "console-start-";
@@ -70,6 +70,17 @@ impl<'a> Origin<'a> {
         self.extra["identity"] = identity;
     }
 
+    pub(super) fn bind_attestation(
+        &mut self,
+        id: &str,
+        session: &serde_json::Map<String, Value>,
+    ) -> Result<(), CliError> {
+        let launch = serde_json::to_vec(session).map_err(|_| attestation::invalid_body())?;
+        self.extra["attested_session_id"] = json!(id);
+        self.extra["attested_launch_hash"] = json!(digest_bytes(&launch));
+        Ok(())
+    }
+
     fn name(&self, operation: &str) -> String {
         format!(
             "{PREFIX}{}",
@@ -113,6 +124,14 @@ impl Receipt {
         &self.value
     }
 
+    pub(super) fn is_attested(&self) -> bool {
+        self.value["attested_session_id"].is_string()
+    }
+
+    pub(super) fn pending_attestation(&self) -> bool {
+        self.is_attested() && self.value["state"] == "ambiguous"
+    }
+
     pub(super) fn begin(
         context: &CliContext,
         origin: &Origin,
@@ -137,7 +156,13 @@ impl Receipt {
                 if value["schema_version"] != "agent-session.console-start-operation.v1" {
                     return Err(store_corrupt());
                 }
-                if body["reconcile"] != true && value["request_hash"] != fingerprint {
+                if body["reconcile"] != true
+                    && (value["request_hash"] != fingerprint
+                        || (value["attested_session_id"].is_string()
+                            && (value["machine"] != machine
+                                || value["attested_launch_hash"]
+                                    != origin.extra["attested_launch_hash"])))
+                {
                     return Err(invalid(
                         "console-start-operation-conflict",
                         "operation id is already bound to another start request",
@@ -175,6 +200,9 @@ impl Receipt {
     fn save(&self, context: &CliContext) -> Result<(), CliError> {
         let path = coordination_root(context)?.join(format!("{}.json", self.name));
         let bytes = serde_json::to_vec(&self.value).map_err(|_| store_unavailable())?;
+        if bytes.len() as u64 > MAX_RECEIPT_BYTES {
+            return Err(store_unavailable());
+        }
         write_atomic(&path, &bytes, SECRET_FILE_MODE).map_err(|_| store_unavailable())
     }
 
@@ -188,6 +216,11 @@ impl Receipt {
         // Pruning publishes its rejection fence before removing the reservation.
         // Serialize with that removal so a late response cannot consume a reclaimed slot.
         if !path.try_exists().map_err(|_| store_unavailable())? {
+            return Ok(());
+        }
+        if self.pending_attestation() && result.is_err() {
+            // A refusal on this attempt need not resolve an earlier dispatch.
+            // Only a verified creation updates the attested receipt.
             return Ok(());
         }
         if let Err(error) = result
@@ -226,7 +259,10 @@ impl Receipt {
                 .and_then(|details| details.get("created_session_id"))
                 .map(|id| json!({"id":id})),
         };
-        if let Some(created) = created.filter(|session| identifier(&session["id"]).is_some()) {
+        let attested_id = self.value["attested_session_id"].as_str();
+        if let Some(created) =
+            created.filter(|session| attested_id.is_some() || identifier(&session["id"]).is_some())
+        {
             let mut session = json!({"id":created["id"]});
             // Persist metadata only; never prompts, launch env values, or arbitrary upstream details.
             for key in ["agent", "session_incarnation", "title_mode"] {
@@ -236,6 +272,18 @@ impl Receipt {
             }
             if let Some(revision) = created["display_revision"].as_u64() {
                 session["display_revision"] = json!(revision);
+            }
+            if let Some(id) = attested_id {
+                if !attestation::confirms(&created, id) {
+                    return Err(store_corrupt());
+                }
+                session["role"] = created["role"].clone();
+                let context = &created["lineage"]["forge_context"];
+                session["lineage"] = json!({"forge_context": {
+                    "initiator": context["initiator"],
+                    "role": context["role"],
+                    "attested_role": context["attested_role"],
+                }});
             }
             self.value["session"] = session;
             self.value["state"] = json!("created");
@@ -273,10 +321,15 @@ impl Receipt {
             return Ok(result);
         }
         if self.value["state"] == "created" {
+            if let Some(id) = self.value["attested_session_id"].as_str()
+                && !attestation::confirms(&self.value["session"], id)
+            {
+                return Err(attestation::unavailable());
+            }
             result["session"] = self.value["session"].clone();
             return Ok(result);
         }
-        if self.value["state"] != "ambiguous" {
+        if self.value["state"] != "ambiguous" || self.pending_attestation() {
             return Ok(result);
         }
         // One bounded read, never another POST create. Candidate identity is not adoption proof.

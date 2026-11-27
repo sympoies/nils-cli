@@ -11,7 +11,7 @@
 //! aggregate multiple machines. Literal keystroke text is never echoed.
 
 #[path = "serve/error_response.rs"]
-mod error_response;
+pub(crate) mod error_response;
 use error_response::deny_unauthorized;
 pub(crate) use error_response::envelope_err;
 
@@ -19,6 +19,7 @@ pub(crate) use error_response::envelope_err;
 mod history_images;
 #[path = "serve/session_info.rs"]
 mod session_info;
+pub(crate) mod strict_json;
 #[path = "serve/structured_prompt.rs"]
 mod structured_prompt;
 #[cfg(test)]
@@ -102,6 +103,7 @@ mod claude_completion;
 mod claude_prompt_ack;
 mod companion;
 mod console_service;
+mod console_start;
 mod create;
 #[path = "serve_create_body.rs"]
 mod create_body;
@@ -1264,7 +1266,7 @@ fn router(state: Arc<ServeState>) -> Router {
         .route("/sessions/{id}/board/v1", get(board_relay_handler))
         .route(
             "/sessions/{id}/console-start/v1",
-            post(console_start_handler),
+            post(console_start::handler),
         )
         .route("/sessions", get(list_handler).post(create::create_handler))
         .merge(resume_start::routes())
@@ -5014,43 +5016,6 @@ async fn board_relay_handler(
     .await
     {
         Ok(Ok(value)) => Json(value).into_response(),
-        Ok(Err(err)) => envelope_err(err),
-        Err(_) => join_err(),
-    }
-}
-
-/// `POST /sessions/{id}/console-start/v1`: start or reconcile an owned child.
-async fn console_start_handler(
-    State(state): State<Arc<ServeState>>,
-    headers: HeaderMap,
-    AxPath(id): AxPath<String>,
-    body: Result<Json<Value>, JsonRejection>,
-) -> Response {
-    let token = match remote_session_token(&headers) {
-        Ok(v) => v,
-        Err(e) => return envelope_err(e),
-    };
-    let Ok(Json(body)) = body else {
-        return status_json(
-            StatusCode::BAD_REQUEST,
-            "console-start-invalid",
-            "the console start body must be a JSON object",
-        );
-    };
-    let context = state.context.clone();
-    let federation = state.federation.clone();
-    match tokio::task::spawn_blocking(move || {
-        crate::coordination::console_start::relay_route(
-            &context,
-            federation.as_ref(),
-            &id,
-            &token,
-            &body,
-        )
-    })
-    .await
-    {
-        Ok(Ok(value)) => (StatusCode::CREATED, Json(value)).into_response(),
         Ok(Err(err)) => envelope_err(err),
         Err(_) => join_err(),
     }

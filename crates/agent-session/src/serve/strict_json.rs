@@ -2,7 +2,7 @@
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value};
 
-pub(super) struct Unique(pub(super) Value);
+pub(crate) struct Unique(pub(crate) Value);
 
 impl<'de> Deserialize<'de> for Unique {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
