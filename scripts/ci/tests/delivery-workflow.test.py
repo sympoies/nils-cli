@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Delivery DAG contracts and shell dispatch without compilers or hosted jobs."""
 import importlib.util
+import json
 from pathlib import Path
 import re
 import os
@@ -201,6 +202,52 @@ class DeliveryTests(unittest.TestCase):
             result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script],
                 env=dict(os.environ, CHANGES_RESULT=state), capture_output=True)
             self.assertEqual(result.returncode == 0, state == 'success')
+
+    def test_agent_session_probe_runs_for_each_direct_shared_input(self):
+        body = job(workflow('agent-session-tempdir-probe.yml'), 'agent_session_tempdir_probe')
+        step = body.split('      - name: Detect agent-session probe inputs\n', 1)[1]
+        step = step.split('        run: |\n', 1)[1].split('\n      - name:', 1)[0]
+        script = '\n'.join(line[10:] for line in step.splitlines() if line.startswith('          '))
+        cases = {
+            'scripts/ci/tempdir-leak-report.py': True,
+            'scripts/ci/tempdir-leak-wrapper.sh': True,
+            'scripts/ci/gate-reports.py': True,
+            '.config/nextest.toml': True,
+            'docs/unrelated.md': False,
+        }
+        with tempfile.TemporaryDirectory(prefix='ci-probe-inputs-') as directory:
+            root = Path(directory)
+            cargo = root / 'cargo'
+            cargo.write_text('#!/bin/sh\ncat "$CARGO_METADATA_FIXTURE"\n')
+            cargo.chmod(0o755)
+            git = root / 'git'
+            git.write_text('#!/bin/sh\ncase "$1" in\n'
+                           '  rev-parse) printf "%s\\n" "$HEAD_SHA" ;;\n'
+                           '  diff) printf "%s\\0" "$CHANGED_PATH" ;;\n'
+                           '  *) exit 1 ;;\nesac\n')
+            git.chmod(0o755)
+            metadata = root / 'metadata.json'
+            metadata.write_text(json.dumps({
+                'workspace_root': str(root),
+                'packages': [{
+                    'manifest_path': str(root / 'crates/agent-session/Cargo.toml'),
+                    'dependencies': [],
+                }],
+            }))
+            output = root / 'output'
+            summary = root / 'summary'
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'],
+                       BASE_SHA='a' * 40, HEAD_SHA='b' * 40, CARGO_METADATA_FIXTURE=str(metadata),
+                       GITHUB_OUTPUT=str(output), GITHUB_STEP_SUMMARY=str(summary))
+            for path, expected in cases.items():
+                with self.subTest(path=path):
+                    output.write_text('')
+                    summary.write_text('')
+                    result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=root,
+                                            env=dict(env, CHANGED_PATH=path), text=True, capture_output=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(output.read_text(), f'run_probe={str(expected).lower()}\n')
+                    self.assertIn(json.dumps(path) if expected else 'No qualifying change.', summary.read_text())
 
     def test_required_queue_check_reads_the_exact_gate_job_from_the_current_attempt(self):
         body = job(workflow('ci.yml'), 'test')

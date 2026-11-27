@@ -73,10 +73,14 @@ jobs:
           roots = {directory.relative_to(workspace) for directory in roots}
 
           inputs = {
+              Path(".config/nextest.toml"),
+              Path(".github/workflows/agent-session-tempdir-probe.yml"),
               Path("Cargo.lock"),
               Path("Cargo.toml"),
+              Path("scripts/ci/gate-reports.py"),
               Path("scripts/ci/tempdir-leak-probe.sh"),
-              Path(".github/workflows/agent-session-tempdir-probe.yml"),
+              Path("scripts/ci/tempdir-leak-report.py"),
+              Path("scripts/ci/tempdir-leak-wrapper.sh"),
           }
           diff = subprocess.check_output([
               "git", "diff", "--name-only", "--no-renames", "-z",
