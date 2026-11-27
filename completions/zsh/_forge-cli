@@ -2747,7 +2747,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (refs-to)
 _arguments "${_arguments_options[@]}" : \
-'--limit=[Cap the number of cross-reference events scanned (default\: 30)]:LIMIT:_default' \
+'--limit=[Cap the number of cross-reference events scanned]:LIMIT:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \

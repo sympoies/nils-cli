@@ -434,9 +434,9 @@ fn search_local_branch_is_provider_unsupported() {
 
 const GH_REFS_TO_STUB: &str = r#"#!/bin/sh
 case "$*" in
-  "api graphql -F owner=acme -F name=widget -F number=7 -F first=30 -f "*)
+  "api graphql -F owner=acme -F name=widget -F number=7 -F first=100 -f "*)
     cat <<'JSON'
-{"data":{"repository":{"issueOrPullRequest":{"__typename":"Issue","timelineItems":{"nodes":[{"source":{"__typename":"PullRequest","number":9,"url":"https://github.com/acme/widget/pull/9","title":"close issue 7","state":"MERGED","repository":{"nameWithOwner":"acme/widget"}}}]}}}}}
+{"data":{"repository":{"issueOrPullRequest":{"__typename":"Issue","timelineItems":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"source":{"__typename":"PullRequest","number":9,"url":"https://github.com/acme/widget/pull/9","title":"close issue 7","state":"MERGED","repository":{"nameWithOwner":"acme/widget"}}}]}}}}}
 JSON
     ;;
   *)
@@ -475,6 +475,48 @@ fn search_refs_to_github_normalizes_cross_references() {
     assert_eq!(envelope["data"]["items"][0]["kind"], "pr");
     assert_eq!(envelope["data"]["items"][0]["number"], 9);
     assert_eq!(envelope["data"]["items"][0]["state"], "merged");
+}
+
+#[test]
+fn search_refs_to_paginates_and_honors_explicit_limit() {
+    let stub = StubEnv::new().gh_stub(r##"#!/bin/sh
+case "$*" in
+  *after=page1*) start=101; end=120; next=false; cursor=page2 ;;
+  *) start=1; end=100; next=true; cursor=page1 ;;
+esac
+printf '{"data":{"repository":{"issueOrPullRequest":{"timelineItems":{"nodes":['
+i=$start
+while [ "$i" -le "$end" ]; do
+  [ "$i" -eq "$start" ] || printf ','
+  printf '{"source":{"__typename":"Issue","number":%s,"url":"https://github.com/acme/widget/issues/%s","title":"reference","state":"OPEN","repository":{"nameWithOwner":"acme/widget"}}}' "$i" "$i"
+  i=$((i + 1))
+done
+printf '],"pageInfo":{"hasNextPage":%s,"endCursor":"%s"}}}}}}\n' "$next" "$cursor"
+"##);
+    let base = [
+        "--provider",
+        "github",
+        "--repo",
+        "acme/widget",
+        "--format",
+        "json",
+        "search",
+        "refs-to",
+        "#7",
+    ];
+    let out = run_forge_cli(&stub, &base);
+    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["data"]["item_count"], 120);
+    assert_eq!(envelope["data"]["limited"], false);
+
+    let mut bounded = base.to_vec();
+    bounded.extend(["--limit", "10"]);
+    let out = run_forge_cli(&stub, &bounded);
+    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["data"]["item_count"], 10);
+    assert_eq!(envelope["data"]["limited"], true);
 }
 
 #[test]

@@ -127,7 +127,7 @@ esac
 if test "$GH_TOKEN" != "$FIXTURE_ACCOUNT_A_CREDENTIAL" || test -n "$GITHUB_TOKEN"; then exit 9; fi
 printf 'actor call\n' >> "$FIXTURE_CALL_LOG"
 case "$1:$2" in
- api:graphql) printf '{"data":{"user":{"contributionsCollection":{"totalCommitContributions":0,"commitContributionsByRepository":[]}},"repository":{"issueOrPullRequest":{"timelineItems":{"nodes":[]}}}}}';;
+ api:graphql) printf '{"data":{"user":{"contributionsCollection":{"totalCommitContributions":0,"commitContributionsByRepository":[]}},"repository":{"issueOrPullRequest":{"timelineItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}';;
  *) printf '[]';;
 esac
 "#).unwrap();
@@ -189,7 +189,7 @@ case "$1:$2" in
 esac
 printf 'managed call\n' >> "$FIXTURE_CALL_LOG"
 case "$1:$2" in
- api:graphql) printf '{"data":{"user":{"contributionsCollection":{"totalCommitContributions":0,"commitContributionsByRepository":[]}},"repository":{"issueOrPullRequest":{"timelineItems":{"nodes":[]}}}}}';;
+ api:graphql) printf '{"data":{"user":{"contributionsCollection":{"totalCommitContributions":0,"commitContributionsByRepository":[]}},"repository":{"issueOrPullRequest":{"timelineItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}';;
  *) printf '[]';;
 esac
 "#,
