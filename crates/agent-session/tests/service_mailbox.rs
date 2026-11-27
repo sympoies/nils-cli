@@ -1,19 +1,5 @@
 #[test]
-fn service_mailbox_http_acceptance() {
-    run_fixture(&[]);
-}
-
-#[test]
 fn service_mailbox_preserves_existing_machine_identity() {
-    run_fixture(&[
-        "--source-machine",
-        "site:node",
-        "--target-machine",
-        "remote:node",
-    ]);
-}
-
-fn run_fixture(extra_args: &[&str]) {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/service-mailbox-acceptance.mjs");
     let mut command = nils_test_support::node::command();
@@ -21,7 +7,13 @@ fn run_fixture(extra_args: &[&str]) {
         .arg(fixture)
         .arg("--agent-session-bin")
         .arg(nils_test_support::bin::resolve("agent-session"))
-        .args(extra_args);
+        // Matching suffixes catch accidental stripping of the machine namespace.
+        .args([
+            "--source-machine",
+            "site:node",
+            "--target-machine",
+            "remote:node",
+        ]);
     nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
     let output = command
         .output()
