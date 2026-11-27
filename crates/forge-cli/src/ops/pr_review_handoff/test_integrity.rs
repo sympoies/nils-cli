@@ -157,9 +157,11 @@ pub(super) fn preview<R: BackendRunner>(
             }
             for finding in p["findings"].as_array().unwrap() {
                 println!(
-                    "- {} | {} | <reason and retained coverage>",
-                    finding["path"].as_str().unwrap(),
-                    finding["kind"].as_str().unwrap()
+                    "{}",
+                    expected_row(
+                        finding["path"].as_str().unwrap(),
+                        finding["kind"].as_str().unwrap()
+                    )
                 );
             }
             println!("{}", p["confirmation"].as_str().unwrap());
@@ -241,10 +243,14 @@ pub(super) fn ensure<R: BackendRunner>(
     Ok(())
 }
 
+fn expected_row(path: &str, kind: &str) -> String {
+    format!("- {path} | {kind} | <reason>")
+}
+
 fn expected_declaration(findings: &[diff::Finding]) -> String {
     let rows = findings
         .iter()
-        .map(|f| format!("- {} | {} | <reason>", f.path, f.kind))
+        .map(|f| expected_row(&f.path, &f.kind))
         .collect::<Vec<_>>()
         .join("\n");
     if rows.is_empty() {

@@ -523,3 +523,40 @@ fn mismatched_declaration_reports_exact_expected_rows() {
         assert!(out.stdout.contains(row), "{}", out.stdout);
     }
 }
+
+#[test]
+fn ordinary_preview_rows_require_replacement_reasons() {
+    let stub = integrity_fixture(DECLARATIONS, "", "contributor");
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "pr",
+            "review-handoff",
+            "test-changes",
+            "7",
+            "--expected-head",
+            HEAD,
+        ],
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    let rows = out
+        .stdout
+        .lines()
+        .filter(|line| line.starts_with("- "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rows.contains("- tests/test_sample.py | assertion-change | <reason>"),
+        "{rows}"
+    );
+    let body = format!("## Test changes\n{rows}\n");
+    assert_refusal(
+        &check(&integrity_fixture(&body, "", "contributor"), HEAD),
+        65,
+        "test_changes_undeclared",
+    );
+}
