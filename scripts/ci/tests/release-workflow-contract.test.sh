@@ -62,10 +62,14 @@ assert_notes_rejected() {
 assert_notes_rejected
 printf '# Release\n' > "$notes_fixture/docs/releases/v9.8.7.md"
 assert_notes_rejected
+printf '## Upgrade notes\n\n   \n## Fixes\nDetails\n' > "$notes_fixture/docs/releases/v9.8.7.md"
+assert_notes_rejected
 printf '## Upgrade notes\n\nNone.\n' > "$notes_fixture/docs/releases/v9.8.7.md"
 (cd "$notes_fixture" && bash "$notes_validator" 9.8.7)
 assert_contains .github/workflows/prepare-private-release.yml 'bash scripts/ci/validate-release-notes.sh "$VERSION"' \
   "preparation validates the versioned notes"
+assert_contains .github/workflows/release.yml 'bash scripts/ci/validate-release-notes.sh "${GITHUB_REF_NAME#v}"' \
+  "publication validates the tagged notes"
 assert_contains .github/workflows/release.yml 'body_path: docs/releases/${{ github.ref_name }}.md' \
   "publication uses curated notes from the release tag"
 assert_contains .github/workflows/release.yml 'generate_release_notes: true' \

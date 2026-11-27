@@ -242,6 +242,9 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Validate release notes
+        run: bash scripts/ci/validate-release-notes.sh "${GITHUB_REF_NAME#v}"
+
       - name: Download artifacts
         uses: actions/download-artifact@v8
         with:

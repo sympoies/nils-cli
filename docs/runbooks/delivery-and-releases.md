@@ -148,8 +148,9 @@ Before version preparation, write and review `docs/releases/vX.Y.Z.md` in an
 ordinary PR. Use merged PR bodies and devlog fragments to cover these sections:
 `## Upgrade notes`, `## New features`, `## Behavior changes`, `## Fixes`, and
 `## Limitations`. Write `None.` under Upgrade notes when no action is required.
-Preparation rejects a missing file or missing Upgrade notes heading. The release
-publishes the curated file followed by the generated changelog.
+Preparation and publication reject a missing file or an empty or missing Upgrade
+notes section. The release publishes the curated file followed by the generated
+changelog.
 
 Before opening a version-bump PR, the release owner must:
 
