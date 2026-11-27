@@ -138,7 +138,9 @@ list projection.
 Clients may opt into typed transcript parts with `?parts=v1` on the messages route. Each message then
 adds an ordered `parts` array, including an empty array when no typed part is available. Parts include
 visible `text`, `tool_call`, `tool_result`, `image`, `file`, `question`, and recognized `notice` records. Every
-part carries the provider item `id` and its timestamp when available. Tool input and result summaries
+part carries the provider item `id` and its timestamp when available. Claude assistant thinking blocks
+with non-empty plaintext appear in order as text parts with `presentation: "summary"`; empty and redacted
+thinking are omitted, and signatures are never used. Tool input and result summaries
 are capped at 2,048 characters and redact path-like values and sensitive input fields. Typed output is
 capped at 64 KiB per message. `tool_call.status` is `unknown` when a matching result is not found in
 the returned page or the following 1 MiB transcript context; a result sets `completed` or `failed`,

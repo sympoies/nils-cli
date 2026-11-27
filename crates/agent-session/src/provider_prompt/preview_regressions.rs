@@ -162,7 +162,7 @@ fn assistant(provider: ProviderKind, text: &str) -> Value {
     match provider {
         ProviderKind::Claude => json!({"type":"assistant", "sessionId":"synthetic",
             "timestamp":"2099-01-01T00:00:03Z", "message":{"role":"assistant", "content":[
-                {"type":"thinking", "thinking":"internal reasoning"},
+                {"type":"thinking", "thinking":""},
                 {"type":"text", "text":text}, {"type":"tool_use", "name":"synthetic_tool"}]}}),
         ProviderKind::Codex => json!({"type":"response_item", "timestamp":"2099-01-01T00:00:03Z",
             "payload":{"type":"message", "role":"assistant", "content":[{"type":"output_text", "text":text}]}}),
@@ -251,4 +251,35 @@ fn last_message_removes_image_wrappers_and_ignores_machine_records() {
     };
     assert_eq!(prompt.text, "question");
     assert_eq!(tracker.last_message().unwrap().text, prompt.text);
+}
+
+#[test]
+fn claude_narration_is_latest_visible_assistant_preview() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("synthetic.jsonl");
+    fs::write(&path, "").unwrap();
+    append(&path, user(ProviderKind::Claude, "request"));
+    append(
+        &path,
+        json!({"type":"assistant", "sessionId":"synthetic", "message":{"role":"assistant", "content":[
+        {"type":"thinking", "thinking":"Checking now", "signature":"secret"},
+        {"type":"tool_use", "id":"call", "name":"inspect", "input":{}}]}}),
+    );
+    append(
+        &path,
+        json!({"type":"user", "sessionId":"synthetic", "message":{"role":"user", "content":[{"type":"tool_result", "tool_use_id":"call", "content":"result"}]}}),
+    );
+    append(
+        &path,
+        json!({"type":"assistant", "sessionId":"synthetic", "message":{"role":"assistant", "content":[{"type":"thinking", "thinking":""}, {"type":"redacted_thinking", "data":"hidden"}]}}),
+    );
+    let mut tracker = ProviderLastPromptTracker::open_path(
+        ProviderKind::Claude,
+        "synthetic",
+        path,
+        Duration::ZERO,
+    )
+    .unwrap();
+    tracker.refresh();
+    assert_eq!(tracker.last_message().unwrap().text, "Checking now");
 }

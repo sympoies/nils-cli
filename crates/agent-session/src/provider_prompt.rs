@@ -23,7 +23,7 @@ pub(crate) use notice_observation::notice_observed_after;
 mod preview;
 pub(crate) mod row_classes;
 use preview::PreviewMessages;
-pub(crate) use preview::{LastMessage, SessionPreviews};
+pub(crate) use preview::{LastMessage, SessionPreviews, claude_assistant_text};
 pub(crate) use row_classes::notice::human_history_prompt as history_preview_prompt;
 
 #[cfg(test)]

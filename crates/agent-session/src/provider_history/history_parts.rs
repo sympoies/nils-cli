@@ -20,6 +20,8 @@ pub(crate) enum HistoryPart {
         #[serde(skip_serializing_if = "Option::is_none")]
         timestamp: Option<String>,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        presentation: Option<String>,
     },
     ToolCall {
         id: String,
@@ -478,6 +480,7 @@ fn push_text(text: &str, id: &str, timestamp: Option<&str>, parts: &mut Vec<Hist
             id: id.to_string(),
             timestamp: timestamp.map(str::to_string),
             text,
+            presentation: None,
         });
     }
 }
@@ -612,6 +615,23 @@ fn push_visible_content(
                     let count = markdown_image_count(text);
                     push_image_range(images, &sources, image_index, count, id, timestamp, parts);
                     image_index += count;
+                }
+                Some("thinking")
+                    if value.get("type").and_then(Value::as_str) == Some("assistant") =>
+                {
+                    if let Some(text) = block
+                        .get("thinking")
+                        .and_then(Value::as_str)
+                        .filter(|text| !text.is_empty())
+                    {
+                        let before = parts.len();
+                        push_text(text, id, timestamp, parts);
+                        if parts.len() > before
+                            && let Some(HistoryPart::Text { presentation, .. }) = parts.last_mut()
+                        {
+                            *presentation = Some("summary".to_string());
+                        }
+                    }
                 }
                 Some("input_image" | "output_image" | "image") => {
                     push_image_range(images, &sources, image_index, 1, id, timestamp, parts);
