@@ -598,3 +598,135 @@ fn strict_subject_verification_rejects_unbound_and_other_local_repositories() {
     assert_eq!(mismatch.code, 65);
     assert_eq!(mismatch.stdout_json()["error"]["code"], "subject-mismatch");
 }
+
+#[test]
+fn gap_after_none_updates_current_state_and_preserves_history() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let repo = init_repo(tmp.path(), "repo", None);
+    let evidence = tmp.path().join("evidence");
+    complete_record(tmp.path(), &evidence);
+    let out = evidence.to_str().unwrap();
+    let project = repo.to_str().unwrap();
+    let baseline = run(
+        tmp.path(),
+        &["bind-baseline", "--out", out, "--project-path", project],
+    );
+    assert_eq!(baseline.code, 0, "{}", baseline.stderr_text());
+    let gap = run(
+        tmp.path(),
+        &[
+            "record-gap",
+            "--out",
+            out,
+            "--gap",
+            "fixture failure",
+            "--reason",
+            "unrelated",
+            "--follow-up",
+            "issue #1",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(gap.code, 0, "{}", gap.stdout_text());
+    let record = &gap.stdout_json()["result"]["record"];
+    assert!(record.get("no_residual_gaps").is_none());
+    assert_eq!(record["residual_gaps"][0]["gap"], "fixture failure");
+    assert_eq!(record["gap_declarations"][0]["none"], true);
+    assert_eq!(
+        record["gap_declarations"][1]["gap"]["gap"],
+        "fixture failure"
+    );
+    let delivery = run(
+        tmp.path(),
+        &[
+            "bind-delivery",
+            "--out",
+            out,
+            "--project-path",
+            project,
+            "--format",
+            "json",
+            "--full-record",
+        ],
+    );
+    assert_eq!(delivery.code, 0, "{}", delivery.stdout_text());
+    assert_eq!(
+        delivery.stdout_json()["result"]["record"]["residual_gaps"][0]["gap"],
+        "fixture failure"
+    );
+    let verify = run(
+        tmp.path(),
+        &[
+            "verify",
+            "--out",
+            out,
+            "--project-path",
+            project,
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(verify.code, 0, "{}", verify.stdout_text());
+    assert_eq!(
+        verify.stdout_json()["result"]["record"]["residual_gaps"][0]["gap"],
+        "fixture failure"
+    );
+    let none = run(
+        tmp.path(),
+        &["record-gap", "--out", out, "--none", "--format", "json"],
+    );
+    assert_eq!(none.code, 65, "{}", none.stdout_text());
+    assert_eq!(none.stdout_json()["error"]["code"], "gap-none-after-gaps");
+    let unchanged = run(
+        tmp.path(),
+        &[
+            "verify",
+            "--out",
+            out,
+            "--project-path",
+            project,
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(unchanged.code, 0, "{}", unchanged.stdout_text());
+    assert_eq!(
+        unchanged.stdout_json()["result"]["record"]["residual_gaps"][0]["gap"],
+        "fixture failure"
+    );
+}
+
+#[test]
+fn existing_gaps_are_retained_in_declaration_history() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let evidence = tmp.path().join("evidence");
+    complete_record(tmp.path(), &evidence);
+    let path = evidence.join("test-first-evidence.json");
+    let mut record: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    record.as_object_mut().unwrap().remove("gap_declarations");
+    record.as_object_mut().unwrap().remove("no_residual_gaps");
+    record["residual_gaps"] =
+        serde_json::json!([{ "gap": "first", "reason": "existing", "follow_up": "issue #1" }]);
+    fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let result = run(
+        tmp.path(),
+        &[
+            "record-gap",
+            "--out",
+            evidence.to_str().unwrap(),
+            "--gap",
+            "second",
+            "--reason",
+            "later",
+            "--follow-up",
+            "issue #2",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    let history = &result.stdout_json()["result"]["record"]["gap_declarations"];
+    assert_eq!(history[0]["gap"]["gap"], "first");
+    assert_eq!(history[1]["gap"]["gap"], "second");
+}
