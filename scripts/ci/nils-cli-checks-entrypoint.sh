@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 4) )); then
+  echo 'error: Bash 4.4 or newer is required; install it and invoke this script with that bash.' >&2
+  exit 2
+fi
+
+# Nested scripts invoke bash by name, but other commands must retain PATH order.
+bash_dir="$(mktemp -d)"
+trap 'rm -rf "$bash_dir"' EXIT
+bash_path="$(cd "$(dirname "$BASH")" && pwd -P)/$(basename "$BASH")"
+ln -s "$bash_path" "$bash_dir/bash"
+PATH="$bash_dir:$PATH"
+export PATH
+
 usage() {
   cat <<'USAGE'
 Usage:
@@ -198,7 +211,8 @@ fi
 # Local-fast owns admission after planning its mode. Full code gates enter
 # here; docs-only checks and usage failures do not launch compile/test work.
 if [[ "${NILS_CLI_GATE_ACTIVE:-0}" != "1" && "$docs_only" -eq 0 ]]; then
-  exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "$bash_bin" "$repo_root/scripts/ci/nils-cli-checks-entrypoint.sh" "${original_args[@]}"
+  python3 "$repo_root/scripts/ci/gate-resources.py" -- "$bash_bin" "$repo_root/scripts/ci/nils-cli-checks-entrypoint.sh" "${original_args[@]}"
+  exit $?
 fi
 
 if [[ "$ci_merge_plan" -eq 1 ]]; then
