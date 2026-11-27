@@ -129,7 +129,7 @@ fn assistant_prompt(value: &Value, provider: ProviderKind, session: &str) -> Opt
             if message.get("role")?.as_str()? != "assistant" {
                 return None;
             }
-            message_text(message.get("content")?, "text")?
+            claude_assistant_text(message.get("content")?)
         }
         ProviderKind::Codex => {
             let payload = value.get("payload")?;
@@ -150,6 +150,26 @@ fn assistant_prompt(value: &Value, provider: ProviderKind, session: &str) -> Opt
     let mut prompt = bounded_prompt(&text)?;
     prompt.submitted_at = provider_timestamp(value);
     Some(prompt)
+}
+
+pub(crate) fn claude_assistant_text(content: &Value) -> String {
+    if let Some(text) = content.as_str() {
+        return text.to_string();
+    }
+    content
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|block| match block.get("type").and_then(Value::as_str) {
+            Some("text") => block.get("text").and_then(Value::as_str),
+            Some("thinking") => block
+                .get("thinking")
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn message_text(content: &Value, kind: &str) -> Option<String> {

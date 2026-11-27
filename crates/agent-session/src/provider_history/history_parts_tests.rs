@@ -606,3 +606,33 @@ fn credential_masking_handles_long_whitespace_runs_within_budget() {
     );
     assert_eq!(masked, value);
 }
+
+#[test]
+fn claude_narration_precedes_tool_and_hides_empty_and_redacted_thinking() {
+    let records = vec![
+        serde_json::json!({"type":"assistant","version":"2.1.308","message":{"role":"assistant","content":[
+            {"type":"thinking","thinking":"Checking now","signature":"secret-signature"},
+            {"type":"thinking","thinking":""}, {"type":"redacted_thinking","data":"hidden"},
+            {"type":"tool_use","id":"call","name":"inspect","input":{}}]}}),
+        serde_json::json!({"type":"user","version":"2.1.308","message":{"content":[{"type":"tool_result","tool_use_id":"call","content":"result"}]}}),
+        serde_json::json!({"type":"assistant","version":"2.1.308","message":{"role":"assistant","content":[{"type":"text","text":"Done"}]}}),
+    ];
+    let normalized =
+        super::super::normalize_message("claude", "synthetic", b"{}", &records[0]).unwrap();
+    assert_eq!(normalized.1, "Checking now");
+    let parts = project("claude", &records);
+    assert_eq!(
+        parts
+            .iter()
+            .map(|p| p["kind"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["text", "tool_call", "tool_result", "text"]
+    );
+    assert_eq!(parts[0]["text"], "Checking now");
+    assert_eq!(parts[0]["presentation"], "summary");
+    assert!(
+        !serde_json::to_string(&parts)
+            .unwrap()
+            .contains("secret-signature")
+    );
+}

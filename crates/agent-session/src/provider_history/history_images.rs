@@ -666,7 +666,7 @@ pub(super) fn normalize_message(
                         .then(String::new)
                     })?
             } else {
-                content_text(value.get("message")?.get("content")?)
+                crate::provider_prompt::claude_assistant_text(value.get("message")?.get("content")?)
             };
             // Keep the command-markup echo for each compaction. Its literal
             // input can carry arguments and promptSource, and is separated
