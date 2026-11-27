@@ -115,7 +115,7 @@ fn assert_no_ack(mut caller: UnixStream) {
 #[test]
 fn accepted_nonblocking_stream_delivers_delayed_answer() {
     let (_temp, context, pending) = session();
-    let socket_dir = tempfile::tempdir_in("/tmp").unwrap();
+    let (socket_dir, _) = nils_test_support::short_socket_path("socket");
     let socket = socket_dir.path().join("s");
     let listener = UnixListener::bind(&socket).unwrap();
     listener.set_nonblocking(true).unwrap();

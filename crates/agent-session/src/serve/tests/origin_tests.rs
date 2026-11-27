@@ -6,7 +6,7 @@ use pretty_assertions::{assert_eq, assert_ne};
 #[tokio::test]
 async fn claude_account_switch_queues_while_busy_and_restarts_only_at_idle() {
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch::short_runtime_tempdir(&lock);
     let cwd = tmp.path().join("repo");
     fs::create_dir_all(&cwd).unwrap();
     let broker = claude_broker_fixture(&lock, tmp.path());
@@ -321,7 +321,7 @@ async fn assert_invalid_create_fields(code: &str, fields: &[Value]) {
 fn claude_switch_without_broker_identity_retires_the_verified_stop_and_applies_next_account() {
     use crate::coordination::broker::test_support;
     let lock = GlobalStateLock::new();
-    let tmp = tempfile::TempDir::new().unwrap();
+    let (tmp, _runtime) = account_switch::short_runtime_tempdir(&lock);
     let cwd = tmp.path().join("repo");
     fs::create_dir_all(&cwd).unwrap();
     let _broker = claude_broker_fixture(&lock, tmp.path());

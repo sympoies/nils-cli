@@ -11,7 +11,7 @@ pub(crate) fn run(test: impl AsyncFnOnce(&Path)) {
 /// Keep the existing short fixture paths for tests that bind sockets in the
 /// root. Explicit close checks cleanup even outside the probe's TMPDIR.
 pub(crate) fn run_short(test: impl AsyncFnOnce(&Path)) {
-    let root = tempfile::tempdir_in("/tmp").expect("create short control fixture");
+    let (root, _) = nils_test_support::short_socket_path("socket");
     run_at(root.path(), test);
     root.close().expect("remove short control fixture");
 }

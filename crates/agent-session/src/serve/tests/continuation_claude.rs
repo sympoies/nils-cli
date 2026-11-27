@@ -8,7 +8,7 @@ use std::io::Read;
 fn generic_claude_notice_transfers_lock_without_cancelling_its_recovery() {
     let global = GlobalStateLock::new();
     let _writers = EnvGuard::set(&global, crate::notice::WRITERS_ENV, "1");
-    let tmp = tempfile::tempdir_in("/tmp").unwrap();
+    let (tmp, _) = nils_test_support::short_socket_path("socket");
     fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let id = "claude-source";
     let launch = seed_claude_prompt_session(tmp.path(), id);

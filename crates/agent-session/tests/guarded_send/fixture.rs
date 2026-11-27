@@ -9,12 +9,12 @@ use serde_json::{Value, json};
 const TMUX_FAST_PATH: &str = include_str!("tmux-fast-path.sh");
 
 struct Fixture {
-    temp: tempfile::TempDir,
+    temp: nils_test_support::tempdir::ScopedTempDir,
 }
 
 impl Fixture {
     fn new(provider: &str) -> Self {
-        let temp = tempfile::tempdir_in("/tmp").expect("short fixture socket paths");
+        let (temp, _) = nils_test_support::short_socket_path("socket");
         let dir = temp.path().join("state/sessions/guarded");
         fs::create_dir_all(&dir).unwrap();
         let record = json!({
