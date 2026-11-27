@@ -1278,9 +1278,9 @@ pub struct PrDeliverArgs {
     pub strict_labels: bool,
     /// Head-bound evidence for selected kinds (default: feature/bug) when `[test_first].require` is true.
     /// Tier A requires a meaningful red from the expected assertion or a waiver.
-    /// Tier B uses acceptance criteria first and stable-interface tests before merge.
-    /// A red record is optional. Tier C uses repository checks only by default.
-    /// Test-kind repairs and mixed changes require evidence when bug or test is selected.
+    /// Tier B authors write acceptance criteria first and run stable-interface tests before merge.
+    /// The gate checks the contract delta and passing focused validation. A red record is optional.
+    /// Tier C uses repository checks by default. Test repairs and mixed changes require evidence when bug or test is selected.
     #[arg(long = "test-first-evidence", value_name = "DIR")]
     pub test_first_evidence: Option<String>,
     /// Cumulative CI-wait budget before declaring `checks_timeout` (default `30m`).

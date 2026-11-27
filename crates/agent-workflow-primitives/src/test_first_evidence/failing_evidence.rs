@@ -24,6 +24,13 @@ pub(super) fn run_record_failing(args: RecordFailingArgs) -> i32 {
         if let Some((code, message)) = invalid_failure(args.exit_code, observed_failure) {
             return Err(CliError::data(code, message, None));
         }
+        if !observed_failure.lines().any(is_assertion_result) {
+            return Err(CliError::data(
+                "failing-test-unclassified",
+                "the output has no recognized assertion result. Supply the runner output or use record-waiver with substitute validation",
+                None,
+            ));
+        }
         let evidence = FailingEvidence {
             command: redact_text(command).value,
             exit_code: args.exit_code,
@@ -73,26 +80,21 @@ pub(super) fn run_record_failing(args: RecordFailingArgs) -> i32 {
     }
 }
 
-// The caller supplies the observed diagnostic. Match runner/compiler diagnostics
-// at the start of a line so an assertion can refer to a timeout or missing symbol.
+// Use diagnostic lines and runner result markers. A test's name is not a result.
 pub(super) fn invalid_failure(
     exit_code: i32,
     observed: &str,
 ) -> Option<(&'static str, &'static str)> {
     let observed = observed.to_ascii_lowercase();
+    let lines = observed.lines().map(str::trim);
     let has_diagnostic = |prefixes: &[&str]| {
-        observed
-            .lines()
-            .map(str::trim_start)
-            .any(|line| prefixes.iter().any(|prefix| line.starts_with(prefix)))
+        lines
+            .clone()
+            .filter(|line| !is_assertion_result(line))
+            .map(compiler_diagnostic)
+            .any(|diagnostic| prefixes.iter().any(|prefix| diagnostic.starts_with(prefix)))
     };
-    if exit_code == 124
-        || has_diagnostic(&["timeout", "timed out", "error: test timed out"])
-        || observed.lines().map(str::trim_start).any(|line| {
-            line.starts_with("test ")
-                && (line.contains(" timed out") || line.starts_with("test timeout"))
-        })
-    {
+    if exit_code == 124 || lines.clone().any(is_timeout_result) {
         Some((
             "failing-test-timeout",
             "the run timed out. Record the expected assertion failure after the test runs",
@@ -102,9 +104,6 @@ pub(super) fn invalid_failure(
         "undefined symbol",
         "undefined reference",
         "cannot find symbol",
-        "error: missing symbol",
-        "error: undefined symbol",
-        "error: cannot find symbol",
         "error[e0412]",
         "error[e0425]",
         "error[e0432]",
@@ -120,9 +119,12 @@ pub(super) fn invalid_failure(
         "compilation error",
         "compilation failed",
         "error[e",
-        "error: could not compile",
-        "error: failed to compile",
-    ]) {
+        "could not compile",
+        "failed to compile",
+    ]) || lines
+        .clone()
+        .any(|line| line.starts_with("fail ") && line.ends_with("[build failed]"))
+    {
         Some((
             "failing-test-compile-error",
             "the run failed to compile. Make the test compile before recording the expected assertion failure",
@@ -130,4 +132,39 @@ pub(super) fn invalid_failure(
     } else {
         None
     }
+}
+
+fn is_timeout_result(line: &str) -> bool {
+    matches!(line, "timed out" | "test timed out" | "test timeout")
+        || line.starts_with("timeout [")
+        || line.starts_with("error: test timed out")
+        || (line.starts_with("test ")
+            && line
+                .rsplit_once(" timed out after ")
+                .is_some_and(|(_, duration)| {
+                    duration.starts_with(|character: char| character.is_ascii_digit())
+                        && !duration.contains(" ... ")
+                }))
+}
+
+fn compiler_diagnostic(line: &str) -> &str {
+    if let Some((position, diagnostic)) = line.split_once(": error: ")
+        && position
+            .rsplit(':')
+            .next()
+            .is_some_and(|line| line.parse::<u32>().is_ok())
+    {
+        return diagnostic;
+    }
+    line.strip_prefix("error: ").unwrap_or(line)
+}
+
+fn is_assertion_result(line: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with("assertion failed")
+        || line
+            .strip_prefix("assertion `")
+            .is_some_and(|assertion| assertion.contains("` failed"))
+        || line.starts_with("AssertionError:")
+        || line.starts_with("assertionerror:")
 }

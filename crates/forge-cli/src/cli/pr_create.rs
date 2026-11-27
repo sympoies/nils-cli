@@ -41,9 +41,9 @@ pub struct PrCreateArgs {
     /// Head-bound evidence when `[test_first].require` is true and `require_kinds`
     /// selects this kind (default: feature/bug).
     /// Tier A requires a meaningful red from the expected assertion, or a waiver.
-    /// Tier B requires acceptance criteria first and stable-interface tests before merge.
-    /// A red record is optional. Tier C uses repository checks only under the default
-    /// kind selection. Test-kind repairs and mixed changes also require evidence
+    /// Tier B authors write acceptance criteria first and run stable-interface tests before merge.
+    /// The gate checks the contract delta and passing focused validation. A red record is optional.
+    /// Tier C uses repository checks only by default. Test-kind repairs and mixed changes require evidence
     /// when bug or test is selected.
     #[arg(long = "test-first-evidence", value_name = "DIR")]
     pub test_first_evidence: Option<String>,

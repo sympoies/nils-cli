@@ -1159,7 +1159,54 @@ esac
                     output.code, 0,
                     "{operation} adopt={adopt} dry_run={dry_run}: {output:?}"
                 );
-                if operation == "deliver" {
+                if operation == "create" && dry_run {
+                    let record_path =
+                        std::path::Path::new(evidence).join("test-first-evidence.json");
+                    let record = fs::read_to_string(&record_path).unwrap();
+                    let baseline = git(&repo, &["rev-parse", "main"]);
+                    for (field, replacement, code, message) in [
+                        (
+                            "/subject/deliveries/0/head",
+                            serde_json::json!(baseline.trim()),
+                            "test_first_evidence_subject_mismatch",
+                            "does not match the current repository and delivery",
+                        ),
+                        (
+                            "/contract_delta/added_behaviors",
+                            serde_json::json!([]),
+                            "test_first_evidence_incomplete",
+                            "changed_added_or_removed_behavior",
+                        ),
+                        (
+                            "/final_validations",
+                            serde_json::json!([]),
+                            "test_first_evidence_incomplete",
+                            "focused_final_validation",
+                        ),
+                    ] {
+                        let mut invalid: serde_json::Value = serde_json::from_str(&record).unwrap();
+                        *invalid.pointer_mut(field).unwrap() = replacement;
+                        fs::write(&record_path, invalid.to_string()).unwrap();
+
+                        let output = super::support::run_forge_cli_in_with_env(
+                            &stub,
+                            &args,
+                            Some(&repo),
+                            &[("PR_LIST", &list), ("PR_VIEW", &view.to_string())],
+                        );
+                        assert_eq!(output.code, 65, "{field}: {output:?}");
+                        let envelope = parse_envelope(&output.stdout);
+                        assert_eq!(envelope["error"]["code"], code, "{field}: {output:?}");
+                        assert!(
+                            envelope["error"]["message"]
+                                .as_str()
+                                .unwrap()
+                                .contains(message),
+                            "{field}: {output:?}"
+                        );
+                    }
+                    fs::write(&record_path, record).unwrap();
+                } else if operation == "deliver" {
                     let step = if adopt { "adopt" } else { "create" };
                     assert!(
                         envelope["data"]["steps"]

@@ -292,17 +292,21 @@ removed behavior. The evidence tracks the test-first tiers:
   meaningful red first from the expected assertion. Use `bug-fix` or
   `behavior-change`, and record a waiver with substitute validation if a
   meaningful red is impractical.
-- **B (feature)** requires acceptance criteria first and stable-interface
-  tests before merge. Use `feature`, capture the criteria in the contract
-  delta, and record passing interface tests for the delivery head. A red
-  record or waiver is optional.
+- **B (feature)** authors write acceptance criteria first and run stable-interface
+  tests before merge. Use `feature`, capture the criteria in the contract delta,
+  and record passing focused validation. The verifier checks the declared
+  behavior change, test impact or reason for no existing tests, and passing
+  focused validation. A red record or waiver is optional.
 - **C (docs, config, generated output, small UI tweak, spike)** requires
   repository checks only and no record.
 
-`record-failing` uses the supplied exit code and observed diagnostic.
-It refuses compile errors (`failing-test-compile-error`), missing symbols
-(`failing-test-missing-symbol`), and timeouts (`failing-test-timeout`) with
-exit 65 and the corresponding JSON error code.
+Pass the failing runner's exit code and output showing the expected assertion
+to `record-failing`. Recognized compiler and runner diagnostics return
+`failing-test-compile-error`, `failing-test-missing-symbol`, or
+`failing-test-timeout`. Output with no recognized result returns
+`failing-test-unclassified`. Each refusal exits 65. If the runner cannot
+provide a recognizable assertion result, use `record-waiver` with substitute
+validation.
 
 JSON responses from `record-failing`, `record-final`, and `bind-delivery`
 default to compact `cli.test-first-evidence.<command>.v3` mutation receipts.
@@ -338,7 +342,7 @@ test-first-evidence record-failing \
   --summary "bug reproduced before fix" \
   --test-name bug_repro \
   --expected-failure "new parser contract is not implemented" \
-  --observed-failure "assertion reported the v1 value" \
+  --observed-failure "assertion failed: expected the new value, got the v1 value" \
   --format json
 test-first-evidence record-final \
   --out "$AGENT_HOME/out/projects/acme__app/test-first" \

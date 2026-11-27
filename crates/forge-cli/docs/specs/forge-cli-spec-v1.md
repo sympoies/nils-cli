@@ -1377,10 +1377,12 @@ passing validation, and a residual-gap declaration.
 - **A (bug or regression fix, boundary contract, security)** requires a
   meaningful red first from the expected assertion or an explicit waiver.
   Compile errors, missing symbols, and timeouts are refused as red evidence.
-- **B (feature)** requires acceptance criteria first and stable-interface
-  tests before merge. For `--kind feature`, a record classified as `feature`
-  can carry the criteria in its contract delta and the passing tests in its
-  scoped validation without a red record or waiver.
+- **B (feature)** authors write acceptance criteria first and run stable-interface
+  tests before merge. For `--kind feature` with a `feature` record, the gate
+  checks the declared changed, added, or removed behavior, the test impact or
+  reason for no existing tests, passing focused validation, and the bound delivery
+  head. Review covers the order of the work and what the tests exercise.
+  A red record or waiver is optional.
 - **C (docs, config, generated output, small UI tweak, spike)** requires
   repository checks only and no record under the default kind selection.
 
