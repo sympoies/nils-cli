@@ -481,9 +481,13 @@ fn search_refs_to_github_normalizes_cross_references() {
 fn search_refs_to_paginates_and_honors_explicit_limit() {
     let stub = StubEnv::new().gh_stub(r##"#!/bin/sh
 case "$*" in
-  *after=page1*) start=101; end=120; next=false; cursor=page2 ;;
-  *) start=1; end=100; next=true; cursor=page1 ;;
+  *first=100*after=page1*) start=101; end=120; next=false; cursor=page2; request=100:page1 ;;
+  *first=20*after=page1*) start=101; end=120; next=false; cursor=page2; request=20:page1 ;;
+  *first=100*) start=1; end=100; next=true; cursor=page1; request=100:start ;;
+  *first=10*) start=1; end=10; next=true; cursor=page1; request=10:start ;;
+  *) exit 97 ;;
 esac
+printf '%s\n' "$request" >> requests
 printf '{"data":{"repository":{"issueOrPullRequest":{"timelineItems":{"nodes":['
 i=$start
 while [ "$i" -le "$end" ]; do
@@ -509,6 +513,19 @@ printf '],"pageInfo":{"hasNextPage":%s,"endCursor":"%s"}}}}}}\n' "$next" "$curso
     let envelope = parse_envelope(&out.stdout);
     assert_eq!(envelope["data"]["item_count"], 120);
     assert_eq!(envelope["data"]["limited"], false);
+    let numbers: Vec<_> = envelope["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["number"].as_u64().unwrap())
+        .collect();
+    assert_eq!(numbers, (1..=120).collect::<Vec<_>>());
+    let log = stub.tempdir.path().join("requests");
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "100:start\n100:page1\n"
+    );
+    std::fs::write(&log, "").unwrap();
 
     let mut bounded = base.to_vec();
     bounded.extend(["--limit", "10"]);
@@ -517,6 +534,8 @@ printf '],"pageInfo":{"hasNextPage":%s,"endCursor":"%s"}}}}}}\n' "$next" "$curso
     let envelope = parse_envelope(&out.stdout);
     assert_eq!(envelope["data"]["item_count"], 10);
     assert_eq!(envelope["data"]["limited"], true);
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "10:start\n");
+    std::fs::write(&log, "").unwrap();
 
     let mut exact = base.to_vec();
     exact.extend(["--limit", "120"]);
@@ -525,6 +544,103 @@ printf '],"pageInfo":{"hasNextPage":%s,"endCursor":"%s"}}}}}}\n' "$next" "$curso
     let envelope = parse_envelope(&out.stdout);
     assert_eq!(envelope["data"]["item_count"], 120);
     assert_eq!(envelope["data"]["limited"], false);
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "100:start\n20:page1\n"
+    );
+}
+
+#[test]
+fn search_refs_to_exact_final_limit_is_complete() {
+    let stub = StubEnv::new().gh_stub(r#"#!/bin/sh
+case "$*" in *first=10*) ;; *) exit 97;; esac
+printf '{"data":{"repository":{"issueOrPullRequest":{"timelineItems":{"nodes":['
+i=1
+while [ "$i" -le 10 ]; do
+  [ "$i" -eq 1 ] || printf ','
+  printf '{"source":{"__typename":"Issue","number":%s,"url":"https://github.com/acme/widget/issues/%s","title":"reference","state":"OPEN","repository":{"nameWithOwner":"acme/widget"}}}' "$i" "$i"
+  i=$((i + 1))
+done
+printf '],"pageInfo":{"hasNextPage":false,"endCursor":"last"}}}}}}\n'
+"#);
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widget",
+            "--format",
+            "json",
+            "search",
+            "refs-to",
+            "7",
+            "--limit",
+            "10",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["data"]["item_count"], 10);
+    assert_eq!(envelope["data"]["limited"], false);
+}
+
+#[test]
+fn search_refs_to_rejects_cursor_cycles_and_page_errors() {
+    let args = [
+        "--provider",
+        "github",
+        "--repo",
+        "acme/widget",
+        "--format",
+        "json",
+        "search",
+        "refs-to",
+        "7",
+    ];
+    let cycle = StubEnv::new().gh_stub(r#"#!/bin/sh
+case "$*" in
+  *after=A*) cursor=B ;;
+  *after=B*) cursor=A ;;
+  *) cursor=A ;;
+esac
+n=0
+[ ! -f calls ] || n=$(cat calls)
+n=$((n + 1))
+printf '%s' "$n" > calls
+[ "$n" -le 3 ] || exit 97
+printf '{"data":{"repository":{"issueOrPullRequest":{"timelineItems":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"%s"}}}}}}\n' "$cursor"
+"#);
+    let out = run_forge_cli(&cycle, &args);
+    assert_ne!(out.code, 0);
+    assert!(
+        out.stdout.contains("cursor did not advance"),
+        "{}",
+        out.stdout
+    );
+    assert_eq!(
+        std::fs::read_to_string(cycle.tempdir.path().join("calls")).unwrap(),
+        "3"
+    );
+
+    let repeated = StubEnv::new().gh_stub(r#"#!/bin/sh
+printf '%s\n' '{"data":{"repository":{"issueOrPullRequest":{"timelineItems":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"A"}}}}}}'
+"#);
+    let out = run_forge_cli(&repeated, &args);
+    assert_ne!(out.code, 0);
+    assert!(
+        out.stdout.contains("cursor did not advance"),
+        "{}",
+        out.stdout
+    );
+
+    let failure = StubEnv::new().gh_stub(r#"#!/bin/sh
+case "$*" in *after=A*) echo 'provider failed' >&2; exit 1;; esac
+printf '%s\n' '{"data":{"repository":{"issueOrPullRequest":{"timelineItems":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"A"}}}}}}'
+"#);
+    let out = run_forge_cli(&failure, &args);
+    assert_ne!(out.code, 0);
+    assert_eq!(parse_envelope(&out.stdout)["ok"], false);
 }
 
 #[test]

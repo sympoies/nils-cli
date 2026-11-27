@@ -14,6 +14,7 @@
 //! (global by default) stays bounded to one repository. Qualified organization,
 //! user, or repository queries omit that implicit override.
 
+use std::collections::HashSet;
 use std::ffi::OsString;
 
 mod completions;
@@ -338,7 +339,7 @@ fn run_github_refs_to<R: BackendRunner>(
     }
     let mut call = call;
     let mut items = Vec::new();
-    let mut cursor = None::<String>;
+    let mut cursors = HashSet::new();
     let mut scanned = 0usize;
     let limited;
     loop {
@@ -380,14 +381,13 @@ fn run_github_refs_to<R: BackendRunner>(
             .and_then(|v| v.as_str())
             .filter(|v| !v.is_empty())
             .ok_or_else(|| missing("timelineItems.pageInfo.endCursor"))?;
-        if cursor.as_deref() == Some(next) {
+        if !cursors.insert(next.to_string()) {
             return Err(ForgeError::software(
                 schema_err(),
                 "GitHub refs-to cursor did not advance",
                 None,
             ));
         }
-        cursor = Some(next.to_string());
         let first = limit
             .map(|cap| cap.saturating_sub(scanned as u32).min(100))
             .unwrap_or(100);
