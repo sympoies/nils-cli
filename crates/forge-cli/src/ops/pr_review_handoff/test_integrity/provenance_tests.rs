@@ -180,7 +180,11 @@ fn complete_large_identical_import_is_admitted_only_after_independent_confirmati
             .kind(),
         "test_changes_unconfirmed"
     );
-    let report = format!("Test changes confirmed: {}", digest(&subject, &binding));
+    let report = format!(
+        "Test changes confirmed: {} (forge-cli {})",
+        digest(&subject, &binding),
+        env!("CARGO_PKG_VERSION")
+    );
     ensure(&fixture, &fixture.ctx(), 7, HEAD, "reviewer", &report).unwrap();
     assert_eq!(
         ensure(&fixture, &fixture.ctx(), 7, HEAD, "contributor", &report)
@@ -351,7 +355,11 @@ fn existing_modified_and_deleted_tests_cannot_be_omitted_by_import_mappings() {
 fn verified_blob_and_declaration_changes_expire_confirmation() {
     let mut fixture = ImportFixture::new(1);
     let (subject, binding, _) = fixture.inspect().unwrap();
-    let report = format!("Test changes confirmed: {}", digest(&subject, &binding));
+    let report = format!(
+        "Test changes confirmed: {} (forge-cli {})",
+        digest(&subject, &binding),
+        env!("CARGO_PKG_VERSION")
+    );
     let original = provenance::summary(&binding).unwrap()["manifest_digest"].clone();
     fixture.files[0]["sha"] = json!(HEAD);
     fixture.tree["tree"][0]["sha"] = json!(HEAD);

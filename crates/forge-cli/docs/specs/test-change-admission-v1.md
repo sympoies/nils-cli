@@ -91,7 +91,7 @@ section contains `None.`. This preview is supported for GitHub; the local provid
 does not support review-handoff.
 
 It requires no assignment or existing review and writes no provider state. Text
-output prints exact file/kind rows and `Test changes confirmed: sha256:<digest>`.
+output prints exact file/kind rows and `Test changes confirmed: sha256:<digest> (forge-cli <version>)`.
 With `--format json`, `data` contains `number`, `head_sha`, `base_sha`, `findings`
 (`path`/`kind` objects), `warnings` (strings), `digest`, `confirmation` and nullable `provenance_import`.
 The latter contains the upstream source, mappings, adaptation and addition paths, complete
@@ -196,7 +196,7 @@ Verified additions are represented by a SHA-256 digest of sorted JSON tuples
 manifest, complete provider file records, upstream source/mappings, full PR body,
 and exact provider base/head. Text preview prints the verified count and manifest
 digest; JSON exposes the same summary. The independent review report must include
-the exact `Test changes confirmed: sha256:<digest>` line even when every file is
+the exact `Test changes confirmed: sha256:<digest> (forge-cli <version>)` line even when every file is
 identical and findings are empty. The existing designated publication and ledger
 gates bind the report to the assignment and exact head; there is no alternate
 approval route.
@@ -290,7 +290,7 @@ After inspecting the declared and allowlisted changes, the designated reviewer
 includes the diagnostic's exact line in their published passing review report:
 
 ```text
-Test changes confirmed: sha256:<digest>
+Test changes confirmed: sha256:<digest> (forge-cli <version>)
 ```
 
 The digest binds the immutable head/base comparison and the declaration section.
@@ -298,7 +298,7 @@ A changed head, base, diff or declaration invalidates confirmation. The ordinary
 handoff gate selects and authenticates the review report first; a PR-body claim,
 mailbox message, stale review, superseded report or another review author's
 confirmation does not count. A PR author cannot confirm their own test changes.
-A missing or stale confirmation fails with `test_changes_unconfirmed` and the
+A confirmation from a different recorded detector version fails with `test_changes_version_mismatch`; re-preview with the current version and publish a new confirmation. A missing or stale confirmation fails with `test_changes_unconfirmed` and the
 exact line the reviewer must publish. A carried source review across a base
 sync must also satisfy the current comparison's confirmation.
 
@@ -308,7 +308,7 @@ the preview's `Test-only evidence reproduced: sha256:<digest>` line. The digest
 also binds the evidence section. The handoff requires both confirmation lines.
 
 Errors use exit 65 and typed `details.next_action` values:
-`declare_test_changes`, `request_reviewer_confirmation`, and
+`declare_test_changes`, `request_reviewer_confirmation`, `repreview_test_changes`, and
 `retry_complete_comparison`, plus the deterministic recovery above. Only incomplete comparison evidence is marked
 retryable. Readiness checks remain read-only; they never add declarations or
 publish confirmation automatically.

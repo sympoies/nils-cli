@@ -366,9 +366,23 @@ fn confirmation(patch: &str, base: &str, head: &str, body: &str) -> String {
     );
     let (_, patch, _) = comparison(&runner, &context(), 7, HEAD).unwrap();
     format!(
-        "Test changes confirmed: {}",
-        sha256_digest(format!("{base}\n{head}\n{patch}\n{}", declarations(body)).as_bytes())
+        "Test changes confirmed: {} (forge-cli {})",
+        sha256_digest(format!("{base}\n{head}\n{patch}\n{}", declarations(body)).as_bytes()),
+        env!("CARGO_PKG_VERSION")
     )
+}
+
+#[test]
+fn confirmation_from_another_detector_version_reports_version_skew() {
+    let patch = assertion_patch();
+    let metadata = subject(HEAD, BASE, BODY);
+    let report = "Test changes confirmed: sha256:older-digest (forge-cli 1.44.0)";
+    let error = admit(metadata.clone(), metadata, &patch, report).unwrap_err();
+    assert!(error.kind() == "test_changes_version_mismatch");
+    let diagnostic = format!("{error:?}");
+    assert!(diagnostic.contains("1.44.0"));
+    assert!(diagnostic.contains(env!("CARGO_PKG_VERSION")));
+    assert!(diagnostic.contains("preview"));
 }
 
 #[test]

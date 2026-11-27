@@ -27,6 +27,7 @@ fn error(kind: &'static str, message: impl Into<String>, detail: Option<String>)
     let next_action = match kind {
         "test_changes_undeclared" => "declare_test_changes",
         "test_changes_unconfirmed" => "request_reviewer_confirmation",
+        "test_changes_version_mismatch" => "repreview_test_changes",
         "test_changes_limit_exceeded" => "split_comparison_or_rename_paths",
         _ => "retry_complete_comparison",
     };
@@ -142,7 +143,10 @@ pub(super) fn preview<R: BackendRunner>(
     }
     validate_with_findings(&subject.body, &findings)?;
     let digest = digest(&subject, &patch);
-    let confirmation = format!("Test changes confirmed: {digest}");
+    let confirmation = format!(
+        "Test changes confirmed: {digest} (forge-cli {})",
+        env!("CARGO_PKG_VERSION")
+    );
     let reproduce = test_only_evidence(&subject.body).is_some();
     let warnings = row_warnings(&findings, &declared_rows(&declarations(&subject.body)));
     let payload = serde_json::json!({"warnings": warnings, "number": number, "head_sha": head, "base_sha": subject.base, "findings": findings, "digest": digest, "confirmation": confirmation, "provenance_import": provenance::summary(&patch)});
@@ -235,8 +239,39 @@ pub(super) fn ensure<R: BackendRunner>(
     }
     warn(&row_warnings(&findings, &rows));
     let digest = digest(&subject, &patch);
-    let confirmation = format!("Test changes confirmed: {digest}");
+    let confirmation = format!(
+        "Test changes confirmed: {digest} (forge-cli {})",
+        env!("CARGO_PKG_VERSION")
+    );
     let reproduction = format!("Test-only evidence reproduced: {digest}");
+    if !subject.author.eq_ignore_ascii_case(review_author)
+        && !report.lines().any(|line| line.trim() == confirmation)
+    {
+        for line in report.lines() {
+            if let Some((_, version)) = line
+                .trim()
+                .strip_prefix("Test changes confirmed: sha256:")
+                .and_then(|line| line.split_once(" (forge-cli "))
+                .and_then(|(digest, version)| version.strip_suffix(')').map(|v| (digest, v)))
+                && !version.is_empty()
+                && version
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || ".-+".contains(c))
+                && version != env!("CARGO_PKG_VERSION")
+            {
+                return Err(error(
+                    "test_changes_version_mismatch",
+                    format!(
+                        "test-change confirmation used forge-cli {version}, but this check uses forge-cli {}; re-preview with the current version and publish a new confirmation",
+                        env!("CARGO_PKG_VERSION")
+                    ),
+                    Some(format!(
+                        "Run `forge-cli pr review-handoff test-changes {number} --expected-head {head}` with the current version and have the reviewer publish its confirmation."
+                    )),
+                ));
+            }
+        }
+    }
     if subject.author.eq_ignore_ascii_case(review_author)
         || !report.lines().any(|line| line.trim() == confirmation)
         || (reproduce && !report.lines().any(|line| line.trim() == reproduction))
