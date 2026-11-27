@@ -31,9 +31,18 @@ pub struct PrClosePayload {
     pub state: &'static str,
 }
 
-pub fn run(global: &GlobalFlags, id: u64, format: OutputFormat) -> Result<i32, ForgeError> {
-    let runner = default_runner();
-    run_with(&runner, global, id, format, git_remote_url)
+pub fn run_command(
+    global: &GlobalFlags,
+    command: crate::cli::PrCommand,
+    format: OutputFormat,
+) -> Result<i32, ForgeError> {
+    match command {
+        crate::cli::PrCommand::Close { id } => {
+            run_with(&default_runner(), global, id, format, git_remote_url)
+        }
+        crate::cli::PrCommand::Reopen { id } => reopen(global, id, format),
+        _ => unreachable!("only close and reopen are routed here"),
+    }
 }
 
 pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
@@ -43,18 +52,40 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     format: OutputFormat,
     remote_url_lookup: F,
 ) -> Result<i32, ForgeError> {
+    run_state_with(runner, global, id, format, remote_url_lookup, false)
+}
+
+pub fn reopen(global: &GlobalFlags, id: u64, format: OutputFormat) -> Result<i32, ForgeError> {
+    run_state_with(&default_runner(), global, id, format, git_remote_url, true)
+}
+
+fn run_state_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
+    runner: &R,
+    global: &GlobalFlags,
+    id: u64,
+    format: OutputFormat,
+    remote_url_lookup: F,
+    reopen: bool,
+) -> Result<i32, ForgeError> {
     let ctx = detect(
         global.provider_hint(),
         &global.remote,
         global.repo.as_deref(),
         remote_url_lookup,
     )?;
-    let call = build_close_call(&ctx, id);
+    let mut call = build_close_call(&ctx, id);
+    if reopen {
+        call.argv[1] = OsString::from("reopen");
+    }
 
     if global.dry_run {
         let payload = DryRunPayload::new(ctx.provider, &call);
         return Ok(emit_success(
-            schema_version_for(BINARY, SCHEMA, SCHEMA_VERSION),
+            schema_version_for(
+                BINARY,
+                if reopen { "pr.reopen" } else { SCHEMA },
+                SCHEMA_VERSION,
+            ),
             payload,
             format,
             |p| println!("would run: {plan}", plan = p.plan.join(" ")),
@@ -68,7 +99,11 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     let view_output = runner.run(&view_call)?;
     let payload = pr_view::parse_view_output(&ctx, &view_output)?;
     Ok(emit_success(
-        schema_version_for(BINARY, SCHEMA, SCHEMA_VERSION),
+        schema_version_for(
+            BINARY,
+            if reopen { "pr.reopen" } else { SCHEMA },
+            SCHEMA_VERSION,
+        ),
         PrClosePayload {
             provider: payload.provider,
             number: payload.number,
@@ -76,7 +111,16 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             state: payload.state,
         },
         format,
-        render_text,
+        |p| {
+            if reopen {
+                println!(
+                    "reopened {} #{} ({}): {}",
+                    p.provider, p.number, p.state, p.url
+                )
+            } else {
+                render_text(p)
+            }
+        },
     ))
 }
 

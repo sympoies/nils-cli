@@ -121,6 +121,11 @@ pub enum PrCommand {
         /// Numeric id.
         id: u64,
     },
+    /// Reopen a closed PR / MR.
+    Reopen {
+        /// Numeric id.
+        id: u64,
+    },
     /// One-shot snapshot of PR / MR check state.
     Checks(PrChecksArgs),
     /// Block until every required check reaches a terminal state.

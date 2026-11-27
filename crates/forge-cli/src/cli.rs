@@ -1996,8 +1996,8 @@ pub(crate) fn dispatch_parsed(cli: Cli) -> i32 {
             command: Some(PrCommand::List(args)),
         })) => ops::pr_list::run(&global, args, format),
         Some(Command::Pr(PrArgs {
-            command: Some(PrCommand::Close { id }),
-        })) => ops::pr_close::run(&global, id, format),
+            command: Some(command @ (PrCommand::Close { .. } | PrCommand::Reopen { .. })),
+        })) => ops::pr_close::run_command(&global, command, format),
         Some(Command::Pr(PrArgs {
             command: Some(PrCommand::Edit(args)),
         })) => ops::pr_edit::run(&global, args, format),

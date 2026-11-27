@@ -1108,6 +1108,21 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':id -- Numeric id:_default' \
 && ret=0
 ;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Numeric id:_default' \
+&& ret=0
+;;
 (checks)
 _arguments "${_arguments_options[@]}" : \
 '--required-only=[Restrict the gating decision to required checks (default \`true\`). Non-required checks are always reported in \`data.checks\` regardless]::REQUIRED_ONLY:(true false)' \
@@ -1402,6 +1417,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (close)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reopen)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -4251,6 +4270,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (checks)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -5384,6 +5407,7 @@ _forge-cli__subcmd__help__subcmd__pr_commands() {
 'tasks:List GFM task-list items in the PR / MR description with their state' \
 'merge:Merge a ready PR / MR' \
 'close:Close a PR / MR without merging' \
+'reopen:Reopen a closed PR / MR' \
 'checks:One-shot snapshot of PR / MR check state' \
 'wait-checks:Block until every required check reaches a terminal state' \
 'deliver:End-to-end "open draft (or adopt the branch'\''s open PR) → CI green → ready → merge" macro' \
@@ -5480,6 +5504,11 @@ _forge-cli__subcmd__help__subcmd__pr__subcmd__pending-review__subcmd__submit_com
 _forge-cli__subcmd__help__subcmd__pr__subcmd__ready_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help pr ready commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__pr__subcmd__reopen_commands] )) ||
+_forge-cli__subcmd__help__subcmd__pr__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help pr reopen commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__pr__subcmd__review_commands] )) ||
 _forge-cli__subcmd__help__subcmd__pr__subcmd__review_commands() {
@@ -6447,6 +6476,7 @@ _forge-cli__subcmd__pr_commands() {
 'tasks:List GFM task-list items in the PR / MR description with their state' \
 'merge:Merge a ready PR / MR' \
 'close:Close a PR / MR without merging' \
+'reopen:Reopen a closed PR / MR' \
 'checks:One-shot snapshot of PR / MR check state' \
 'wait-checks:Block until every required check reaches a terminal state' \
 'deliver:End-to-end "open draft (or adopt the branch'\''s open PR) → CI green → ready → merge" macro' \
@@ -6515,6 +6545,7 @@ _forge-cli__subcmd__pr__subcmd__help_commands() {
 'tasks:List GFM task-list items in the PR / MR description with their state' \
 'merge:Merge a ready PR / MR' \
 'close:Close a PR / MR without merging' \
+'reopen:Reopen a closed PR / MR' \
 'checks:One-shot snapshot of PR / MR check state' \
 'wait-checks:Block until every required check reaches a terminal state' \
 'deliver:End-to-end "open draft (or adopt the branch'\''s open PR) → CI green → ready → merge" macro' \
@@ -6617,6 +6648,11 @@ _forge-cli__subcmd__pr__subcmd__help__subcmd__pending-review__subcmd__submit_com
 _forge-cli__subcmd__pr__subcmd__help__subcmd__ready_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli pr help ready commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__pr__subcmd__help__subcmd__reopen_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__help__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli pr help reopen commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__pr__subcmd__help__subcmd__review_commands] )) ||
 _forge-cli__subcmd__pr__subcmd__help__subcmd__review_commands() {
@@ -6850,6 +6886,11 @@ _forge-cli__subcmd__pr__subcmd__pending-review__subcmd__submit_commands() {
 _forge-cli__subcmd__pr__subcmd__ready_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli pr ready commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__pr__subcmd__reopen_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli pr reopen commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__pr__subcmd__review_commands] )) ||
 _forge-cli__subcmd__pr__subcmd__review_commands() {
