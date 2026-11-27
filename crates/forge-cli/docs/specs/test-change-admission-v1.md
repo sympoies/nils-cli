@@ -298,7 +298,10 @@ A changed head, base, diff or declaration invalidates confirmation. The ordinary
 handoff gate selects and authenticates the review report first; a PR-body claim,
 mailbox message, stale review, superseded report or another review author's
 confirmation does not count. A PR author cannot confirm their own test changes.
-A confirmation from a different recorded detector version fails with `test_changes_version_mismatch`; re-preview with the current version and publish a new confirmation. A missing or stale confirmation fails with `test_changes_unconfirmed` and the
+A confirmation from a different recorded detector version fails with
+`test_changes_version_mismatch`; re-preview with the current version and publish
+a new confirmation. A missing or stale confirmation fails with
+`test_changes_unconfirmed` and the
 exact line the reviewer must publish. A carried source review across a base
 sync must also satisfy the current comparison's confirmation.
 
