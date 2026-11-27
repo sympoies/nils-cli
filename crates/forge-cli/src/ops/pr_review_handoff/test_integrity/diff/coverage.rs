@@ -1,7 +1,7 @@
 //! Conservative boundaries for test coverage inserted in an existing file.
 use std::collections::BTreeSet;
 
-use super::{File, Language, cases, signals};
+use super::{File, Language, cases, scopes, signals, syntax::LexicalState};
 
 pub(super) fn file_adds_coverage(file: &File) -> bool {
     let (cases, assertions, _) = signals(
@@ -29,6 +29,115 @@ pub(super) fn file_adds_coverage(file: &File) -> bool {
         }
     }
     true
+}
+
+/// Complete JS/TS insertions with new assertions can add fixture wiring.
+/// The reviewer uses the runs in the PR body to confirm the wiring's effect.
+pub(super) fn file_adds_fixture_coverage(file: &File) -> bool {
+    let language = Language::of(&file.new);
+    if language != Language::JavaScript || file.old == "/dev/null" {
+        return false;
+    }
+    let (existing_cases, _, _) = signals(file.before.iter().map(String::as_str), language, true);
+    let (_, assertions, _) = signals(file.additions.iter().map(String::as_str), language, true);
+    let mut properties: BTreeSet<_> = file
+        .before
+        .iter()
+        .filter_map(|line| property_name(line))
+        .collect();
+    !existing_cases.is_empty()
+        && !assertions.is_empty()
+        && file
+            .additions
+            .split(|line| line == cases::HUNK)
+            .all(|lines| complete_fixture_insertion(lines, &mut properties))
+}
+
+fn complete_fixture_insertion<'a>(lines: &'a [String], properties: &mut BTreeSet<&'a str>) -> bool {
+    let mut lexical = LexicalState::default();
+    let mut closing = Vec::new();
+    let mut last_token = None;
+    for line in lines {
+        let masked = lexical.mask(line, Language::JavaScript);
+        let compact = scopes::compact(&masked);
+        if compact.starts_with("else")
+            || compact.contains("process.exit")
+            || compact.contains(".only(")
+            || compact
+                .split_once('=')
+                .is_some_and(|(lhs, _)| lhs.starts_with("assert") && !lhs.contains('('))
+            || (masked
+                .split(|ch: char| !identifier_char(ch))
+                .any(|word| word == "return")
+                && !fixture_return(line))
+        {
+            return false;
+        }
+        let original = scopes::compact(line);
+        if ["skip:", "'skip':", "\"skip\":"]
+            .iter()
+            .any(|option| original.contains(option))
+        {
+            return false;
+        }
+        // An added member outside an added literal must not shadow an old member.
+        if closing.is_empty()
+            && let Some(name) = property_name(line)
+            && !properties.insert(name)
+        {
+            return false;
+        }
+        for token in compact.chars() {
+            match token {
+                '(' => closing.push(')'),
+                '[' => closing.push(']'),
+                '{' => closing.push('}'),
+                ')' | ']' | '}' if closing.pop() != Some(token) => return false,
+                _ => {}
+            }
+            last_token = Some(token);
+        }
+    }
+    lexical.is_closed()
+        && closing.is_empty()
+        && last_token.is_none_or(|token| matches!(token, ';' | ',' | '}'))
+}
+
+fn identifier_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$')
+}
+
+fn property_name(line: &str) -> Option<&str> {
+    let (name, _) = line.trim().split_once(':')?;
+    let name = name.trim_end().trim_matches(['\'', '"']);
+    (!name.is_empty() && name.chars().all(identifier_char)).then_some(name)
+}
+
+fn fixture_return(line: &str) -> bool {
+    let Some((prefix, value)) = line.trim_start().split_once("return") else {
+        return false;
+    };
+    if prefix.starts_with("get ") && scopes::compact(prefix).ends_with("(){") {
+        return true;
+    }
+    let route = prefix
+        .strip_prefix("if")
+        .and_then(|guard| guard.trim().strip_prefix('(')?.strip_suffix(')'))
+        .and_then(|guard| guard.split_once("==="))
+        .map(|(_, literal)| literal.trim());
+    let literal_route = route.is_some_and(|literal| {
+        literal.len() > 2
+            && ["'", "\""]
+                .into_iter()
+                .any(|quote| literal.starts_with(quote) && literal.ends_with(quote))
+    });
+    let value = value.trim_start();
+    literal_route
+        && (value.starts_with('{')
+            || value.split_once('(').is_some_and(|(name, argument)| {
+                name.trim_end().chars().all(identifier_char)
+                    && argument.trim_start().starts_with('{')
+            }))
 }
 
 fn coverage_insertion(added: &[String], extension: &str) -> bool {

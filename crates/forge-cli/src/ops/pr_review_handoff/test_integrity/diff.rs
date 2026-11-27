@@ -51,11 +51,16 @@ pub(super) fn detect_with_images(
     Ok(findings.into_iter().collect())
 }
 
-pub(crate) fn additive_coverage(patch: &str) -> Result<bool, ForgeError> {
+pub(crate) fn additive_coverage(
+    patch: &str,
+    fixture_review: impl Fn(&str) -> bool,
+) -> Result<bool, ForgeError> {
     let mut all_additive = !patch.trim().is_empty();
     let mut findings = BTreeSet::new();
     inspect(patch, |file| {
-        all_additive &= !file.change_is_non_additive && coverage::file_adds_coverage(file);
+        all_additive &= !file.change_is_non_additive
+            && (coverage::file_adds_coverage(file)
+                || (fixture_review(&file.new) && coverage::file_adds_fixture_coverage(file)));
         finish(file, None, &mut findings);
         Ok(())
     })?;

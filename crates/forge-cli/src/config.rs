@@ -58,7 +58,7 @@ const KNOWN_SECTIONS: &[&str] = &[
 const KNOWN_MERGE_KEYS: &[&str] = &["method", "delete_branch", "hold_labels"];
 const KNOWN_BODY_KEYS: &[&str] = &["summary_heading", "test_plan_heading"];
 const KNOWN_BRANCH_KEYS: &[&str] = &["feature_prefix", "bug_prefix"];
-const KNOWN_TEST_FIRST_KEYS: &[&str] = &["require", "require_kinds"];
+const KNOWN_TEST_FIRST_KEYS: &[&str] = &["require", "require_kinds", "test_paths"];
 const KNOWN_CHECKS_KEYS: &[&str] = &[
     "timeout",
     "interval",
@@ -207,6 +207,8 @@ pub struct ForgeConfig {
     pub test_first_required: Option<bool>,
     /// Whole-list override; absent inherits, empty selects no kinds.
     pub test_first_require_kinds: Option<Vec<nils_common::git::PrKind>>,
+    /// Additional dedicated test directories. Admission reads these from the target base.
+    pub test_first_test_paths: Option<Vec<String>>,
     pub review_convergence_required: Option<bool>,
     pub review_convergence_quiet_period: Option<Duration>,
     pub review_convergence_timeout: Option<Duration>,
@@ -449,6 +451,7 @@ impl ForgeConfig {
             test_first_require_kinds: top
                 .test_first_require_kinds
                 .or(self.test_first_require_kinds),
+            test_first_test_paths: top.test_first_test_paths.or(self.test_first_test_paths),
             review_convergence_required,
             review_convergence_quiet_period,
             review_convergence_timeout: top
@@ -790,6 +793,13 @@ fn parse_test_first(table: &toml::map::Map<String, Value>, cfg: &mut ForgeConfig
                     ),
                 }
             }
+            "test_paths" => match test_first::parse_test_paths(value) {
+                Some(paths) => cfg.test_first_test_paths = Some(paths),
+                None => cfg.warnings.push(
+                    "invalid-config-value:test_first.test_paths:expected_array_of_directory_scopes"
+                        .into(),
+                ),
+            },
             _ => unreachable!("key filtered above"),
         }
     }

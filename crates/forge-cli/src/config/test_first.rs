@@ -1,4 +1,4 @@
-//! Kind selection for the opt-in test-first evidence gate.
+//! Kind selection and declared test directories for test-first admission.
 
 use nils_common::git::PrKind;
 
@@ -10,6 +10,8 @@ pub struct TestFirstPolicy {
     pub require_kinds: Vec<PrKind>,
     /// Any invalid list in the layered config must be fixed before an enabled gate runs.
     pub invalid_require_kinds: bool,
+    /// The fetched target base declared malformed additional test scopes.
+    pub invalid_test_paths: bool,
 }
 
 impl Default for TestFirstPolicy {
@@ -18,6 +20,7 @@ impl Default for TestFirstPolicy {
             require: false,
             require_kinds: vec![PrKind::Feature, PrKind::Bug],
             invalid_require_kinds: false,
+            invalid_test_paths: false,
         }
     }
 }
@@ -29,18 +32,51 @@ impl TestFirstPolicy {
 }
 
 impl ForgeConfig {
+    pub(crate) fn declares_test_path(&self, path: &str) -> bool {
+        self.test_first_test_paths.iter().flatten().any(|scope| {
+            let mut path_parts = path.split('/');
+            scope.trim_end_matches('/').split('/').all(|part| {
+                path_parts
+                    .next()
+                    .is_some_and(|name| part == "*" || part == name)
+            }) && path_parts.next().is_some()
+        })
+    }
+
     pub fn resolve_test_first_policy(&self) -> TestFirstPolicy {
         TestFirstPolicy {
             require: self.resolve_test_first_required(None),
             invalid_require_kinds: self.warnings.iter().any(|warning| {
                 warning.starts_with("invalid-config-value:test_first.require_kinds:")
             }),
+            invalid_test_paths: false,
             require_kinds: self
                 .test_first_require_kinds
                 .clone()
                 .unwrap_or_else(|| TestFirstPolicy::default().require_kinds),
         }
     }
+}
+
+pub(super) fn parse_test_paths(value: &toml::Value) -> Option<Vec<String>> {
+    value
+        .as_array()?
+        .iter()
+        .map(|value| {
+            let pattern = value.as_str()?;
+            let scope = pattern.strip_suffix('/')?;
+            let parts = scope.split('/');
+            let valid = parts.clone().any(|part| part != "*")
+                && parts.into_iter().all(|part| {
+                    part == "*"
+                        || (!matches!(part, "" | "." | "..")
+                            && part.bytes().all(|byte| {
+                                byte.is_ascii_graphic() && !b"*?[]\\\"|".contains(&byte)
+                            }))
+                });
+            valid.then(|| pattern.to_owned())
+        })
+        .collect()
 }
 
 #[cfg(test)]

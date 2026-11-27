@@ -404,6 +404,53 @@ fn confirmed_changes_pass_but_author_self_confirmation_does_not() {
 }
 
 #[test]
+fn fixture_evidence_requires_independent_reproduction_at_the_reviewed_head() {
+    let body = format!(
+        "{DECLARATIONS}\n## Test-only evidence\n\n\
+         - Base command `node --test sample` passed on the base.\n\
+         - Added coverage command `node --test sample` passed with the addition.\n\
+         - Mutation command `node --test sample` failed the new assertion.\n"
+    );
+    let stub = integrity_fixture(&body, "", "contributor");
+    let preview = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review-handoff",
+            "test-changes",
+            "7",
+            "--expected-head",
+            HEAD,
+        ],
+    );
+    assert_eq!(preview.code, 0, "{} {}", preview.stdout, preview.stderr);
+    let value = parse_envelope(&preview.stdout);
+    let confirmation = value["data"]["confirmation"].as_str().unwrap();
+    let without_reproduction = check(&integrity_fixture(&body, confirmation, "contributor"), HEAD);
+    assert_refusal(&without_reproduction, 65, "test_changes_unconfirmed");
+    let reproduction = format!(
+        "Test-only evidence reproduced: {}",
+        value["data"]["digest"].as_str().unwrap()
+    );
+    let report = format!("{confirmation}\n{reproduction}");
+    let reproduced = check(&integrity_fixture(&body, &report, "contributor"), HEAD);
+    assert_eq!(
+        reproduced.code, 0,
+        "{} {}",
+        reproduced.stdout, reproduced.stderr
+    );
+    let changed = body.replace("failed the new assertion", "failed a different assertion");
+    let stale = check(&integrity_fixture(&changed, &report, "contributor"), HEAD);
+    assert_refusal(&stale, 65, "test_changes_unconfirmed");
+}
+
+#[test]
 fn stale_and_retired_declarations_reach_each_warning_surface() {
     let body = "## Test changes\n\n\
         - api_test.go | deleted-test:TestRemoved | The replacement covers the removed behavior.\n\

@@ -44,6 +44,10 @@ enum Literal {
 }
 
 impl LexicalState {
+    pub(super) fn is_closed(&self) -> bool {
+        self.literal.is_none() && self.block_depth == 0
+    }
+
     pub(super) fn mask(&mut self, line: &str, language: Language) -> String {
         let mut masked = vec![b' '; line.len()];
         let mut offset = 0;

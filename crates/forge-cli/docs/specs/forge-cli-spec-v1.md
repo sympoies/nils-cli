@@ -1335,6 +1335,53 @@ Python tests can be appended as complete top-level definitions with new
 names. Fixture directories, non-test paths, removed lines, file mode changes,
 and test-change detector findings require evidence.
 
+Repositories can extend the dedicated source directories with
+`[test_first].test_paths` in the root `.forge-cli.toml` on the target base.
+
+```toml
+[test_first]
+test_paths = ["scripts/test/", "packages/*/test/"]
+```
+
+Each entry is a normalized repository-relative directory ending in `/`. A
+`*` matches one directory component. Each entry needs a literal component.
+A malformed list grants no additional scopes, and missing-evidence refusals
+name the invalid setting. Land the declaration on the target base before
+opening a PR that uses it. It applies alongside the built-in scopes and uses
+the same additive-coverage checks.
+
+A **test-only addition** covers behavior that already passes on the base.
+Include the passing base test command, the command that runs the new case
+against unchanged behavior, and the temporary mutation that makes the new case's
+expected assertion fail in `## Test plan`. Keep the mutation outside the
+submitted diff. Pure additions qualify for the exemption from product-behavior
+evidence.
+
+Fixture wiring can support new coverage in an existing JavaScript or TypeScript
+test in a declared scope through GitHub designated review. The gate requires
+complete insertions, new assertions, and a clean detector result. Changes such
+as early exits, early returns, exclusive tests, assertion reassignment, and
+duplicate fixture properties require the usual evidence record. Include this
+section in the PR body for eligible fixture wiring:
+
+```markdown
+## Test-only evidence
+
+- Base command `node --test scripts/test/example.test.js` passed on the base.
+- Added coverage command `node --test scripts/test/example.test.js` passed with the new assertions.
+- Mutation command `node --test scripts/test/example.test.js` failed the new assertion after changing the sample response to zero.
+```
+
+The designated reviewer owns verification of the fixture wiring's effect on
+existing assertions and independently reproduces the three runs. The handoff
+check requires the review report to include the preview's `Test changes confirmed`
+and `Test-only evidence reproduced` lines. Both bind the exact head, base,
+comparison, test declarations, and evidence text. With JSON preview, use the
+reported `digest` for both lines. This review costs less to maintain than
+static analysis of fixture behavior for each framework. Comparisons that fail
+the additive checks follow the usual evidence gate. A test race fix is
+**A, red first**.
+
 A new assertion in `tests/calculation.rs` for an already-correct result
 qualifies. Adding a guard around an existing assertion requires evidence,
 even if the same file also gains an assertion.

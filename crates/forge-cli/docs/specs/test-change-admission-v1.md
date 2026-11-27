@@ -302,6 +302,11 @@ A missing or stale confirmation fails with `test_changes_unconfirmed` and the
 exact line the reviewer must publish. A carried source review across a base
 sync must also satisfy the current comparison's confirmation.
 
+When the PR declares [test-only evidence](forge-cli-spec-v1.md#test_first--test-first-evidence-gate),
+the designated reviewer independently reproduces the three runs, then includes
+the preview's `Test-only evidence reproduced: sha256:<digest>` line. The digest
+also binds the evidence section. The handoff requires both confirmation lines.
+
 Errors use exit 65 and typed `details.next_action` values:
 `declare_test_changes`, `request_reviewer_confirmation`, and
 `retry_complete_comparison`, plus the deterministic recovery above. Only incomplete comparison evidence is marked
