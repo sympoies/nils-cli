@@ -517,6 +517,14 @@ printf '],"pageInfo":{"hasNextPage":%s,"endCursor":"%s"}}}}}}\n' "$next" "$curso
     let envelope = parse_envelope(&out.stdout);
     assert_eq!(envelope["data"]["item_count"], 10);
     assert_eq!(envelope["data"]["limited"], true);
+
+    let mut exact = base.to_vec();
+    exact.extend(["--limit", "120"]);
+    let out = run_forge_cli(&stub, &exact);
+    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["data"]["item_count"], 120);
+    assert_eq!(envelope["data"]["limited"], false);
 }
 
 #[test]

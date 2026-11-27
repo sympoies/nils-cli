@@ -367,7 +367,7 @@ fn run_github_refs_to<R: BackendRunner>(
         if let Some(cap) = limit {
             if scanned >= cap as usize {
                 items.truncate(cap as usize);
-                limited = true;
+                limited = has_next || scanned > cap as usize;
                 break;
             }
         }
