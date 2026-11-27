@@ -29,6 +29,15 @@ FUNCTION = re.compile(r"\bfn\s+\w+\s*\(")
 SOCKET_IN_FIXTURE = re.compile(r"&?\s*\w+\s*\.\s*runtime_dir\s*\(\s*\)\s*\.\s*join\s*\(")
 SOCKET_ARG = re.compile(r"&?\s*(\w+)\s*\)")
 
+# #4167 moves these exact Git launches while this audit is in flight.
+RETRO_TEST = "crates/agent-workflow-primitives/tests/integration/cli.rs"
+RETRO_HELPER = "crates/agent-workflow-primitives/tests/integration/cli/retro_git.rs"
+RETRO_BEFORE = {
+    (RETRO_TEST, "git", 'let mut command = Command::new("git");'),
+    (RETRO_TEST, "git", 'let status = Command::new("git")'),
+}
+RETRO_AFTER = (RETRO_HELPER, "git", 'let mut command = Command::new("git");')
+
 
 def socket_in_fixture(masked, start, argument):
     if SOCKET_IN_FIXTURE.match(masked, argument):
@@ -81,7 +90,8 @@ def rust_findings(root):
                 yield (path, rule, signature), line
 
 
-def load_allowlist(path):
+def load_allowlist(root):
+    path = root / ALLOWLIST
     counts = Counter()
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip() or line.startswith("#"):
@@ -91,11 +101,19 @@ def load_allowlist(path):
         if key in counts or rule not in RULES or int(count) < 1 or not reason.strip():
             raise ValueError(f"{path}:{number}: invalid or duplicate allowlist entry")
         counts[key] = int(count)
+
+    # Select the applicable entries before accounting. The old and new
+    # locations cannot both spend their allowance in the same tree.
+    if (root / RETRO_HELPER).is_file():
+        for key in RETRO_BEFORE:
+            counts.pop(key, None)
+    else:
+        counts.pop(RETRO_AFTER, None)
     return counts
 
 
 def audit(root):
-    remaining = load_allowlist(root / ALLOWLIST)
+    remaining = load_allowlist(root)
     failed = False
     for key, line in rust_findings(root):
         if remaining[key] > 0:
@@ -104,10 +122,14 @@ def audit(root):
         path, rule, _ = key
         failed = True
         print(f"{path}:{line}: {rule} fixture bypasses isolation", file=sys.stderr)
+    for (path, rule, signature), count in remaining.items():
+        if count > 0:
+            failed = True
+            print(f"{path}: {rule} has {count} unused allowance(s): {signature}", file=sys.stderr)
     if failed:
         print(
-            f"Use nils_test_support::fixture::Fixture or add a reviewed, specific "
-            f"exception to {ALLOWLIST}.", file=sys.stderr
+            f"Use nils_test_support::fixture::Fixture and keep exact counts in {ALLOWLIST}. "
+            f"Include a concrete reason for reviewed exceptions.", file=sys.stderr
         )
         return 1
     print("fixture-isolation-audit: ok")

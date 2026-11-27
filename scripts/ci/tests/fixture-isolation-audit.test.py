@@ -94,6 +94,36 @@ fn runtime_only() {
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn(f"{TEST}:2: tmpdir", result.stderr)
 
+    def test_removed_bypass_requires_lowering_its_allowance(self):
+        line = 'let status = Command::new("git").status();'
+        self.write(TEST, f"{line}\n")
+        self.write(ALLOWLIST, f"{TEST}\tgit\t{line}\t2\tTwo existing Git fixture sites.\n")
+        result = self.audit()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(f"{TEST}: git has 1 unused allowance", result.stderr)
+
+    def test_4167_uses_only_the_allowances_for_the_present_layout(self):
+        old = "crates/agent-workflow-primitives/tests/integration/cli.rs"
+        new = "crates/agent-workflow-primitives/tests/integration/cli/retro_git.rs"
+        command = 'let mut command = Command::new("git");'
+        status = 'let status = Command::new("git")'
+        self.write(
+            ALLOWLIST,
+            f"{old}\tgit\t{command}\t1\tExisting Git fixture.\n"
+            f"{old}\tgit\t{status}\t1\tExisting Git fixture.\n"
+            f"{new}\tgit\t{command}\t1\tGit fixture moved by #4167.\n",
+        )
+        self.write(old, f"{command}\n{status}\n")
+        result = self.audit()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.write(new, f"{command}\n")
+        result = self.audit()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(f"{old}:1: git fixture bypasses isolation", result.stderr)
+        self.write(old, "")
+        result = self.audit()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
