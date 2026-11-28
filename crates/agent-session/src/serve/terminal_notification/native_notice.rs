@@ -10,6 +10,7 @@ pub(crate) fn begin_mailbox_notice(
     record: &SessionRecord,
     tmux: &Path,
     candidate: &crate::coordination::NotificationCandidate,
+    native_idle: bool,
 ) -> Result<(), CliError> {
     let refused = |reason: Option<&'static str>| {
         CliError::unavailable(
@@ -20,7 +21,8 @@ pub(crate) fn begin_mailbox_notice(
     };
     let agent = AgentKind::from_name(&record.agent).ok_or_else(|| refused(None))?;
     let text_wake = candidate.is_text_wake()
-        && crate::send::claude_notice::attach::mailbox_text_reason(context, record).is_some();
+        && (native_idle
+            || crate::send::claude_notice::attach::mailbox_text_reason(context, record).is_some());
     if (!candidate.is_notice() && !text_wake)
         || record.id != candidate.target_session_id
         || record
@@ -32,7 +34,9 @@ pub(crate) fn begin_mailbox_notice(
     {
         return Err(refused(None));
     }
-    if !terminal_notification_waiting(context, record, agent) {
+    // A replacement text wake has already passed exact incarnation, native idle
+    // and empty-composer checks under the record lock in guarded send.
+    if !(native_idle && text_wake) && !terminal_notification_waiting(context, record, agent) {
         return Err(refused(Some("notice-idle-unsettled")));
     }
     match tmux_session_attached(tmux, &record.tmux_session) {
@@ -72,10 +76,10 @@ pub(super) async fn dispatch(
     state: Arc<ServeState>,
     record: SessionRecord,
     candidate: crate::coordination::NotificationCandidate,
+    native_idle: bool,
 ) {
     let claude_native = record.agent == AgentKind::Claude.as_str() && candidate.is_notice();
-    let text_reason = candidate
-        .is_text_wake()
+    let text_reason = (candidate.is_text_wake() && !native_idle)
         .then(|| crate::send::claude_notice::attach::mailbox_text_reason(&state.context, &record))
         .flatten();
     // A terminal-started Codex record has no provider binding and no
@@ -94,7 +98,7 @@ pub(super) async fn dispatch(
             tmux,
         );
         args.guards = crate::send_guard::GuardArgs {
-            expected_idle_ready_boundary: None,
+            claude_mailbox_native_idle: native_idle,
             notice_envelope: sending.is_notice(),
             require_idle: true,
             require_empty_composer: true,
@@ -108,7 +112,7 @@ pub(super) async fn dispatch(
                     sending.target_incarnation, sending.generation
                 )
             }),
-            client_message_id: None,
+            ..Default::default()
         };
         crate::send::send_mailbox_notice(&context, args, &sending)
     })
@@ -134,6 +138,9 @@ pub(super) async fn dispatch(
         .await;
         if matches!(attempted, Ok(Ok(false))) {
             let composer_refusal = match &result {
+                Ok(Err(error)) if native_idle && error.code() == "send-composer-not-empty" => {
+                    Some(("recipient-composer-not-empty", None))
+                }
                 Ok(Err(error))
                     if error.code() == "notice-native-unavailable"
                         && error
@@ -154,6 +161,9 @@ pub(super) async fn dispatch(
                         "recipient-composer-unobservable",
                         Some("region-not-single-row"),
                     ))
+                }
+                Ok(Err(error)) if native_idle && error.code() == "send-composer-unobservable" => {
+                    Some(("recipient-composer-unobservable", None))
                 }
                 _ => None,
             };
@@ -185,7 +195,7 @@ pub(super) async fn dispatch(
                 .await;
             } else {
                 let refusal = match &result {
-                    Ok(Err(error)) => preclaim_refusal(error, claude_native),
+                    Ok(Err(error)) => preclaim_refusal(error, claude_native || native_idle),
                     _ => provider_not_ready("notice-attempt-not-admitted"),
                 };
                 super::mailbox_dispatch::defer_refused(&state, &candidate, refusal).await;

@@ -3,6 +3,7 @@ use crate::activity::{Confidence, SourceKind, TurnPhase};
 use crate::codex_app_server::{self, guarded};
 
 mod claude;
+pub(crate) use claude::require_native_idle as require_claude_native_idle;
 
 pub(super) fn delete_if_idle(
     context: &CliContext,

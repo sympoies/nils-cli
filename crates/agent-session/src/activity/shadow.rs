@@ -12,7 +12,8 @@ use nils_common::fs::{SECRET_FILE_MODE, write_atomic};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    CliContext, SessionRecord, ShadowObservationView, TurnPhase, TurnState, now, session_dir,
+    CliContext, Confidence, SessionRecord, ShadowObservationView, SourceKind, TurnPhase, TurnState,
+    now, session_dir,
 };
 
 pub(crate) mod claude_agents;
@@ -125,7 +126,21 @@ pub(super) fn project_claude_observation(
 }
 
 fn project_unavailable(record: &SessionRecord, cached: &ShadowDocument, state: &mut TurnState) {
+    // SessionStart settles the replacement before its first semantic event.
+    // An unavailable listing carries no evidence that can supersede that hook.
+    let resumed_ready = record
+        .runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.generation > 1)
+        && record.provider_resume.is_some()
+        && state.phase == TurnPhase::Waiting
+        && state.source.kind == SourceKind::ProviderHook
+        && state.source.confidence == Confidence::Authoritative
+        && state.source.provider.as_deref() == Some("claude")
+        && state.current_turn.is_none()
+        && state.semantic_event.is_none();
     if record.agent == "claude"
+        && !resumed_ready
         && cached.activity_revision == Some(state.revision)
         && cached.observation.rule_id == "claude_agents_unavailable"
         && is_recent(&cached.observation.observed_at, SAMPLE_INTERVAL_SECONDS * 2)

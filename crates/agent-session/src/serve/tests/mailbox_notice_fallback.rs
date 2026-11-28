@@ -290,3 +290,140 @@ async fn resumed_claude_wake_cleans_owned_input_after_swallowed_enters() {
     assert_eq!(receipt["state"], "prompt_submitted");
     assert_eq!(fs::read_to_string(fixture.temp.path().join("submissions")).unwrap().lines().count(), 3);
 }
+
+fn activate_restarted_claude(fixture: &WakeFixture) -> SessionRecord {
+    bind_transcript(fixture);
+    let dir = session_dir(&fixture.state.context, "beta");
+    let path = dir.join("session.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    record["runtime"]["generation"] = json!(2);
+    fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let record = load_session_record(&fixture.state.context, "beta").unwrap();
+    let state = crate::activity::activate_runtime(&fixture.state.context, &record).unwrap();
+    assert_eq!(state.phase, crate::activity::TurnPhase::Starting);
+    assert!(state.current_turn.is_none());
+    record
+}
+
+#[tokio::test]
+async fn restarted_claude_idle_with_no_turn_evidence_wakes_once() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::set(&lock, crate::notice::WRITERS_ENV, "1");
+    let fixture = WakeFixture::new(AgentKind::Claude).await;
+    let record = activate_restarted_claude(&fixture);
+    let module_dir =
+        crate::send::claude_notice::runtime::module_dir(&fixture.state.context.state_dir, &record)
+            .unwrap();
+    fs::create_dir_all(module_dir).unwrap();
+    let provider = fixture.temp.path().join("fake-claude");
+    fs::write(
+        &provider,
+        "#!/bin/sh\n[ \"$*\" = 'agents --json' ] || exit 42\nexec cat \"$(dirname \"$0\")/native-state.json\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&provider, fs::Permissions::from_mode(0o700)).unwrap();
+    let _provider = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_BIN", provider.to_str().unwrap());
+    let set_status = |status| {
+        fs::write(
+            fixture.temp.path().join("native-state.json"),
+            json!([{"sessionId": "provider-beta", "status": status}]).to_string(),
+        )
+        .unwrap();
+    };
+
+    set_status("busy");
+    drain_coordination_notifications(fixture.state.clone()).await;
+    fixture.assert_no_input("");
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["last_reason_detail"], "send-session-not-idle");
+    assert_eq!(receipt["attempted_generation"], 0);
+
+    set_status("idle");
+    let composer = fixture.temp.path().join("composer");
+    fs::write(&composer, "operator draft").unwrap();
+    allow_notification_retry(&fixture);
+    drain_coordination_notifications(fixture.state.clone()).await;
+    fixture.assert_no_input("operator draft");
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["last_reason"], "recipient-composer-not-empty");
+    assert_eq!(receipt["attempted_generation"], 0);
+
+    fs::write(composer, "").unwrap();
+    allow_notification_retry(&fixture);
+    drain_coordination_notifications(fixture.state.clone()).await;
+
+    assert_single_restart_wake(&fixture).await;
+}
+
+#[tokio::test]
+async fn restarted_claude_uses_resume_hook_when_native_listing_is_unavailable() {
+    let lock = GlobalStateLock::new();
+    let _writers = EnvGuard::remove(&lock, crate::notice::WRITERS_ENV);
+    let fixture = WakeFixture::new(AgentKind::Claude).await;
+    let record = activate_restarted_claude(&fixture);
+    let runtime = record.runtime.as_ref().unwrap();
+    let payload = serde_json::to_vec(&json!({
+        "hook_event_name": "SessionStart", "source": "resume", "session_id": "provider-beta"
+    }))
+    .unwrap();
+    crate::activity::ingest_provider_hook_input(
+        &fixture.state.context,
+        AgentKind::Claude,
+        None,
+        crate::activity::ProviderHookInput {
+            id: &record.id,
+            runtime_id: &runtime.launch_id,
+            payload: &payload,
+            attention_authority: None,
+        },
+    )
+    .unwrap();
+    let state = crate::activity::bound_claude_state(&fixture.state.context, &record).unwrap();
+    assert_eq!(state.phase, crate::activity::TurnPhase::Waiting);
+
+    let shadow = json!({
+        "schema_version": "agent-session.activity-shadow.v1",
+        "runtime_id": runtime.launch_id, "runtime_generation": runtime.generation,
+        "activity_revision": state.revision,
+        "observation": {"observer_version": "claude-agents.v1",
+            "rule_id": "claude_agents_unavailable", "observed_at": jiff::Timestamp::now().to_string(),
+            "projection": "unknown", "disagrees": true}
+    });
+    fs::write(
+        session_dir(&fixture.state.context, &record.id).join("activity.shadow.json"),
+        serde_json::to_vec(&shadow).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        crate::activity::activity_status_for_record(&fixture.state.context, &record)
+            .unwrap()
+            .turn_state
+            .phase,
+        crate::activity::TurnPhase::Waiting,
+    );
+    drain_coordination_notifications(fixture.state.clone()).await;
+
+    assert_single_restart_wake(&fixture).await;
+}
+
+fn allow_notification_retry(fixture: &WakeFixture) {
+    let path = fixture.temp.path().join("coordination/registry.json");
+    let mut registry: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    for receipt in registry["notifications"].as_object_mut().unwrap().values_mut() {
+        receipt["next_attempt_at_epoch"] = json!(0);
+    }
+    fs::write(path, serde_json::to_vec(&registry).unwrap()).unwrap();
+}
+
+async fn assert_single_restart_wake(fixture: &WakeFixture) {
+    let receipt = notification_fixture(fixture.temp.path());
+    assert_eq!(receipt["state"], "prompt_submitted", "{receipt}");
+    drain_coordination_notifications(fixture.state.clone()).await;
+    let submissions = fs::read_to_string(fixture.temp.path().join("submissions")).unwrap();
+    let lines: Vec<_> = submissions.lines().collect();
+    assert_eq!(lines.len(), 1);
+    let wake: String = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(wake.lines().count(), 1);
+    assert!(wake.ends_with(" message inbox --session beta --format json"));
+}

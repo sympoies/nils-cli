@@ -50,13 +50,18 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
         update_notification_undeliverable(&state, &candidate, "provider-unsupported").await;
         return;
     }
-    if crate::send::claude_notice::attach::mailbox_text_reason(&state.context, &record).is_some() {
+    let native_idle =
+        crate::send_guard::claude_mailbox::missing_startup_evidence(&state.context, &record);
+    if native_idle
+        || crate::send::claude_notice::attach::mailbox_text_reason(&state.context, &record)
+            .is_some()
+    {
         let Some(prompt) = candidate.text_wake_prompt() else {
             defer_provider_not_ready(&state, &candidate, "notice-runtime-unavailable").await;
             return;
         };
         candidate.prompt = Some(prompt);
-        super::native_notice::dispatch(state, record, candidate).await;
+        super::native_notice::dispatch(state, record, candidate, native_idle).await;
         return;
     }
     if let Err(error) = candidate.prepare_notice(&state.context, &record) {
@@ -70,7 +75,7 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
         return;
     }
     if record.agent == AgentKind::Claude.as_str() {
-        super::native_notice::dispatch(state, record, candidate).await;
+        super::native_notice::dispatch(state, record, candidate, false).await;
         return;
     }
     let turn = activity::state_for_view(&state.context, &record);
@@ -106,7 +111,7 @@ pub(in crate::serve) async fn dispatch_coordination_notification(
         return;
     }
     if !codex_app_server::runtime_is_supported(&record) {
-        super::native_notice::dispatch(state, record, candidate).await;
+        super::native_notice::dispatch(state, record, candidate, false).await;
         return;
     }
 

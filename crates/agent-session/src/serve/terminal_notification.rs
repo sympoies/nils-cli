@@ -19,5 +19,5 @@ pub(in crate::serve) async fn dispatch_native_notice_for_test(
     record: SessionRecord,
     candidate: crate::coordination::NotificationCandidate,
 ) {
-    native_notice::dispatch(state, record, candidate).await;
+    native_notice::dispatch(state, record, candidate, false).await;
 }

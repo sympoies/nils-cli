@@ -562,7 +562,9 @@ the research-preview agent view; see
 - **Unavailable diagnostics.** Session views project `unknown` with that reason
   in both the observation and
   activity diagnostic; the open turn, last outcome and durable hook state are
-  preserved. The activity stream carries the fixed diagnostic and rule metadata.
+  preserved. A replacement with authoritative `SessionStart` readiness keeps
+  its waiting phase before its first semantic turn event. The activity stream
+  carries the fixed diagnostic and rule metadata for unavailable projections.
   `activity doctor` describes the structured-state dependency. No Claude pane
   fallback or fallback switch exists.
 
