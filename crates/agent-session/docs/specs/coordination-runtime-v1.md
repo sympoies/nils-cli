@@ -204,9 +204,11 @@ also reconciles; changed arguments return `console-start-operation-conflict`.
 Older callers that omit the UUID still receive a generated identifier.
 
 For [Console-attested starts](console-attested-create-v1.md#operation-and-replay),
-an explicit reconcile reads the local receipt. If the result is ambiguous, an
-exact resubmission rechecks relay capability and sends the same operation ID
-and launch inputs. The relay's receipt and destination-ID fence prevent a
+an explicit reconcile reads the local receipt. A verified refusal on the first
+attempt, recorded before another dispatch attempt starts, is returned with its
+original status and code on reconcile or exact resubmission. If the result is
+ambiguous, an exact resubmission rechecks relay capability and sends the same
+operation ID and launch inputs. The relay's receipt and destination-ID fence prevent a
 second launch. The origin reports a created session only after verifying the
 requested ID and attested steward context.
 
