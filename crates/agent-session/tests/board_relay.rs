@@ -1733,3 +1733,6 @@ mod operator_rules;
 
 #[path = "board_relay/console_attestation.rs"]
 mod console_attestation;
+
+#[path = "board_relay/registry_contention.rs"]
+mod registry_contention;

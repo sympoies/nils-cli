@@ -12,6 +12,7 @@ use std::io::Read;
 
 use serde_json::Value;
 
+use crate::coordination::delegation::{Use, authenticate_snapshot_first};
 use crate::coordination::remote::{self, Config};
 use crate::{CliContext, CliError};
 
@@ -139,7 +140,8 @@ pub(crate) fn relay_route(
     token: &str,
     raw_query: Option<&str>,
 ) -> Result<Value, CliError> {
-    let (_, incarnation) = crate::coordination::authenticate_token(context, session, token)?;
+    let (_, incarnation) =
+        authenticate_snapshot_first(context, session, token, Use::CapabilityOnly)?;
     let Some(config) = federation else {
         return Err(relay_disabled());
     };
@@ -205,7 +207,8 @@ pub(super) fn endpoint_present(context: &CliContext) -> bool {
 /// Verify the claimed session against its exact current incarnation.
 pub(super) fn authenticate(context: &CliContext, session_id: &str) -> Result<Caller, CliError> {
     let token = crate::coordination::capability_token_from_file(None)?;
-    let (_, incarnation) = crate::coordination::authenticate_token(context, session_id, &token)?;
+    let (_, incarnation) =
+        authenticate_snapshot_first(context, session_id, &token, Use::CapabilityOnly)?;
     Ok(Caller {
         session_id: session_id.to_string(),
         incarnation,
