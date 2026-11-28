@@ -1799,7 +1799,9 @@ fn fix_terminates_on_an_entry_whose_fence_is_never_closed() {
     // failure this guards against is non-termination, and a test that waits
     // forever for it reports nothing and stalls the job it runs in.
     let binary = bin::resolve("devlog");
-    let mut child = fixture._dir.command(&binary)
+    let mut child = fixture
+        ._dir
+        .command(&binary)
         .arg("fix")
         .current_dir(&fixture.root)
         .stdout(std::process::Stdio::piped())
