@@ -1,4 +1,6 @@
-use super::*;
+use super::{Aggregator, CAPABILITY, Fixture, SESSION, view};
+use pretty_assertions::assert_eq;
+use std::fs;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 
