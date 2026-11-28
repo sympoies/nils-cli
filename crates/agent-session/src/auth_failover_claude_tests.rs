@@ -206,3 +206,95 @@ fn auth_failover_claude_no_candidate_keeps_the_failed_runtime_quarantined() {
     assert_eq!(log(tmp.path()), before);
     assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
 }
+
+#[test]
+fn replica_credential_wait_resumes_once_after_publication() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = failover_broker(tmp.path(), &lock, json!("beta"));
+    let target_state = tmp.path().join("beta-state.json");
+    let mut published = crate::claude_account::generation::tests::envelope(2);
+    published["account"] = json!("beta");
+    let mut pending = published.clone();
+    pending["state"]["publication"]["status"] = json!("publishing");
+    fs::write(&target_state, pending.to_string()).unwrap();
+    let target_credentials = tmp.path().join("beta/.credentials.json");
+    fs::remove_file(&target_credentials).unwrap();
+
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = failed_runtime(&context, tmp.path(), &tmux, true);
+    exhausted(&context, &record, &tmux);
+    let before = log(tmp.path());
+    let old_launch = launch_id(&record).unwrap();
+    crate::auth_incident::failover::tick(&context, &record, &tmux, 220).unwrap();
+    let waiting = failover_receipt(&context);
+    assert_eq!(waiting["state"], "waiting_credential");
+    assert_eq!(waiting["reason"], "target_publication_pending");
+    assert_eq!(log(tmp.path()), before);
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
+    let broker_log = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
+    crate::auth_incident::failover::tick(&context, &record, &tmux, 221).unwrap();
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("broker.log")).unwrap(),
+        broker_log
+    );
+
+    fs::write(&target_credentials, r#"{"synthetic":true,"generation":2}"#).unwrap();
+    crate::auth_incident::failover::tick(&context, &record, &tmux, 235).unwrap();
+    assert_eq!(
+        failover_receipt(&context)["reason"],
+        "target_publication_pending"
+    );
+    assert_eq!(log(tmp.path()), before);
+    fs::write(&target_state, published.to_string()).unwrap();
+    fs::write(tmp.path().join("exit-on-probe"), "").unwrap();
+    let readiness = on_relaunched_prompt(&context, tmp.path(), &old_launch);
+    crate::auth_incident::failover::tick(&context, &record, &tmux, 265).unwrap();
+    readiness.join().unwrap();
+    let current = load_session_record(&context, ID).unwrap();
+    assert_eq!(
+        current.runtime.as_ref().unwrap().generation,
+        record.runtime.as_ref().unwrap().generation + 1
+    );
+    assert_eq!(failover_receipt(&context)["state"], "account_switched");
+    assert_eq!(
+        failover_receipt(&context)["operation_id"],
+        waiting["operation_id"]
+    );
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &current).is_ok());
+    crate::auth_incident::failover::tick(&context, &current, &tmux, 280).unwrap();
+    assert_eq!(log(tmp.path()).matches("new-session").count(), 2);
+}
+
+#[test]
+fn replica_credential_wait_gives_up_with_no_resume() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = failover_broker(tmp.path(), &lock, Value::Null);
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = failed_runtime(&context, tmp.path(), &tmux, true);
+    exhausted(&context, &record, &tmux);
+    let before = log(tmp.path());
+    crate::auth_incident::failover::tick(&context, &record, &tmux, 220).unwrap();
+    assert_eq!(failover_receipt(&context)["state"], "waiting_credential");
+    for now in [235, 265, 325, 339] {
+        crate::auth_incident::failover::tick(&context, &record, &tmux, now).unwrap();
+        assert_eq!(failover_receipt(&context)["state"], "waiting_credential");
+    }
+    crate::auth_incident::failover::tick(&context, &record, &tmux, 340).unwrap();
+    assert_eq!(failover_receipt(&context)["state"], "blocked_no_credential");
+    assert_eq!(
+        failover_receipt(&context)["reason"],
+        "credential_wait_deadline"
+    );
+    let broker_log = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
+    crate::auth_incident::failover::tick(&context, &record, &tmux, 355).unwrap();
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("broker.log")).unwrap(),
+        broker_log
+    );
+    assert_eq!(log(tmp.path()), before);
+    assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
+}

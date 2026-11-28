@@ -1,6 +1,7 @@
 //! One policy-gated account switch per uninterrupted authentication failure chain.
 //! Durable stage transitions precede effects; ambiguous stages are never replayed.
 use super::*;
+mod credential_wait;
 mod preflight;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -16,6 +17,8 @@ pub(crate) struct Receipt {
     provider_session_id: String,
     started_at_epoch: i64,
     deadline_epoch: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    credential_wait: Option<credential_wait::Wait>,
     proof: Option<preflight::Proof>,
     new_runtime_incarnation: Option<String>,
     new_runtime_generation: Option<u64>,
@@ -27,7 +30,9 @@ pub(crate) struct Receipt {
 
 impl Receipt {
     pub(super) fn retains_chain(&self) -> bool {
-        unsettled(self) || self.target_account.is_some() && self.state != "healthy"
+        self.in_flight()
+            || self.state == credential_wait::STATE
+            || self.target_account.is_some() && self.state != "healthy"
     }
     pub(super) fn operation_id(&self) -> &str {
         &self.operation_id
@@ -258,7 +263,11 @@ pub(crate) fn tick(
     let Some(index) = store
         .incidents
         .iter()
-        .rposition(|i| i.failover.as_ref().is_some_and(unsettled))
+        .rposition(|i| {
+            i.failover
+                .as_ref()
+                .is_some_and(|r| unsettled(r) || r.state == credential_wait::STATE)
+        })
         .or_else(|| {
             store.incidents.iter().rposition(|i| {
                 same_runtime(i, &record)
@@ -269,35 +278,73 @@ pub(crate) fn tick(
         return Ok(());
     };
     let incident = store.incidents[index].clone();
-    if let Some(mut receipt) = incident.failover.clone() {
-        if !unsettled(&receipt) {
-            return Ok(());
-        }
-        reconcile(&record, &incident, &mut receipt, now);
-        return persist(context, &record, &mut store, index, &receipt);
-    }
-    if !runtime_matches(expected, &record) || !same_account_finished(&incident, &record, now) {
-        return Ok(());
-    }
     let (source, revision) = account(&record);
-    let mut receipt = Receipt {
-        schema_version: "agent-session.auth-failover.v1".into(),
-        operation_id: uuid::Uuid::new_v4().to_string(),
-        state: "candidate_preflight".into(),
-        reason: None,
-        source_account: incident.account_nickname.clone().unwrap_or_default(),
-        source_binding_revision: revision,
-        target_account: None,
-        provider_session_id: conversation(&record).unwrap_or_default().into(),
-        started_at_epoch: now,
-        deadline_epoch: now.saturating_add(30),
-        proof: None,
-        new_runtime_incarnation: None,
-        new_runtime_generation: None,
-        unknown_operation_count: 0,
-        unknown_in_flight_effects: vec![],
-        untracked_effects: "unknown".into(),
-        replayed: false,
+    let mut receipt = match incident.failover.clone() {
+        Some(mut receipt) if receipt.state == credential_wait::STATE => {
+            let refusal = if !same_runtime(&incident, &record) {
+                Some("runtime_superseded")
+            } else if conversation(&record) != Some(receipt.provider_session_id.as_str()) {
+                Some("conversation_changed")
+            } else if source.as_deref() != Some(receipt.source_account.as_str())
+                || revision != receipt.source_binding_revision
+            {
+                Some("binding_changed")
+            } else if now < receipt.started_at_epoch
+                || receipt
+                    .credential_wait
+                    .as_ref()
+                    .is_none_or(|w| w.expired(now))
+            {
+                Some(credential_wait::TIMEOUT)
+            } else {
+                None
+            };
+            if let Some(reason) = refusal {
+                blocked(&mut receipt, reason);
+                return persist(context, &record, &mut store, index, &receipt);
+            }
+            // Polling owns no lifecycle effect. In particular, a newly
+            // verified same-account recovery can still supersede this wait.
+            if !runtime_matches(expected, &record)
+                || !same_account_finished(&incident, &record, now)
+                || !receipt.credential_wait.as_ref().is_some_and(|w| w.due(now))
+            {
+                return Ok(());
+            }
+            receipt.state = "candidate_preflight".into();
+            receipt.reason = None;
+            receipt
+        }
+        Some(mut receipt) if unsettled(&receipt) => {
+            reconcile(&record, &incident, &mut receipt, now);
+            return persist(context, &record, &mut store, index, &receipt);
+        }
+        Some(_) => return Ok(()),
+        None if runtime_matches(expected, &record)
+            && same_account_finished(&incident, &record, now) =>
+        {
+            Receipt {
+                schema_version: "agent-session.auth-failover.v1".into(),
+                operation_id: uuid::Uuid::new_v4().to_string(),
+                state: "candidate_preflight".into(),
+                reason: None,
+                source_account: incident.account_nickname.clone().unwrap_or_default(),
+                source_binding_revision: revision,
+                target_account: None,
+                provider_session_id: conversation(&record).unwrap_or_default().into(),
+                started_at_epoch: now,
+                deadline_epoch: now.saturating_add(30),
+                credential_wait: None,
+                proof: None,
+                new_runtime_incarnation: None,
+                new_runtime_generation: None,
+                unknown_operation_count: 0,
+                unknown_in_flight_effects: vec![],
+                untracked_effects: "unknown".into(),
+                replayed: false,
+            }
+        }
+        None => return Ok(()),
     };
     persist(context, &record, &mut store, index, &receipt)?;
     // A healthy model turn, not refreshed tokens or runtime readiness, is the
@@ -342,10 +389,30 @@ pub(crate) fn tick(
     let (target, proof) = match selection {
         Ok(selected) => selected,
         Err(reason) => {
-            blocked(&mut receipt, reason);
+            if record.agent == "claude" && reason == "no_candidate" {
+                defer_credential(&mut receipt, now, reason);
+            } else {
+                blocked(&mut receipt, reason);
+            }
             return persist(context, &record, &mut store, index, &receipt);
         }
     };
+    if record.agent == "claude"
+        && let Err(cause) = prepare_claude(&mut record, &target)
+    {
+        if cause.code() == "claude-account-switch-refused"
+            && cause.details().is_some_and(|details| {
+                details["cause"] == "claude-account-credentials-unverified"
+                    || (details["cause"] == "claude-account-dir-unsafe"
+                        && details["reason"] == "credentials_missing")
+            })
+        {
+            defer_credential(&mut receipt, now, "target_publication_pending");
+        } else {
+            blocked(&mut receipt, cause.code());
+        }
+        return persist(context, &record, &mut store, index, &receipt);
+    }
     if !proof.fresh(jiff::Timestamp::now().as_second()) {
         blocked(&mut receipt, "capacity_unconfirmed_or_stale");
         return persist(context, &record, &mut store, index, &receipt);
@@ -357,6 +424,7 @@ pub(crate) fn tick(
         receipt.unknown_in_flight_effects,
     ) = crate::coordination::auth_effects::snapshot(context, &record)?;
     receipt.state = "switching".into();
+    receipt.deadline_epoch = now.saturating_add(30);
     persist(context, &record, &mut store, index, &receipt)?;
     let result = if record.agent == "codex" {
         crate::auto_resume::cancel_for_account_switch_locked(
@@ -373,7 +441,7 @@ pub(crate) fn tick(
             )
         })
     } else {
-        switch_claude(context, &mut record, tmux, &target, &mut receipt)
+        switch_claude(context, &mut record, tmux, &mut receipt)
     };
     if let Err(cause) = result {
         blocked(&mut receipt, cause.code());
@@ -453,13 +521,16 @@ fn reconcile(record: &SessionRecord, incident: &AuthIncident, r: &mut Receipt, n
     }
 }
 
-fn switch_claude(
-    context: &CliContext,
-    record: &mut SessionRecord,
-    tmux: &Path,
-    target: &str,
-    receipt: &mut Receipt,
-) -> Result<(), CliError> {
+fn defer_credential(receipt: &mut Receipt, now: i64, reason: &str) {
+    receipt
+        .credential_wait
+        .get_or_insert_with(|| credential_wait::Wait::new(now))
+        .back_off(now);
+    receipt.state = credential_wait::STATE.into();
+    receipt.reason = Some(reason.into());
+}
+
+fn prepare_claude(record: &mut SessionRecord, target: &str) -> Result<(), CliError> {
     crate::validate_resume_metadata(record)?;
     if crate::claude_account::has_queued_next(record) {
         return Err(CliError::runtime(
@@ -469,7 +540,15 @@ fn switch_claude(
         ));
     }
     crate::claude_account::queue_next(record, target)?;
-    crate::claude_account::preflight_next(record)?;
+    crate::claude_account::preflight_next(record)
+}
+
+fn switch_claude(
+    context: &CliContext,
+    record: &mut SessionRecord,
+    tmux: &Path,
+    receipt: &mut Receipt,
+) -> Result<(), CliError> {
     if !receipt
         .proof
         .as_ref()
