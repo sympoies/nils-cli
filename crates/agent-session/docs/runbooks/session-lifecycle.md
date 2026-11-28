@@ -1057,7 +1057,8 @@ multiple switches. This is a public, non-secret surface: keys and values are
 persisted as `launch_env` and returned by JSON start/list/board responses.
 Never pass credentials or private values.
 
-The default allowlist contains `AGENT_RUNTIME_SUPPRESS_MEMORY`,
+The default allowlist contains `AGENT_RUNTIME_PROJECT_CONTEXT_FILE`,
+`AGENT_RUNTIME_PROJECT_READBACK_PATHS`, `AGENT_RUNTIME_SUPPRESS_MEMORY`,
 `AGENT_RUNTIME_SUPPRESS_HEALTH`, `AGENT_RUNTIME_SUPPRESS_PREFLIGHT`,
 `AGENT_RUNTIME_SUPPRESS_FINISH_GATE`, and `AGENT_RUNTIME_SESSION_TMPDIR`. Configure
 `AGENT_SESSION_LAUNCH_ENV_ALLOWLIST` as a JSON array to replace that list;
