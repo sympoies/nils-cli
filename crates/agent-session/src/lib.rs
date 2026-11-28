@@ -6692,7 +6692,7 @@ fn delete_session_locked_with_timeouts_and_prepare<T, F>(
     mut record: SessionRecord,
     session_dir: PathBuf,
     tmux_bin: &Path,
-    options: delete_recovery::DeleteSessionOptions<'_>,
+    options: delete_recovery::DeleteSessionOptions,
     prepare: F,
 ) -> Result<(T, DeleteResult), CliError>
 where
@@ -6711,7 +6711,7 @@ where
     // The pane can exit before its process group empties. Stop orphans proved
     // by the current runtime's environment first, while close holds the record
     // lock and can report any attributed survivors against that runtime.
-    delete_recovery::prepare_session_close(context, &mut record, tmux_bin, options)?;
+    delete_recovery::prepare_session_close(context, &mut record, tmux_bin, verify_timeout)?;
     let terminate = if recover_split_cgroup {
         terminate_tmux_session_with_split_scope_recovery(
             context,
@@ -7365,7 +7365,7 @@ fn gracefully_shutdown_profiled_tmux_session(
     context: &CliContext,
     record: &mut SessionRecord,
     tmux_bin: &Path,
-    (verify_timeout, paused_pane): (Duration, Option<&str>),
+    verify_timeout: Duration,
 ) -> Result<(), SessionTerminationFailure> {
     if recorded_runtime_is_from_prior_boot(record) {
         return Ok(());
@@ -7404,7 +7404,7 @@ fn gracefully_shutdown_profiled_tmux_session(
                 match tmux_send_ctrl_c_if_identity_matches(
                     tmux_bin,
                     &identity,
-                    (remaining.min(DELETE_TERMINATION_PROBE_TIMEOUT), paused_pane),
+                    remaining.min(DELETE_TERMINATION_PROBE_TIMEOUT),
                 ) {
                     Ok(TmuxGracefulInputOutcome::Delivered) => {}
                     Ok(TmuxGracefulInputOutcome::IdentityChanged) => {
@@ -9873,7 +9873,7 @@ enum TmuxGracefulInputOutcome {
 fn tmux_send_ctrl_c_if_identity_matches(
     tmux_bin: &Path,
     identity: &TmuxRuntimeIdentity,
-    (timeout, paused_pane): (Duration, Option<&str>),
+    timeout: Duration,
 ) -> Result<TmuxGracefulInputOutcome, SessionTerminationFailure> {
     let condition = format!(
         "#{{&&:#{{==:#{{session_id}},{}}},#{{&&:#{{==:#{{pane_id}},{}}},#{{==:#{{pane_pid}},{}}}}}}}",
@@ -9886,7 +9886,7 @@ fn tmux_send_ctrl_c_if_identity_matches(
         .arg("-t")
         .arg(&identity.pane_id)
         .arg(condition)
-        .arg(identity.graceful_send_command(paused_pane))
+        .arg(format!("send-keys -t {} C-c", identity.pane_id))
         .arg(format!(
             "display-message -p {TMUX_RUNTIME_IDENTITY_CHANGED_OUTPUT}"
         ));
@@ -16184,7 +16184,7 @@ fi
                 &context,
                 &mut record,
                 &tmux,
-                (Duration::ZERO, None)
+                Duration::ZERO
             )
             .is_ok()
         );

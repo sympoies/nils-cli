@@ -7,19 +7,17 @@ mod idle;
 mod macos_codex_daemons;
 #[cfg(target_os = "macos")]
 mod macos_orphans;
-mod pane_input;
 mod shared_daemons;
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct DeleteSessionOptions<'a> {
+pub(super) struct DeleteSessionOptions {
     pub(super) kill_timeout: Duration,
     pub(super) verify_timeout: Duration,
     pub(super) close_reason: board::CloseReason,
     pub(super) recover_split_cgroup: bool,
-    pub(super) paused_pane: Option<&'a str>,
 }
 
-impl DeleteSessionOptions<'_> {
+impl DeleteSessionOptions {
     pub(super) fn regular(
         kill_timeout: Duration,
         verify_timeout: Duration,
@@ -30,7 +28,6 @@ impl DeleteSessionOptions<'_> {
             verify_timeout,
             close_reason,
             recover_split_cgroup: false,
-            paused_pane: None,
         }
     }
 
@@ -44,7 +41,6 @@ impl DeleteSessionOptions<'_> {
             verify_timeout,
             close_reason,
             recover_split_cgroup: true,
-            paused_pane: None,
         }
     }
 }
@@ -654,19 +650,13 @@ pub(super) fn prepare_session_close(
     context: &CliContext,
     record: &mut SessionRecord,
     tmux_bin: &Path,
-    options: DeleteSessionOptions<'_>,
+    verify_timeout: Duration,
 ) -> Result<(), CliError> {
     #[cfg(target_os = "macos")]
     macos_orphans::terminate(context, record)?;
-    gracefully_shutdown_profiled_tmux_session(
-        context,
-        record,
-        tmux_bin,
-        (options.verify_timeout, options.paused_pane),
+    gracefully_shutdown_profiled_tmux_session(context, record, tmux_bin, verify_timeout).map_err(
+        |reason| session_termination_error(record, reason, SessionTerminationOperation::Delete),
     )
-    .map_err(|reason| {
-        session_termination_error(record, reason, SessionTerminationOperation::Delete)
-    })
 }
 
 pub(super) fn finish_session_delete(

@@ -4,9 +4,9 @@
 ### Result
 
 - Conditional idle deletion checks Claude hook activity, fresh native status
-  and an empty composer under the existing session lock. Input pauses are
-  backed by a durable receipt, restored on SIGINT/SIGTERM and on the next
-  retirement attempt when a run died before restoring the pane.
+  and an empty composer under the existing session lock. It refuses
+  while a tmux client is attached and never changes tmux pane state, so an
+  interrupted run cannot leave a pane input-disabled.
 
 ### Why / context
 

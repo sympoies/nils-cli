@@ -773,16 +773,16 @@ ingress. The lifecycle lock serializes resume, managed input, and mailbox
 delivery. The locks stay held through ownership-checked teardown and removal.
 
 - Claude requires settled hook activity for the bound conversation with no
-  open tool call or pending attention. Retirement pauses tmux pane input before
-  capturing the composer, rechecks native idleness with `claude agents --json`,
-  then captures the composer again to catch a draft that rendered late. If
-  retirement is refused, input is restored. Before pausing, it writes a pause
-  receipt in the session directory naming the tmux server socket and pane id.
-  SIGINT or SIGTERM restores that pane, and a retry after a run that died
-  without cleanup restores the receipt's pane first when it still matches the
-  session, then proceeds. A pane disabled without a receipt is still refused.
-  When graceful shutdown uses Ctrl-C, a configured tmux `after-send-keys` hook
-  prevents safe retirement.
+  open tool call or pending attention. Retirement captures the composer,
+  rechecks native idleness with `claude agents --json`, then captures the
+  composer again to catch a draft that rendered late. It then requires that
+  no tmux client is attached, because only an attached client can type, and
+  refuses with `session-client-attached` otherwise. The client check runs
+  after the final capture and again immediately before teardown. It never
+  changes tmux pane state, and `send` stays serialized behind the same
+  lifecycle lock. The contract is best effort, fenced against attached clients
+  and serialized injected input. The residual is a client that attaches and
+  types within the last interval between the final client check and teardown.
 - Codex verifies the live primary thread. The proxy fences native provider
   requests such as turn starts, reviews, shell commands, and compaction.
   Read-only inspection requests can pass through.

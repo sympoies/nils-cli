@@ -4,6 +4,20 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, os::fd::AsRawFd, os::unix::process::ExitStatusExt, thread, time::Duration};
 
+fn tmux_calls(fixture: &Fixture) -> Vec<String> {
+    fs::read_to_string(fixture._tmp.path().join("tmux-calls"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Retirement must leave the pane exactly as the owner left it until teardown.
+fn assert_no_pane_mutation(fixture: &Fixture) {
+    let calls = tmux_calls(fixture);
+    assert!(!calls.iter().any(|call| call == "select-pane"), "{calls:?}");
+}
+
 const EMPTY_COMPOSER: &str = "────────────────────\n❯ \n────────────────────\n";
 
 fn claude_fixture() -> Fixture {
@@ -20,30 +34,17 @@ fn claude_fixture() -> Fixture {
     .unwrap();
     fs::write(&fixture.name_status, "running").unwrap();
     fs::write(cwd.join("composer"), EMPTY_COMPOSER).unwrap();
-    let tmux = fs::read_to_string(&fixture.tmux).unwrap().replace(
-        " capture-pane)",
-        r#" show-options)
-   [ "$2:$3:$4:$5" = '-AHv:-t:%91:after-send-keys' ] || exit 42
-   if [ -f shutdown-hook ]; then cat shutdown-hook; fi ;;
- select-pane)
-   case "$2:$3:$4" in
-     '-d:-t:%91') : > input-off; printf 'paused\n' >> input-events ;;
-     '-e:-t:%91') rm -f input-off; printf 'resumed\n' >> input-events ;;
-     *) exit 42 ;;
-   esac ;;
- capture-pane)"#,
-    );
-    let tmux = tmux
-        .replace(
-            " display-message) ",
-            r#" display-message) if [ "$5" = '#{pane_id} #{pane_input_off} #{socket_path}' ]; then printf '%%91 %s fixture.sock\n' "$([ -f input-off ] && echo 1 || echo 0)"; exit; fi; "#,
+    // Log every tmux subcommand so tests can prove which ones retirement used.
+    let tmux = fs::read_to_string(&fixture.tmux)
+        .unwrap()
+        .replacen(
+            "#!/bin/sh\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" >> tmux-calls\n",
+            1,
         )
         .replace(
-            " if-shell)",
-            r#" if-shell)
-   if grep -q '^paused$' input-events; then
-     [ "$6" = 'select-pane -e -t %91 ; send-keys -t %91 C-c ; select-pane -d -t %91' ] || exit 42
-   fi"#,
+            " capture-pane)",
+            " list-clients) [ ! -f clients ] || cat clients ;;\n capture-pane)",
         );
     fs::write(&fixture.tmux, tmux).unwrap();
     fixture.record["runtime"]["agent_profile"] = json!("synthetic-claude");
@@ -115,10 +116,7 @@ fn idle_delete_retires_claude_with_an_empty_composer() {
     assert_eq!(receipt["killed"], true);
     assert_eq!(receipt["deleted"], true);
     assert!(fixture.killed.exists());
-    assert_eq!(
-        fs::read_to_string(fixture._tmp.path().join("input-events")).unwrap(),
-        "paused\n"
-    );
+    assert_no_pane_mutation(&fixture);
     assert!(!fixture.session.exists());
     assert_eq!(fixture.pane.0.wait().unwrap().signal(), Some(libc::SIGINT));
 }
@@ -276,137 +274,129 @@ exec cat claude-agents.json
     assert_eq!(fs::read_to_string(cwd.join("composer")).unwrap(), draft);
     assert_eq!(
         fs::read_to_string(cwd.join("input-events")).unwrap(),
-        "paused\nfinal-query\nresumed\n"
+        "final-query\n"
     );
-    assert!(!fixture.session.join(RECEIPT).exists());
+    assert_no_pane_mutation(&fixture);
 }
 
 #[test]
-fn idle_delete_refuses_when_tmux_shutdown_hook_can_reopen_input() {
+fn idle_delete_refuses_while_a_tmux_client_is_attached() {
     let mut fixture = claude_fixture();
     let runtime = incarnation(&fixture).to_owned();
-    fs::write(
-        fixture._tmp.path().join("shutdown-hook"),
-        "run-shell 'sleep 1'",
-    )
-    .unwrap();
+    fs::write(fixture._tmp.path().join("clients"), "/dev/ttys001\n").unwrap();
     assert_refused(
         &mut fixture,
         &["--if-idle", "--expected-incarnation", &runtime],
-        "session-status-unknown",
+        "session-client-attached",
     );
-    assert!(!fixture._tmp.path().join("input-events").exists());
+    assert_no_pane_mutation(&fixture);
+    assert!(!tmux_calls(&fixture).iter().any(|call| call == "send-keys"));
 }
 
-const RECEIPT: &str = "pane-input-pause.json";
-
-fn interrupt_during_composer_check(fixture: &Fixture, interrupt: &str) {
+#[test]
+fn idle_delete_serializes_a_concurrent_send_behind_the_record_lock() {
+    let mut fixture = claude_fixture();
+    let runtime = incarnation(&fixture).to_owned();
     let script = fs::read_to_string(&fixture.tmux).unwrap().replace(
         " capture-pane) cat ",
-        &format!(
-            " capture-pane) [ ! -f interrupt-once ] || {{ rm interrupt-once; {interrupt}; }}; cat "
-        ),
+        " capture-pane) if [ -f capture-hold ]; then : > capture-entered; while [ -f capture-hold ]; do sleep 0.01; done; fi; cat ",
     );
     fs::write(&fixture.tmux, script).unwrap();
-    fs::write(fixture._tmp.path().join("interrupt-once"), "").unwrap();
-}
-
-#[test]
-fn idle_delete_restores_the_pane_a_killed_run_left_paused() {
-    let mut fixture = claude_fixture();
-    let runtime = incarnation(&fixture).to_owned();
-    let guard = ["--if-idle", "--expected-incarnation", &runtime];
-    interrupt_during_composer_check(&fixture, "kill -9 $PPID");
     let cwd = fixture._tmp.path().to_path_buf();
-    let killed = delete_at(&cwd, &fixture.state, &fixture.tmux, &guard);
-    assert_ne!(killed.code, 0);
-    // No destructor ran: the pause and its receipt are all that is left.
-    assert_eq!(
-        fs::read_to_string(cwd.join("input-events")).unwrap(),
-        "paused\n"
-    );
-    let receipt: Value =
-        serde_json::from_slice(&fs::read(fixture.session.join(RECEIPT)).unwrap()).unwrap();
-    assert_eq!(receipt["pane_id"], "%91");
-    assert_eq!(receipt["socket_path"], "fixture.sock");
-    assert_eq!(receipt["id"], ID);
-    assert_eq!(receipt["launch_id"], runtime);
-
-    // The retry restores the recorded pane first, then retires normally.
-    let output = delete_reaping_pane(&mut fixture, &guard);
-    assert_eq!(
-        output.code,
-        0,
-        "{} {}",
-        output.stdout_text(),
-        output.stderr_text()
-    );
-    assert_eq!(
-        fs::read_to_string(cwd.join("input-events")).unwrap(),
-        "paused\nresumed\npaused\n"
-    );
-    assert!(!fixture.session.exists());
+    fs::write(cwd.join("capture-hold"), "").unwrap();
+    let (state, tmux) = (&fixture.state, &fixture.tmux);
+    let sent = thread::scope(|scope| {
+        let delete = scope.spawn(|| {
+            delete_at(
+                &cwd,
+                state,
+                tmux,
+                &["--if-idle", "--expected-incarnation", &runtime],
+            )
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !cwd.join("capture-entered").exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "delete never reached the composer"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        // Retirement holds the record lock here, so a send has to wait for it.
+        let mut command =
+            std::process::Command::new(nils_test_support::bin::resolve("agent-session"));
+        nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
+        let mut send = command
+            .args([
+                "--state-dir",
+                state.to_str().unwrap(),
+                "send",
+                ID,
+                "--text",
+                "owner input",
+                "--tmux-bin",
+                tmux.to_str().unwrap(),
+                "--format",
+                "json",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        thread::sleep(Duration::from_millis(300));
+        assert!(
+            send.try_wait().unwrap().is_none(),
+            "send escaped the record lock"
+        );
+        let calls = fs::read_to_string(cwd.join("tmux-calls")).unwrap();
+        for input in ["load-buffer", "paste-buffer"] {
+            assert!(!calls.lines().any(|call| call == input), "{calls}");
+        }
+        fs::remove_file(cwd.join("capture-hold")).unwrap();
+        while !delete.is_finished() && fixture.pane.0.try_wait().unwrap().is_none() {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(delete.join().unwrap().code, 0);
+        send.wait_with_output().unwrap()
+    });
+    // The session was retired first, so the input is refused rather than pasted
+    // into a pane that is being torn down.
+    assert!(!sent.status.success());
+    let calls = fs::read_to_string(cwd.join("tmux-calls")).unwrap();
+    for input in ["load-buffer", "paste-buffer"] {
+        assert!(!calls.lines().any(|call| call == input), "{calls}");
+    }
 }
 
 #[test]
-fn idle_delete_restores_the_pane_when_terminated_during_the_final_checks() {
+fn idle_delete_refuses_a_client_that_attaches_after_the_last_capture() {
     let mut fixture = claude_fixture();
     let runtime = incarnation(&fixture).to_owned();
-    interrupt_during_composer_check(&fixture, "kill -TERM $PPID; sleep 5");
+    let cwd = fixture._tmp.path().to_path_buf();
+    let draft = EMPTY_COMPOSER.replace("❯ ", "❯ owner draft");
+    fs::write(cwd.join("late-draft"), &draft).unwrap();
+    // The first client query follows the final capture and sees nothing. A
+    // client then attaches and types before the query made just before teardown.
+    let script = fs::read_to_string(&fixture.tmux).unwrap().replace(
+        " list-clients) [ ! -f clients ] || cat clients ;;",
+        " list-clients) if [ -f clients-polled ]; then echo /dev/ttys001; cp late-draft composer; else : > clients-polled; fi ;;",
+    );
+    fs::write(&fixture.tmux, script).unwrap();
     let record = fixture.session.join("session.json");
     let before = fs::read(&record).unwrap();
-    let cwd = fixture._tmp.path().to_path_buf();
-    let output = delete_at(
-        &cwd,
-        &fixture.state,
-        &fixture.tmux,
+    let error = assert_refused(
+        &mut fixture,
         &["--if-idle", "--expected-incarnation", &runtime],
+        "session-client-attached",
     );
-    assert_ne!(output.code, 0);
-    assert_eq!(
-        fs::read_to_string(cwd.join("input-events")).unwrap(),
-        "paused\nresumed\n"
-    );
-    assert!(!cwd.join("input-off").exists());
-    assert!(!fixture.session.join(RECEIPT).exists());
+    assert_eq!(error["details"]["id"], ID);
     assert_eq!(fs::read(&record).unwrap(), before);
-    assert!(!fixture.killed.exists());
-    assert!(fixture.pane.0.try_wait().unwrap().is_none());
-}
-
-#[test]
-fn idle_delete_ignores_a_receipt_for_a_different_pane_identity() {
-    let mut fixture = claude_fixture();
-    let runtime = incarnation(&fixture).to_owned();
-    let cwd = fixture._tmp.path().to_path_buf();
-    fs::write(cwd.join("input-off"), "").unwrap();
-    let receipt = json!({
-        "schema_version": "agent-session.pane-input-pause.v1",
-        "id": ID,
-        "launch_id": runtime,
-        "tmux_session": fixture.record["tmux_session"],
-        "socket_path": "another-server.sock",
-        "pane_id": "%91",
-    });
-    fs::write(fixture.session.join(RECEIPT), receipt.to_string()).unwrap();
-    assert_refused(
-        &mut fixture,
-        &["--if-idle", "--expected-incarnation", &runtime],
-        "session-status-unknown",
+    assert_eq!(fs::read_to_string(cwd.join("composer")).unwrap(), draft);
+    let calls = tmux_calls(&fixture);
+    assert_eq!(
+        calls.iter().filter(|call| *call == "list-clients").count(),
+        2
     );
-    assert!(!cwd.join("input-events").exists());
-    assert!(cwd.join("input-off").exists());
-}
-
-#[test]
-fn idle_delete_still_refuses_a_pane_disabled_without_a_receipt() {
-    let mut fixture = claude_fixture();
-    let runtime = incarnation(&fixture).to_owned();
-    fs::write(fixture._tmp.path().join("input-off"), "").unwrap();
-    assert_refused(
-        &mut fixture,
-        &["--if-idle", "--expected-incarnation", &runtime],
-        "session-status-unknown",
-    );
-    assert!(!fixture._tmp.path().join("input-events").exists());
+    assert_no_pane_mutation(&fixture);
+    assert!(!calls.iter().any(|call| call == "send-keys"), "{calls:?}");
 }

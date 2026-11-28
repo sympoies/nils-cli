@@ -52,12 +52,6 @@ pub(super) fn delete_if_idle(
             Some(json!({"id": record.id})),
         ));
     }
-    let session_dir = resolve_session_record_path(context, &record.id)?.session_dir;
-    if claude {
-        // We hold the record lock, so a pause receipt here belongs to a run that
-        // died before restoring input. Restore that exact pane before the checks.
-        pane_input::restore_interrupted(&tmux, &record, &session_dir)?;
-    }
     if persisted_tmux_termination_state(&record)
         .map_err(|_| unknown(&record))?
         .is_some()
@@ -117,14 +111,6 @@ pub(super) fn delete_if_idle(
     } else {
         require_waiting_activity(context, &record)?;
     }
-    let paused_input = if claude {
-        Some(
-            pane_input::PausedPaneInput::pause(&tmux, &record, &session_dir)
-                .ok_or_else(|| unknown(&record))?,
-        )
-    } else {
-        None
-    };
     let deadline = Instant::now() + crate::send::guarded_hold_budget(&record, false);
     if !claude {
         require_codex_idle(&record, deadline)?;
@@ -152,18 +138,26 @@ pub(super) fn delete_if_idle(
     check_composer()?;
 
     if claude {
-        // Refuse native work that appeared during capture, then check for late
-        // rendering of input accepted before the pane was paused.
+        // Both captures bracket the final native query: refuse native work that
+        // appeared meanwhile and any draft that rendered late. Only an attached
+        // client can type, so one also blocks retirement. Nothing here changes
+        // the pane before teardown.
         claude::require_native_idle(&record)?;
         check_composer()?;
+        claude::require_detached(&tmux, &record)?;
     }
 
-    let mut options = DeleteSessionOptions::regular(
+    let session_dir = resolve_session_record_path(context, &record.id)?.session_dir;
+    let options = DeleteSessionOptions::regular(
         PANE_INPUT_COMMAND_TIMEOUT,
         DELETE_TERMINATION_VERIFY_TIMEOUT,
         board::CloseReason::Deleted,
     );
-    options.paused_pane = paused_input.as_ref().map(pane_input::PausedPaneInput::pane);
+    if claude {
+        // A client can attach after the check above. Look again as late as
+        // possible; the remaining check-to-teardown interval is the residual.
+        claude::require_detached(&tmux, &record)?;
+    }
     let (_, mut deleted) = delete_session_locked_with_timeouts_and_prepare(
         context,
         record,
@@ -172,9 +166,6 @@ pub(super) fn delete_if_idle(
         options,
         |_| Ok(()),
     )?;
-    if let Some(input) = paused_input {
-        input.disarm();
-    }
     deleted.children = Some(children);
     Ok(deleted)
 }
