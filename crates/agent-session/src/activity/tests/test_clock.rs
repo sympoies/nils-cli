@@ -21,6 +21,14 @@ impl TestClock {
         Self
     }
 
+    /// Freezes the clock at an instant the test owns, so elapsed time is measured
+    /// from it instead of from whenever the host happened to schedule the test.
+    pub(super) fn freeze_at(at: &str) -> Self {
+        let at = at.parse::<Timestamp>().expect("RFC 3339 instant");
+        FROZEN.with(|frozen| frozen.set(Some(at)));
+        Self
+    }
+
     pub(super) fn advance(&self, by: Duration) {
         FROZEN.with(|frozen| {
             let current = frozen.get().expect("frozen clock");
