@@ -60,8 +60,6 @@ crates/agent-session/tests/integration/coordination.rs	git	let removed = Command
 crates/agent-session/tests/integration/delete_idle.rs	unix-socket	let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();	1	Existing fixture to migrate under #4172.
 crates/agent-workflow-primitives/tests/integration/agent_run_inspect.rs	unix-socket	let datagram = UnixDatagram::bind(&datagram_path).expect("datagram listener");	1	Existing fixture to migrate under #4172.
 crates/agent-workflow-primitives/tests/integration/agent_run_inspect.rs	unix-socket	let stream = UnixListener::bind(&stream_path).expect("stream listener");	1	Existing fixture to migrate under #4172.
-crates/agent-workflow-primitives/tests/integration/cli.rs	git	let mut command = Command::new("git");	1	Existing fixture to migrate under #4172.
-crates/agent-workflow-primitives/tests/integration/cli.rs	git	let status = Command::new("git")	1	Existing fixture to migrate under #4172.
 crates/agent-workflow-primitives/tests/integration/cli/retro_git.rs	git	let mut command = Command::new("git");	1	The #4167 fixture supplies private Git config and drops command-scoped signing inputs.
 crates/agent-workflow-primitives/tests/integration/control_plane.rs	git	Command::new("git")	5	Existing fixture to migrate under #4172.
 crates/agent-workflow-primitives/tests/integration/review_specialists.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
