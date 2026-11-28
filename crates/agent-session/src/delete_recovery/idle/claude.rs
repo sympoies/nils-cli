@@ -34,7 +34,7 @@ pub(super) fn require_waiting(
     }
 }
 
-pub(super) fn require_native_idle(record: &SessionRecord) -> Result<(), CliError> {
+pub(crate) fn require_native_idle(record: &SessionRecord) -> Result<(), CliError> {
     match claude_agents::fresh_state_for(record).map_err(|_| unknown(record))? {
         claude_agents::AgentState::Idle => Ok(()),
         claude_agents::AgentState::Busy => Err(active(record, "working")),

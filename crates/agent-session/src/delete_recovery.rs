@@ -3,6 +3,7 @@ use super::*;
 #[cfg(target_os = "linux")]
 pub(crate) mod codex_daemons;
 mod idle;
+pub(crate) use idle::require_claude_native_idle;
 #[cfg(target_os = "macos")]
 mod macos_codex_daemons;
 #[cfg(target_os = "macos")]

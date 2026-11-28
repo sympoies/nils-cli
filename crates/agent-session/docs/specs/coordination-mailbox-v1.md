@@ -343,10 +343,15 @@ body-free text wake. Its receipt detail names `notice-writers-disabled`,
 `notice-provider-unsupported`, or `notice-receiver-not-attached`. The guarded
 text path requires an idle recipient and an empty composer, preserves even a
 stale operator draft, and claims the generation immediately before pasting.
-An installed module whose readiness is missing or invalid still defers without
-fallback, as does a receiver that has not authorized its offer. Failed or
-uncertain attempts remain consumed within their generation; absent history
-never authorizes replay. See [session notices](session-notices-v1.md).
+
+The native notice route defers until an installed module is ready and
+authorizes its offer. Before the first turn of a replacement, an exact
+`SessionStart` returns Claude to normal wake admission. A replacement still
+awaiting that hook can receive the single-line text wake when fresh native
+idle observations bracket an empty composer. This route uses the same detached
+recipient and generation checks as the normal wake and preserves operator
+drafts. Failed or uncertain attempts remain consumed within their generation.
+See [session notices](session-notices-v1.md).
 
 The authenticated `message reminder` command reads the invoking hook's writer
 environment. Every hook recipient gets `null` without a claim when writers are
@@ -355,7 +360,7 @@ off. With writers enabled, hook-only recipients receive the current
 the companion schema, recipient and envelope. Hook-only wakes remain supported.
 A stripped hook environment cannot select another format or claim a generation.
 
-The configuration-only Claude text wake is recorded as `mailbox-text-wake.v1`.
+The single-line Claude text wake is recorded as `mailbox-text-wake.v1`.
 It uses the same generation and queue-time fences as native delivery. Unread
 metadata is authoritative, and mail remains readable through an explicit inbox
 read when no wake is sent.
@@ -479,7 +484,7 @@ input rows.
 
 New durable attempt receipts record `attempted_prompt_format`
 `mailbox-notice.v1` with the exact envelope bytes, or `mailbox-text-wake.v1` for
-the configuration-only Claude text route. A native notice attempt requires
+the single-line Claude text route. A native notice attempt requires
 positive observation to resolve; absence leaves it parked. Text wakes use the
 guarded terminal submission result; an unknown result stays consumed. A receipt
 in a retired or unknown format never resolves by observation and never
@@ -542,12 +547,10 @@ operation admission returns `coordination-notification-submission-in-progress` w
 until the submission boundary completes.
 
 Stop, delete, resume, runtime replacement, and maintenance mutations for the exact incarnation share this
-admission fence, while account refresh and unrelated coordination registry work remain available. Claude
-additionally requires that its latest provider event, surviving a no-reactivation debounce, be a `Stop`
-hook or the later `idle_prompt` completion that Claude emits once its composer has been idle for about a
-minute; the completion replaces the Stop as the latest event, so refusing it would leave guidance for an
-idle worker queued indefinitely. Terminal acceptance requires the byte-exact prompt as the content of a
-newer transcript-observed turn.
+admission fence, while account refresh and unrelated coordination registry work remain available.
+After a Claude turn, normal wake admission uses the latest `Stop` hook or the later `idle_prompt`
+completion, after a debounce with no reactivation. Terminal acceptance requires the byte-exact prompt
+as the content of a newer transcript-observed turn.
 
 An exact positive provider observation can reconcile an `attempting` or
 `attempt_unknown` notice to `prompt_submitted`. The serve reconciliation loop

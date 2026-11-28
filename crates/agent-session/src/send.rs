@@ -294,7 +294,7 @@ fn send_observing(
     if record.agent != "claude"
         && let Some(candidate) = notification
     {
-        crate::serve::begin_mailbox_notice(context, &record, &tmux_bin, candidate)?;
+        crate::serve::begin_mailbox_notice(context, &record, &tmux_bin, candidate, false)?;
     }
     if args.guards.enabled() {
         return guarded(
@@ -709,7 +709,13 @@ fn guarded(
                     admission.check(None, "claimed"),
                 )?;
                 if let Some(candidate) = text_wake {
-                    crate::serve::begin_mailbox_notice(context, &record, tmux_bin, candidate)?;
+                    crate::serve::begin_mailbox_notice(
+                        context,
+                        &record,
+                        tmux_bin,
+                        candidate,
+                        args.guards.claude_mailbox_native_idle,
+                    )?;
                 }
                 prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
                 let permission = reply_delivery::consume(

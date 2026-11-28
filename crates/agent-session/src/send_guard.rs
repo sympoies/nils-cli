@@ -25,6 +25,7 @@ thread_local! {
     static TEST_RETRY_WINDOW: std::cell::Cell<Duration> = const { std::cell::Cell::new(POST_PASTE_OBSERVATION_RETRY_WINDOW) };
 }
 
+pub(crate) mod claude_mailbox;
 mod clear;
 mod codex_notice;
 mod composer;
@@ -42,6 +43,9 @@ mod text;
 
 #[derive(Clone, Debug, Default, Args)]
 pub struct GuardArgs {
+    /// Internal admission for a replacement's one-line mailbox wake.
+    #[arg(skip)]
+    pub(crate) claude_mailbox_native_idle: bool,
     /// Internal marker enabling the notice-only multiline composer verifier.
     #[arg(skip)]
     pub notice_envelope: bool,
@@ -492,6 +496,9 @@ impl Admission<'_> {
                 "idle",
                 stage,
             ));
+        }
+        if self.args.claude_mailbox_native_idle {
+            return self.check_claude_mailbox_idle(stage);
         }
         if crate::codex_app_server::runtime_is_supported(self.record) {
             // Native idle may replace stale hook progress, never outstanding
