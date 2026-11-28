@@ -411,7 +411,8 @@ fn board_snapshot_is_opt_in_and_operator_authenticated() {
                 "terminal_activity.v1",
                 "runtime_exit.v1",
                 "boot_recovery.v1",
-                "unsubmitted_attempt.v1"
+                "unsubmitted_attempt.v1",
+                "auth_recovery.v1"
             ])
         );
         assert!(board["generated_at"].as_str().is_some(), "{board}");
@@ -1030,7 +1031,8 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
             "terminal_activity.v1",
             "runtime_exit.v1",
             "boot_recovery.v1",
-            "unsubmitted_attempt.v1"
+            "unsubmitted_attempt.v1",
+            "auth_recovery.v1"
         ])
     );
     let records = board["records"].as_array().expect("records");
@@ -1097,7 +1099,8 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
             "terminal_activity.v1",
             "runtime_exit.v1",
             "boot_recovery.v1",
-            "unsubmitted_attempt.v1"
+            "unsubmitted_attempt.v1",
+            "auth_recovery.v1"
         ])
     );
     let root = snapshot["records"]
@@ -1125,6 +1128,7 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
             "runtime_exit.v1",
             "boot_recovery.v1",
             "unsubmitted_attempt.v1",
+            "auth_recovery.v1",
             "review_handoff_retention.v1"
         ])
     );
