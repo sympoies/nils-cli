@@ -2,7 +2,7 @@ use super::*;
 use crate::activity::{Confidence, SourceKind, TurnPhase};
 use crate::codex_app_server::{self, guarded};
 
-mod claude;
+pub(super) mod claude;
 
 pub(super) fn delete_if_idle(
     context: &CliContext,
@@ -102,13 +102,10 @@ pub(super) fn delete_if_idle(
         .map_err(|_| unknown(&record))?
         .ok_or_else(|| active(&record, "provider-event-pending"))?;
 
-    if activity::pending::unsettled(context, &record).ok_or_else(|| unknown(&record))? {
-        return Err(active(&record, "provider-event-pending"));
-    }
-    if claude {
-        claude::require_waiting(context, &record)?;
-        claude::require_native_idle(&record)?;
-    } else {
+    if !claude {
+        if activity::pending::unsettled(context, &record).ok_or_else(|| unknown(&record))? {
+            return Err(active(&record, "provider-event-pending"));
+        }
         require_waiting_activity(context, &record)?;
     }
     let deadline = Instant::now() + crate::send::guarded_hold_budget(&record, false);
@@ -135,16 +132,12 @@ pub(super) fn delete_if_idle(
                 _ => unknown(&record),
             })
     };
-    check_composer()?;
-
     if claude {
-        // Both captures bracket the final native query: refuse native work that
-        // appeared meanwhile and any draft that rendered late. Only an attached
-        // client can type, so one also blocks retirement. Nothing here changes
-        // the pane before teardown.
-        claude::require_native_idle(&record)?;
-        check_composer()?;
+        claude::check_idle_and_composer(context, &record, None, check_composer)?;
+        // Retirement additionally requires no attached clients before teardown.
         claude::require_detached(&tmux, &record)?;
+    } else {
+        check_composer()?;
     }
 
     let session_dir = resolve_session_record_path(context, &record.id)?.session_dir;

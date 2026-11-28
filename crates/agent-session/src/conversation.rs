@@ -440,7 +440,7 @@ fn transition(
                 admit_clear(context, &current, &tmux, deadline, options, attempt)
             })();
             match result {
-                Err(err) if deadline.is_some() && waitable(err.code()) => {
+                Err(err) if deadline.is_some() && waitable(&err) => {
                     let remaining = deadline
                         .expect("wait requested")
                         .saturating_duration_since(Instant::now());
@@ -667,6 +667,7 @@ fn admit_clear(
 ) -> Result<(), CliError> {
     let enhanced = options.wait_idle.is_some() || options.initial_prompt_file.is_some();
     let codex = current.agent == "codex";
+    let shared_claude_admission = enhanced && !codex;
     let _gate = if codex {
         Some(codex_app_server::acquire_account_mutation_gate(
             context,
@@ -694,7 +695,9 @@ fn admit_clear(
         current,
         "resolve the provider prompt before retrying clear",
     )?;
-    require_idle(context, current)?;
+    if !shared_claude_admission {
+        require_idle(context, current)?;
+    }
     let ingress = activity::pending::probe_lock(context, &current.id)?.ok_or_else(|| {
         error(
             "send-provider-event-pending",
@@ -716,10 +719,16 @@ fn admit_clear(
     )?;
     let composer_budget = Instant::now() + crate::send::guarded_hold_budget(current, false);
     let composer_deadline = deadline.map_or(composer_budget, |d| d.min(composer_budget));
-    if enhanced && !codex {
-        clear::check_claude_admission(context, current, tmux, composer_deadline)?;
+    let check_composer = || check_composer(context, current, tmux, composer_deadline);
+    if shared_claude_admission {
+        crate::delete_recovery::check_claude_idle_and_composer(
+            context,
+            current,
+            deadline,
+            check_composer,
+        )?;
     } else {
-        check_composer(context, current, tmux, composer_deadline)?;
+        check_composer()?;
     }
     if enhanced {
         attempt.fence_input(context, current)?;
@@ -772,9 +781,9 @@ fn check_composer(
     .check_preserving_draft("admission")
 }
 
-fn waitable(code: &str) -> bool {
+fn waitable(err: &CliError) -> bool {
     matches!(
-        code,
+        err.code(),
         "conversation-session-not-idle"
             | "conversation-live-identity-unverified"
             | "send-provider-event-pending"
@@ -782,7 +791,14 @@ fn waitable(code: &str) -> bool {
             | "session-record-lock-timeout"
             | "codex-account-session-busy"
             | "coordination-notification-submission-in-progress"
-    )
+            | "session-status-unknown"
+    ) || (err.code() == "session-state-mismatch"
+        && matches!(
+            err.details()
+                .and_then(|details| details.get("state"))
+                .and_then(serde_json::Value::as_str),
+            Some("working" | "provider-tool-pending" | "provider-event-pending")
+        ))
 }
 
 fn idle_timeout(record: &SessionRecord) -> CliError {

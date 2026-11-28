@@ -192,7 +192,8 @@ submit one prompt to the confirmed new conversation. A caller running in the
 target's current turn needs a separate worker so that the turn can finish.
 
 Before sending terminal input, clear checks provider attention, the mailbox, and
-the exact composer.
+the exact composer. For Claude, either new option also requires fresh native
+idle observations and checks the composer again before sending input.
 
 - A reported approval or question returns `agent-blocked`. Pending provider
   event ingestion returns `send-provider-event-pending`.

@@ -221,10 +221,21 @@ pub(super) fn state_for(record: &SessionRecord) -> Result<(AgentState, String), 
     ))
 }
 
-/// Retirement must sample the provider while holding its admission locks.
-pub(crate) fn fresh_state_for(record: &SessionRecord) -> Result<AgentState, Unavailable> {
+/// Sample the provider live while the caller holds its admission locks.
+pub(crate) fn fresh_state_for(
+    record: &SessionRecord,
+    deadline: Option<Instant>,
+) -> Result<AgentState, Unavailable> {
     let (provider_session_id, bin, config_dir) = target_for(record)?;
-    fetch(&bin, config_dir.as_deref(), FETCH_TIMEOUT)?.state(provider_session_id)
+    let timeout = deadline.map_or(FETCH_TIMEOUT, |deadline| {
+        deadline
+            .saturating_duration_since(Instant::now())
+            .min(FETCH_TIMEOUT)
+    });
+    if timeout.is_zero() {
+        return Err(Unavailable::Timeout);
+    }
+    fetch(&bin, config_dir.as_deref(), timeout)?.state(provider_session_id)
 }
 
 fn target_for(record: &SessionRecord) -> Result<(&str, PathBuf, Option<PathBuf>), Unavailable> {

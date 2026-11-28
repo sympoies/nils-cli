@@ -342,6 +342,26 @@ async fn check_initial_prompt(agent: AgentKind, scenario: InitialPrompt) {
     let _broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
     let tmp = tempfile::TempDir::new().unwrap();
     let (context, mut record, tmux) = tests::fixture(&tmp, agent);
+    let _claude = (agent == AgentKind::Claude).then(|| {
+        let bin = tmp.path().join("fake-claude");
+        fs::write(
+            &bin,
+            "#!/bin/sh\n[ \"$*\" = 'agents --json' ] || exit 42\nexec cat \"${0%/*}/claude-agents.json\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o700)).unwrap();
+        let status = if matches!(scenario, InitialPrompt::NeverIdle) {
+            "busy"
+        } else {
+            "idle"
+        };
+        fs::write(
+            tmp.path().join("claude-agents.json"),
+            json!([{"sessionId": "old-conversation", "status": status}]).to_string(),
+        )
+        .unwrap();
+        EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_BIN", bin.to_str().unwrap())
+    });
     let (_socket_dir, socket) = short_socket_path("initial-prompt.sock");
     let (_proxy, server) = if agent == AgentKind::Codex {
         let listener = tokio::net::UnixListener::bind(&socket).unwrap();
@@ -369,10 +389,11 @@ async fn check_initial_prompt(agent: AgentKind, scenario: InitialPrompt) {
     unread_mail(&context, &record);
     let activity_path = session_dir(&context, &record.id).join("activity.json");
     let waiting = fs::read(&activity_path).unwrap();
-    if matches!(
-        scenario,
-        InitialPrompt::Confirmed | InitialPrompt::NeverIdle
-    ) {
+    // Keep Claude's hook projection idle in its timeout case. Only the
+    // shared native probe can then detect that the exact conversation is busy.
+    if matches!(scenario, InitialPrompt::Confirmed)
+        || (agent == AgentKind::Codex && matches!(scenario, InitialPrompt::NeverIdle))
+    {
         let mut working: serde_json::Value = serde_json::from_slice(&waiting).unwrap();
         working["state"]["phase"] = json!("working");
         write_private_file(&activity_path, &serde_json::to_vec(&working).unwrap()).unwrap();
@@ -607,4 +628,9 @@ fn clear_initial_prompt_rejects_nonregular_and_oversized_files_before_input() {
             .join("clear-receipts")
             .exists()
     );
+}
+
+#[tokio::test]
+async fn clear_wait_idle_does_not_submit_while_native_claude_is_busy() {
+    check_initial_prompt(AgentKind::Claude, InitialPrompt::NeverIdle).await;
 }

@@ -5,12 +5,28 @@ use crate::{
     run_output_with_timeout,
 };
 use serde_json::json;
-use std::{path::Path, process::Command};
+use std::{path::Path, process::Command, time::Instant};
 
-pub(super) fn require_waiting(
+/// Requires the caller to hold the record, activity, and ingress fences.
+/// Both captures bracket the final native query so that newly rendered work
+/// or a draft observed during admission cannot be missed.
+pub(crate) fn check_idle_and_composer(
     context: &CliContext,
     record: &SessionRecord,
+    deadline: Option<Instant>,
+    check_composer: impl Fn() -> Result<(), CliError>,
 ) -> Result<(), CliError> {
+    if pending::unsettled(context, record).ok_or_else(|| unknown(record))? {
+        return Err(active(record, "provider-event-pending"));
+    }
+    require_waiting(context, record)?;
+    require_native_idle(record, deadline)?;
+    check_composer()?;
+    require_native_idle(record, deadline)?;
+    check_composer()
+}
+
+fn require_waiting(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
     if pending::open_claude_tools(context, record).ok_or_else(|| unknown(record))? {
         return Err(active(record, "provider-tool-pending"));
     }
@@ -34,8 +50,8 @@ pub(super) fn require_waiting(
     }
 }
 
-pub(super) fn require_native_idle(record: &SessionRecord) -> Result<(), CliError> {
-    match claude_agents::fresh_state_for(record).map_err(|_| unknown(record))? {
+fn require_native_idle(record: &SessionRecord, deadline: Option<Instant>) -> Result<(), CliError> {
+    match claude_agents::fresh_state_for(record, deadline).map_err(|_| unknown(record))? {
         claude_agents::AgentState::Idle => Ok(()),
         claude_agents::AgentState::Busy => Err(active(record, "working")),
         claude_agents::AgentState::Waiting(claude_agents::WaitingFor::PermissionPrompt) => {
