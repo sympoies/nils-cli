@@ -2,7 +2,6 @@
 //! the JSON envelope, against a real fixture repository.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use nils_test_support::bin;
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
@@ -1800,7 +1799,7 @@ fn fix_terminates_on_an_entry_whose_fence_is_never_closed() {
     // failure this guards against is non-termination, and a test that waits
     // forever for it reports nothing and stalls the job it runs in.
     let binary = bin::resolve("devlog");
-    let mut child = Command::new(&binary)
+    let mut child = fixture._dir.command(&binary)
         .arg("fix")
         .current_dir(&fixture.root)
         .stdout(std::process::Stdio::piped())

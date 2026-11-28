@@ -1,6 +1,6 @@
 //! Fragment layout contracts exercised through the binary and real Git.
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 use nils_test_support::{bin, fixture::Fixture, tempdir::ScopedTempDir};
 use pretty_assertions::assert_eq;
@@ -54,7 +54,8 @@ fn commit(fixture: &Fixture, root: &Path, message: &str) {
     git(fixture, root, &["commit", "-qm", message]);
 }
 fn run(root: &Path, fragments: bool, args: &[&str]) -> Output {
-    let mut command = Command::new(bin::resolve("devlog"));
+    let fixture = Fixture::new();
+    let mut command = fixture.command(bin::resolve("devlog"));
     command.current_dir(root).env_remove("DEVLOG_LAYOUT");
     if fragments {
         command.env("DEVLOG_LAYOUT", "fragments");
