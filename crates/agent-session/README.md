@@ -89,6 +89,7 @@ agent-session send <id> --text "custom answer" --allow-blocked
 agent-session permission list <id> --format json
 agent-session permission answer <id> --request-id <uuid> --call-id <projected-call-id> --decision allow
 agent-session clear <id> --expect-idle --format json
+agent-session clear <id> --wait-idle 30 --initial-prompt-file prompt.md --format json
 agent-session rebind <id> --format json
 agent-session resume <id>
 agent-session restart <id> --format json   # relaunch onto the installed provider

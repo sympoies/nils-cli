@@ -31,6 +31,7 @@ pub(crate) fn send_auto_resume_input(
 ) -> Result<(), CliError> {
     let mut record = load_session_record(context, &expected.id)?;
     ensure_same_session_identity(expected, &record)?;
+    crate::conversation::ensure_input_available(context, &record)?;
     crate::auth_incident::recovery::guard_input(
         context,
         &record,
@@ -100,6 +101,7 @@ pub(crate) fn send_codex(
     let deadline = started + codex_app_server::CONTINUATION_BUDGET;
     let record = load_session_record(context, &expected.id)?;
     ensure_same_session_identity(expected, &record)?;
+    crate::conversation::ensure_input_available(context, &record)?;
     crate::auth_incident::recovery::guard_input(
         context,
         &record,

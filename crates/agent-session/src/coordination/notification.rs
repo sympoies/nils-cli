@@ -1069,6 +1069,7 @@ pub(crate) fn safe_reason_detail(reason: &str, detail: &str) -> Option<String> {
                 | "broker-not-authoritative"
                 | "auth-quarantined"
                 | "restart-fenced"
+                | "clear-fenced"
         )
         .then(|| detail.to_string()),
         _ => None,

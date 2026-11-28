@@ -289,8 +289,18 @@ fn owner_alive(fence: &str) -> bool {
         .is_some_and(|pid| unsafe { libc::kill(pid, 0) } == 0)
 }
 
-/// Refuse input to an incarnation a restart is stopping.
+/// Refuse managed input during exclusive lifecycle input ownership.
 pub(crate) fn ensure_not_fenced(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Result<(), CliError> {
+    ensure_not_restarting(context, record)?;
+    crate::conversation::ensure_input_available(context, record)
+}
+
+/// The provider's native TUI must process the clear controller's own slash
+/// command and first prompt. Those already pass through locked terminal input.
+pub(crate) fn ensure_not_restarting(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Result<(), CliError> {
@@ -323,6 +333,7 @@ impl RestartFence {
         launch: &str,
     ) -> Result<Self, CliError> {
         let locked = coordination::lock_registry_for_lifecycle(context)?;
+        crate::conversation::ensure_input_available(context, record)?;
         coordination::ensure_notification_submission_not_in_progress(
             &locked.registry,
             &record.id,

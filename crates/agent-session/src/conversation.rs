@@ -1,8 +1,12 @@
 //! Provider-confirmed conversation transitions, independent of managed runtime identity.
+mod clear;
+pub(crate) use clear::{ensure_input_available, input_fenced};
+
 use std::{
     collections::BTreeMap,
     fs,
     io::Read,
+    path::Path,
     thread,
     time::{Duration, Instant},
 };
@@ -16,7 +20,7 @@ use serde_json::json;
 use crate::{
     CliContext, CliError, ProviderResume, SessionRecord, acquire_session_record_lock, activity,
     canonical_provider_resume_args,
-    cli::{AgentKind, ConversationArgs, SpecialKey},
+    cli::{AgentKind, ClearOptions, ConversationArgs, SpecialKey},
     codex_app_server, coordination, ensure_same_session_identity, load_session_record, send_guard,
     session_dir, write_private_file, write_session_record,
 };
@@ -41,6 +45,10 @@ struct ResultView {
     new_provider_session_id: String,
     changed: bool,
     support: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receipt: Option<clear::Receipt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receipt_path: Option<String>,
 }
 
 fn error(code: &'static str, message: &'static str, record: &SessionRecord) -> CliError {
@@ -323,15 +331,14 @@ fn require_claude_recovery_idle(
     require_idle(context, &projected)
 }
 
-#[derive(Clone, Copy)]
 pub(crate) enum Operation {
-    Clear { allow_unread_mail: bool },
+    Clear(ClearOptions),
     Rebind,
 }
 
 pub(crate) fn run(context: &CliContext, args: ConversationArgs, request: Operation) -> i32 {
     let command = match request {
-        Operation::Clear { .. } => "clear",
+        Operation::Clear(_) => "clear",
         Operation::Rebind => "rebind",
     };
     let format = args.format;
@@ -382,131 +389,77 @@ fn operation(
     args: ConversationArgs,
     request: Operation,
 ) -> Result<ResultView, CliError> {
-    let clear = matches!(request, Operation::Clear { .. });
     let expected = load_session_record(context, &args.id)?;
     let agent = provider(&expected)?;
     let _operation_guard = operation_guard(context, &expected)?;
+    match request {
+        Operation::Clear(options) => {
+            let mut attempt = clear::Attempt::start(context, &expected, &options)?;
+            let result = transition(
+                context,
+                args,
+                &expected,
+                agent,
+                Some((&options, &mut attempt)),
+            );
+            attempt.finish(result)
+        }
+        Operation::Rebind => transition(context, args, &expected, agent, None),
+    }
+}
+
+fn transition(
+    context: &CliContext,
+    args: ConversationArgs,
+    expected: &SessionRecord,
+    agent: AgentKind,
+    mut request: Option<(&ClearOptions, &mut clear::Attempt)>,
+) -> Result<ResultView, CliError> {
+    let clear = request.is_some();
     let tmux = crate::resolve_tmux_bin(args.tmux_bin.as_deref());
     let old = expected
         .provider_resume
         .as_ref()
         .map(|resume| resume.session_id.clone());
-    {
+    if let Some((options, attempt)) = request.as_mut() {
+        let deadline = options
+            .wait_idle
+            .map(|seconds| Instant::now() + Duration::from_secs(seconds));
+        loop {
+            let result = (|| {
+                let _record_lock = match deadline {
+                    Some(deadline) => crate::acquire_session_record_lock_timed(
+                        context,
+                        &expected.id,
+                        deadline.saturating_duration_since(Instant::now()),
+                    )?,
+                    None => acquire_session_record_lock(context, &expected.id)?,
+                };
+                let current = load_session_record(context, &expected.id)?;
+                check_runtime(context, expected, &current, &tmux, deadline)?;
+                admit_clear(context, &current, &tmux, deadline, options, attempt)
+            })();
+            match result {
+                Err(err) if deadline.is_some() && waitable(err.code()) => {
+                    let remaining = deadline
+                        .expect("wait requested")
+                        .saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Err(idle_timeout(expected));
+                    }
+                    thread::sleep(remaining.min(Duration::from_millis(100)));
+                }
+                result => {
+                    result?;
+                    break;
+                }
+            }
+        }
+    } else {
         let _record_lock = acquire_session_record_lock(context, &expected.id)?;
         let current = load_session_record(context, &expected.id)?;
-        ensure_same_session_identity(&expected, &current)?;
-        if current
-            .provider_resume
-            .as_ref()
-            .map(|resume| &resume.session_id)
-            != old.as_ref()
-        {
-            return Err(error(
-                "conversation-state-changed",
-                "provider conversation changed before admission; retry from current state",
-                &current,
-            ));
-        }
-        if crate::session_status(context, &tmux, &current) != "running" {
-            return Err(error(
-                "session-not-running",
-                "conversation operation requires a running session",
-                &current,
-            ));
-        }
-        if agent == AgentKind::Codex
-            && (!codex_app_server::runtime_is_supported(&current)
-                || !codex_app_server::live_conversation_capability(context, &current))
-        {
-            return Err(error(
-                "conversation-runtime-unsupported",
-                "Codex conversation operations require a live proxy with conversation-rebind support; stop and resume with the upgraded runtime first",
-                &current,
-            ));
-        }
-        let _gate = if agent == AgentKind::Codex {
-            Some(codex_app_server::acquire_account_mutation_gate(
-                context,
-                &current.id,
-            )?)
-        } else {
-            None
-        };
-        if let Operation::Clear { allow_unread_mail } = request {
-            if let Some(observation) = live(context, &current)?
-                && Some(&observation.session_id) != old.as_ref()
-            {
-                return Err(error(
-                    "conversation-rebind-required",
-                    "a pending native conversation transition requires rebind before another clear",
-                    &current,
-                ));
-            }
-            let _activity_lock =
-                activity::acquire_coordination_activity_lock(context, &current.id)?;
-            activity::refuse_if_blocked(
-                context,
-                &current,
-                "resolve the provider prompt before retrying clear",
-            )?;
-            require_idle(context, &current)?;
-            if agent == AgentKind::Codex {
-                let candidate = current
-                    .provider_resume
-                    .as_ref()
-                    .map(|resume| resume.session_id.as_str());
-                codex_app_server::probe_idle_conversation(context, &current, candidate)?;
-            }
-            let ingress =
-                activity::pending::probe_lock(context, &current.id)?.ok_or_else(|| {
-                    error(
-                        "send-provider-event-pending",
-                        "provider event ingestion is pending",
-                        &current,
-                    )
-                })?;
-            let _ingress = activity::pending::hold(context, &current.id, ingress);
-            coordination::unread::check(
-                context,
-                &current.id,
-                allow_unread_mail,
-                "retry_conversation_clear",
-            )?;
-            send_guard::Admission {
-                stopped_idle: &Default::default(),
-                context,
-                record: &current,
-                args: &send_guard::GuardArgs {
-                    require_empty_composer: true,
-                    ..Default::default()
-                },
-                tmux_bin: &tmux,
-                verify_composer: false,
-                deadline: Instant::now() + crate::send::guarded_hold_budget(&current, false),
-            }
-            .check_preserving_draft("admission")?;
-            crate::codex_account::authorize_terminal_input_locked(context, &mut current.clone())?;
-            crate::auto_resume::cancel_for_manual_input_locked(
-                context,
-                &current.id,
-                &Timestamp::now().to_string(),
-            )?;
-            // Native slash commands do not start a turn. Release the lifecycle
-            // lock promptly so the provider can commit its observed transition.
-            crate::send_input_unlocked(
-                context,
-                &current,
-                Some(if agent == AgentKind::Codex {
-                    "/new"
-                } else {
-                    "/clear"
-                }),
-                &[SpecialKey::Enter],
-                &tmux,
-                None,
-                crate::PasteMode::Raw,
-            )?;
-        } else if agent == AgentKind::Claude {
+        check_runtime(context, expected, &current, &tmux, None)?;
+        if agent == AgentKind::Claude {
             require_claude_recovery_idle(context, &current)?;
         }
     }
@@ -521,32 +474,36 @@ fn operation(
     let deadline = Instant::now() + Duration::from_secs(args.timeout);
     let session_id = if clear {
         loop {
+            if Instant::now() >= deadline {
+                return Err(clear_timeout(expected));
+            }
             let current = load_session_record(context, &expected.id)?;
-            ensure_same_session_identity(&expected, &current)?;
+            ensure_same_session_identity(expected, &current)?;
             if let Some(observation) = live(context, &current)?
                 && Some(&observation.session_id) != old.as_ref()
+                && current
+                    .provider_resume
+                    .as_ref()
+                    .is_some_and(|resume| resume.session_id == observation.session_id)
             {
                 break observation.session_id;
             }
-            if Instant::now() >= deadline {
-                return Err(error(
-                    "conversation-clear-unconfirmed",
-                    "native clear was submitted but no new provider identity was confirmed; inspect the provider and use rebind before retrying clear",
-                    &current,
-                ));
-            }
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(100)),
+            );
         }
     } else if agent == AgentKind::Codex {
-        let candidate = live(context, &expected)?.map(|value| value.session_id);
-        codex_app_server::probe_idle_conversation(context, &expected, candidate.as_deref())?
+        let candidate = live(context, expected)?.map(|value| value.session_id);
+        codex_app_server::probe_idle_conversation(context, expected, candidate.as_deref())?
     } else {
-        let observation = live(context, &expected)?
+        let observation = live(context, expected)?
             .ok_or_else(|| {
                 error(
                     "conversation-observation-unavailable",
                     "Claude rebind requires a native clear hook observation",
-                    &expected,
+                    expected,
                 )
             })?
             .session_id;
@@ -554,15 +511,30 @@ fn operation(
             return Err(error(
                 "conversation-observation-stale",
                 "Claude rebind requires a newly observed native conversation identity",
-                &expected,
+                expected,
             ));
         }
         observation
     };
-    let _lock = acquire_session_record_lock(context, &expected.id)?;
+    let lock = if clear {
+        crate::acquire_session_record_lock_timed(
+            context,
+            &expected.id,
+            deadline.saturating_duration_since(Instant::now()),
+        )
+        .map_err(|err| {
+            if err.code() == "session-record-lock-timeout" {
+                clear_timeout(expected)
+            } else {
+                err
+            }
+        })?
+    } else {
+        acquire_session_record_lock(context, &expected.id)?
+    };
     let current = load_session_record(context, &expected.id)?;
-    ensure_same_session_identity(&expected, &current)?;
-    let _gate = if agent == AgentKind::Codex {
+    ensure_same_session_identity(expected, &current)?;
+    let gate = if agent == AgentKind::Codex {
         Some(codex_app_server::acquire_account_mutation_gate(
             context,
             &current.id,
@@ -595,16 +567,21 @@ fn operation(
             &confirmed,
         ));
     }
-    if clear {
+    if let Some((_, attempt)) = request {
+        attempt.confirmed_clear(&session_id)?;
         crate::provider_continuity::append(
-            &expected,
+            expected,
             &mut confirmed,
             crate::provider_continuity::Kind::Clear,
         );
         write_session_record(context, &confirmed)?;
+        // Codex's TUI must acquire this gate for the single turn/start.
+        // The record lock and the clear input fence still exclude managed input.
+        drop(gate);
+        attempt.submit_prompt(context, &confirmed, &tmux, lock)?;
     }
     Ok(ResultView {
-        id: expected.id,
+        id: expected.id.clone(),
         provider: agent.as_str().into(),
         changed: old.as_deref() != Some(&session_id),
         old_provider_session_id: old,
@@ -614,7 +591,214 @@ fn operation(
         } else {
             "native-hook"
         },
+        receipt: None,
+        receipt_path: None,
     })
+}
+
+fn check_runtime(
+    context: &CliContext,
+    expected: &SessionRecord,
+    current: &SessionRecord,
+    tmux: &Path,
+    deadline: Option<Instant>,
+) -> Result<(), CliError> {
+    ensure_same_session_identity(expected, current)?;
+    if current
+        .provider_resume
+        .as_ref()
+        .map(|resume| &resume.session_id)
+        != expected
+            .provider_resume
+            .as_ref()
+            .map(|resume| &resume.session_id)
+    {
+        return Err(error(
+            "conversation-state-changed",
+            "provider conversation changed before admission; retry from current state",
+            current,
+        ));
+    }
+    let status = if crate::recorded_runtime_is_from_prior_boot(current) {
+        "stopped".into()
+    } else if let Some(deadline) = deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(idle_timeout(current));
+        }
+        crate::live_status_with_timeout(
+            tmux,
+            &current.tmux_session,
+            remaining.min(crate::PANE_OBSERVATION_COMMAND_TIMEOUT),
+        )
+    } else {
+        crate::session_status(context, tmux, current)
+    };
+    if status != "running" {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return Err(idle_timeout(current));
+        }
+        return Err(error(
+            "session-not-running",
+            "conversation operation requires a running session",
+            current,
+        ));
+    }
+    if current.agent == "codex"
+        && (!codex_app_server::runtime_is_supported(current)
+            || !codex_app_server::live_conversation_capability(context, current))
+    {
+        return Err(error(
+            "conversation-runtime-unsupported",
+            "Codex conversation operations require a live proxy with conversation-rebind support; stop and resume with the upgraded runtime first",
+            current,
+        ));
+    }
+    Ok(())
+}
+
+fn admit_clear(
+    context: &CliContext,
+    current: &SessionRecord,
+    tmux: &Path,
+    deadline: Option<Instant>,
+    options: &ClearOptions,
+    attempt: &mut clear::Attempt,
+) -> Result<(), CliError> {
+    let enhanced = options.wait_idle.is_some() || options.initial_prompt_file.is_some();
+    let codex = current.agent == "codex";
+    let _gate = if codex {
+        Some(codex_app_server::acquire_account_mutation_gate(
+            context,
+            &current.id,
+        )?)
+    } else {
+        None
+    };
+    let candidate = current
+        .provider_resume
+        .as_ref()
+        .map(|resume| resume.session_id.as_str());
+    if let Some(observation) = live(context, current)?
+        && Some(observation.session_id.as_str()) != candidate
+    {
+        return Err(error(
+            "conversation-rebind-required",
+            "a pending native conversation transition requires rebind before another clear",
+            current,
+        ));
+    }
+    let _activity_lock = activity::acquire_coordination_activity_lock(context, &current.id)?;
+    activity::refuse_if_blocked(
+        context,
+        current,
+        "resolve the provider prompt before retrying clear",
+    )?;
+    require_idle(context, current)?;
+    let ingress = activity::pending::probe_lock(context, &current.id)?.ok_or_else(|| {
+        error(
+            "send-provider-event-pending",
+            "provider event ingestion is pending",
+            current,
+        )
+    })?;
+    let _ingress = activity::pending::hold(context, &current.id, ingress);
+    if codex {
+        codex_app_server::idle_probe::probe_idle_conversation_until(
+            context, current, candidate, deadline,
+        )?;
+    }
+    coordination::unread::check(
+        context,
+        &current.id,
+        options.allow_unread_mail || enhanced,
+        "retry_conversation_clear",
+    )?;
+    let composer_deadline = Instant::now() + crate::send::guarded_hold_budget(current, false);
+    check_composer(
+        context,
+        current,
+        tmux,
+        deadline.map_or(composer_deadline, |d| d.min(composer_deadline)),
+    )?;
+    if enhanced {
+        attempt.fence_input(context, current)?;
+    }
+    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        return Err(idle_timeout(current));
+    }
+    crate::codex_account::authorize_terminal_input_locked(context, &mut current.clone())?;
+    crate::auto_resume::cancel_for_manual_input_locked(
+        context,
+        &current.id,
+        &Timestamp::now().to_string(),
+    )?;
+    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        return Err(idle_timeout(current));
+    }
+    attempt.submitted_clear()?;
+    // The provider observer needs the record lock to commit the new identity.
+    // The enhanced clear's input fence remains held while that lock is released.
+    crate::send::input::send_conversation_input_unlocked(
+        context, current, Some(if codex { "/new" } else { "/clear" }),
+        &[SpecialKey::Enter], tmux, None, crate::PasteMode::Raw,
+    )
+    .map_err(|err| {
+        if enhanced {
+            error("conversation-clear-submission-unconfirmed",
+                  "native clear submission is unconfirmed; inspect the provider and use rebind before retrying clear", current)
+        } else { err }
+    })
+}
+
+fn check_composer(
+    context: &CliContext,
+    record: &SessionRecord,
+    tmux: &Path,
+    deadline: Instant,
+) -> Result<(), CliError> {
+    send_guard::Admission {
+        stopped_idle: &Default::default(),
+        context,
+        record,
+        args: &send_guard::GuardArgs {
+            require_empty_composer: true,
+            ..Default::default()
+        },
+        tmux_bin: tmux,
+        verify_composer: false,
+        deadline,
+    }
+    .check_preserving_draft("admission")
+}
+
+fn waitable(code: &str) -> bool {
+    matches!(
+        code,
+        "conversation-session-not-idle"
+            | "conversation-live-identity-unverified"
+            | "send-provider-event-pending"
+            | "send-guard-observation-timeout"
+            | "session-record-lock-timeout"
+            | "codex-account-session-busy"
+            | "coordination-notification-submission-in-progress"
+    )
+}
+
+fn idle_timeout(record: &SessionRecord) -> CliError {
+    error(
+        "conversation-idle-timeout",
+        "session did not become verifiably idle before the wait expired",
+        record,
+    )
+}
+
+fn clear_timeout(record: &SessionRecord) -> CliError {
+    error(
+        "conversation-clear-unconfirmed",
+        "native clear was submitted but no new provider identity was confirmed; inspect the provider and use rebind before retrying clear",
+        record,
+    )
 }
 
 #[cfg(test)]
@@ -627,9 +811,11 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::os::unix::fs::PermissionsExt;
 
-    const CLEAR: Operation = Operation::Clear {
+    const CLEAR: Operation = Operation::Clear(ClearOptions {
         allow_unread_mail: false,
-    };
+        wait_idle: None,
+        initial_prompt_file: None,
+    });
     pub(super) fn fixture(
         tmp: &tempfile::TempDir,
         agent: AgentKind,

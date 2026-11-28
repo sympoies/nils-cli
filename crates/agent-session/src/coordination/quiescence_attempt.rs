@@ -35,6 +35,20 @@ impl SessionQuiescenceGuard {
             Some("uncertain-operation")
         } else if crate::restart::fenced(&self._locked.path, &self.session_id, &self.incarnation) {
             Some("restart-fenced")
+        } else if self
+            ._locked
+            .path
+            .parent()
+            .and_then(std::path::Path::parent)
+            .is_some_and(|state_dir| {
+                let context = crate::CliContext {
+                    state_dir: state_dir.into(),
+                    host: None,
+                };
+                crate::conversation::input_fenced(&crate::session_dir(&context, &self.session_id))
+            })
+        {
+            Some("clear-fenced")
         } else {
             None
         }

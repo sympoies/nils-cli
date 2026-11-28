@@ -706,12 +706,19 @@ pub(crate) fn ensure_notification_submission_not_in_progress(
     Ok(())
 }
 
-pub(crate) fn ensure_notification_submission_not_in_progress_for_session(
+pub(crate) fn ensure_no_clear_or_notification_submission_in_progress_for_session(
     context: &CliContext,
     session_id: &str,
     incarnation: &str,
 ) -> Result<(), CliError> {
     let locked = lock_registry_for_lifecycle(context)?;
+    if crate::conversation::input_fenced(&crate::session_dir(context, session_id)) {
+        return Err(CliError::runtime(
+            "conversation-clear-in-progress",
+            "the conversation clear owns session input",
+            None,
+        ));
+    }
     ensure_notification_submission_not_in_progress(&locked.registry, session_id, incarnation)
 }
 

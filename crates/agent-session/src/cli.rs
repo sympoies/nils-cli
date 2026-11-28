@@ -1525,9 +1525,21 @@ pub struct GlanceArgs {
 pub struct ClearArgs {
     #[command(flatten)]
     pub conversation: ConversationArgs,
+    #[command(flatten)]
+    pub options: ClearOptions,
+}
+
+#[derive(Debug, Default, Args)]
+pub struct ClearOptions {
     /// Allow clear when the session has unread mailbox messages.
     #[arg(long)]
     pub allow_unread_mail: bool,
+    /// Wait up to this many seconds for verified idle and an empty composer.
+    #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..=120))]
+    pub wait_idle: Option<u64>,
+    /// Submit this UTF-8 prompt once after verifying the new conversation.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub initial_prompt_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
