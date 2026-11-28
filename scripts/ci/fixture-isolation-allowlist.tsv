@@ -108,9 +108,6 @@ crates/nils-common/tests/integration/forge_identity_children.rs	git	let mut inde
 crates/nils-common/tests/integration/forge_identity_children.rs	git	let mut transport = Command::new("git");	1	Existing fixture to migrate under #4172.
 crates/nils-common/tests/integration/forge_identity_network.rs	git	let mut effective = Command::new("git");	1	Existing fixture to migrate under #4172.
 crates/nils-common/tests/integration/forge_identity_network.rs	git	let mut transport = Command::new("git");	1	Existing fixture to migrate under #4172.
-crates/nils-evidence/tests/migrate.rs	git	let out = Command::new("git")	3	Existing fixture to migrate under #4172.
-crates/nils-evidence/tests/purge.rs	git	let out = Command::new("git")	3	Existing fixture to migrate under #4172.
-crates/nils-evidence/tests/purge.rs	git	let st = std::process::Command::new("git")	2	Existing fixture to migrate under #4172.
 crates/nils-test-support/src/hermetic.rs	tmpdir	let fixture = std::env::temp_dir().join("fixture-home");	1	Existing fixture to migrate under #4172.
 crates/nils-test-support/tests/integration/fixture.rs	tmpdir	let host_temp = env::temp_dir().canonicalize().expect("resolve parent temp");	1	Compare the private directory with the synthetic parent temp root.
 crates/nils-test-support/tests/integration/short_socket.rs	tmpdir	let temp_root = std::env::temp_dir();	1	Existing fixture to migrate under #4172.

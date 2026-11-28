@@ -7,11 +7,11 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use evidence::purge::{self, PurgeArgs, PurgeError};
 use evidence::validate::hosts::HostClass;
 use nils_common::cli_contract::OutputFormat;
+use nils_test_support::fixture::Fixture;
 
 /// Point forge identity and config lookups at an empty per-test directory, so
 /// the developer's forge profiles cannot leak into the in-process purge.
@@ -27,7 +27,9 @@ fn isolate_config() -> tempfile::TempDir {
 }
 
 fn git(repo: &Path, args: &[&str]) {
-    let out = Command::new("git")
+    let fixture = Fixture::new();
+    let out = fixture
+        .git_command(repo)
         .args(args)
         .current_dir(repo)
         .env("GIT_AUTHOR_NAME", "tester")
@@ -118,7 +120,9 @@ fn args(archive: &Path, host: Vec<String>, class: Option<HostClass>, apply: bool
 }
 
 fn git_count_commits(repo: &Path) -> usize {
-    let out = Command::new("git")
+    let fixture = Fixture::new();
+    let out = fixture
+        .git_command(repo)
         .args(["rev-list", "--count", "HEAD"])
         .current_dir(repo)
         .output()
@@ -131,7 +135,9 @@ fn git_count_commits(repo: &Path) -> usize {
 
 fn configure_push_remote(a: &Archive) {
     let remote = a.root.join("archive-remote.git");
-    let out = Command::new("git")
+    let fixture = Fixture::new();
+    let out = fixture
+        .git_command(&a.root)
         .args(["init", "--bare", "-q"])
         .arg(&remote)
         .output()
@@ -461,7 +467,9 @@ fn purge_apply_rolls_back_on_catalog_failure() {
     );
     // Working tree is fully clean: proves the deletion was both attempted and
     // completely reverted (a partial rollback would leave deleted entries).
-    let st = std::process::Command::new("git")
+    let fixture = Fixture::new();
+    let st = fixture
+        .git_command(&a.archive)
         .args(["status", "--porcelain"])
         .current_dir(&a.archive)
         .output()
@@ -620,7 +628,9 @@ fn purge_apply_rolls_back_when_commit_fails() {
         "deletion rolled back after commit failure"
     );
     assert_eq!(git_count_commits(&a.archive), before, "no purge commit");
-    let st = std::process::Command::new("git")
+    let fixture = Fixture::new();
+    let st = fixture
+        .git_command(&a.archive)
         .args(["status", "--porcelain"])
         .current_dir(&a.archive)
         .output()

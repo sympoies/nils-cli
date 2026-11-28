@@ -7,10 +7,10 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use evidence::migrate::{self, DispatchArgs};
 use nils_common::cli_contract::OutputFormat;
+use nils_test_support::fixture::Fixture;
 
 struct Scenario {
     _tmp: tempfile::TempDir,
@@ -33,7 +33,9 @@ fn isolate_config() -> tempfile::TempDir {
 }
 
 fn git(repo: &Path, args: &[&str]) {
-    let out = Command::new("git")
+    let fixture = Fixture::new();
+    let out = fixture
+        .git_command(repo)
         .args(args)
         .current_dir(repo)
         .env("GIT_AUTHOR_NAME", "tester")
@@ -1748,7 +1750,9 @@ fn walk(root: &Path) -> Vec<PathBuf> {
 }
 
 fn git_count_commits(repo: &Path) -> usize {
-    let out = Command::new("git")
+    let fixture = Fixture::new();
+    let out = fixture
+        .git_command(repo)
         .args(["rev-list", "--count", "HEAD"])
         .current_dir(repo)
         .output()
@@ -1761,7 +1765,9 @@ fn git_count_commits(repo: &Path) -> usize {
 
 fn configure_push_remote(s: &Scenario) {
     let remote = s.root.join("archive-remote.git");
-    let out = Command::new("git")
+    let fixture = Fixture::new();
+    let out = fixture
+        .git_command(&s.root)
         .args(["init", "--bare", "-q"])
         .arg(&remote)
         .output()
