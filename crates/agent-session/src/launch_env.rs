@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const ALLOWLIST_ENV: &str = "AGENT_SESSION_LAUNCH_ENV_ALLOWLIST";
 const DEFAULT_KEYS: &[&str] = &[
+    "AGENT_RUNTIME_PROJECT_CONTEXT_FILE",
     "AGENT_RUNTIME_PROJECT_READBACK_PATHS",
     "AGENT_RUNTIME_SUPPRESS_MEMORY",
     "AGENT_RUNTIME_SUPPRESS_HEALTH",
@@ -183,6 +184,25 @@ mod tests {
         ] {
             assert_eq!(from_flags(&args).unwrap_err().code(), code);
         }
+    }
+
+    #[test]
+    fn default_allowlist_admits_project_context_and_readback_switches() {
+        let lock = GlobalStateLock::new();
+        let _policy = EnvGuard::remove(&lock, ALLOWLIST_ENV);
+        let values = from_flags(&[
+            "AGENT_RUNTIME_PROJECT_CONTEXT_FILE=/tmp/context-card.md".into(),
+            "AGENT_RUNTIME_PROJECT_READBACK_PATHS=/tmp/readback".into(),
+        ])
+        .unwrap();
+        assert_eq!(
+            values["AGENT_RUNTIME_PROJECT_CONTEXT_FILE"],
+            "/tmp/context-card.md"
+        );
+        assert_eq!(
+            values["AGENT_RUNTIME_PROJECT_READBACK_PATHS"],
+            "/tmp/readback"
+        );
     }
 
     #[test]
