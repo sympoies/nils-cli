@@ -31,6 +31,8 @@ mod composer;
 pub(crate) mod drafts;
 pub(crate) mod response;
 pub(crate) use composer::require_empty_composer;
+#[cfg(test)]
+pub(crate) use composer::require_empty_composer_within;
 pub(crate) mod key;
 mod observation;
 mod ownership;

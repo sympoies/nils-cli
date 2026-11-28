@@ -278,7 +278,11 @@ fn codex_startup_without_idle_evidence_reports_a_named_condition() {
     let tmp = tempfile::TempDir::new().unwrap();
     let (context, mut created) = test_session(&tmp);
     created.record.runtime.as_mut().unwrap().kind = "codex_app_server".into();
-    let clock = super::test_clock::TestClock::freeze();
+    // Startup age counts from the runtime's recorded start, so freeze there: a
+    // stall between creating the session and freezing must not shift the window.
+    let clock = super::test_clock::TestClock::freeze_at(
+        &created.record.runtime.as_ref().unwrap().started_at,
+    );
     activate_runtime(&context, &created.record).unwrap();
     let path = session_dir(&context, &created.record.id).join(ACTIVITY_FILE);
     clock.advance(Duration::from_secs(29));

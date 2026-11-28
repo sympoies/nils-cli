@@ -274,10 +274,14 @@ async fn direct_reply_and_guarded_send_share_stale_draft_admission() {
             };
             let check = || {
                 if direct {
-                    crate::send_guard::require_empty_composer(
+                    // Same cleanup budget as the guarded branch below: the fixture
+                    // spawns a process per tmux call, so the shortened test default
+                    // would measure host speed instead of the shared admission.
+                    crate::send_guard::require_empty_composer_within(
                         &fixture.state.context,
                         &record,
                         &fixture.state.tmux_bin,
+                        Duration::from_secs(10),
                     )
                 } else {
                     crate::send_guard::Admission {

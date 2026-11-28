@@ -10,6 +10,18 @@ pub(crate) fn require_empty_composer(
     record: &SessionRecord,
     tmux_bin: &Path,
 ) -> Result<(), CliError> {
+    require_empty_composer_within(context, record, tmux_bin, crate::send_submit::HOLD_BUDGET)
+}
+
+/// `hold` bounds only the stale-draft cleanup; the production budget is the
+/// default above. Tests whose fixture spawns processes pass a wider one so a
+/// slow host cannot turn cleanup into a refusal.
+pub(crate) fn require_empty_composer_within(
+    context: &crate::CliContext,
+    record: &SessionRecord,
+    tmux_bin: &Path,
+    hold: std::time::Duration,
+) -> Result<(), CliError> {
     let target = format!("{}:0.0", record.tmux_session);
     let input = capture_styled(tmux_bin, &target, PANE_OBSERVATION_COMMAND_TIMEOUT)
         .ok_or(Unobserved::CaptureFailed)
@@ -23,7 +35,7 @@ pub(crate) fn require_empty_composer(
             record,
             tmux_bin,
             text,
-            std::time::Instant::now() + crate::send_submit::HOLD_BUDGET,
+            std::time::Instant::now() + hold,
         )?
     {
         return Ok(());
