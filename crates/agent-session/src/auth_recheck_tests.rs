@@ -69,7 +69,14 @@ fn auth_recheck_requires_runtime_adoption_after_credentials_are_republished() {
     let context = context(tmp.path());
     let tmux = fake_tmux(tmp.path());
     let record = quarantined(&context, tmp.path(), &tmux);
-    crate::auth_incident::tick(&context, &record, &tmux, "fixture", Some(false)).unwrap();
+    crate::auth_incident::tick(
+        &context,
+        &record,
+        &tmux,
+        "fixture",
+        &mut crate::auth_incident::TerminalObservation::Absent,
+    )
+    .unwrap();
     publish(tmp.path(), 2);
     let before = log(tmp.path());
     let path = crate::session_dir(&context, ID).join("auth-incidents.json");
@@ -155,7 +162,14 @@ fn auth_recheck_guidance_preserves_drafts_and_restarts_the_same_account() {
     let context = context(tmp.path());
     let tmux = fake_tmux(tmp.path());
     let record = quarantined(&context, tmp.path(), &tmux);
-    crate::auth_incident::tick(&context, &record, &tmux, "fixture", Some(false)).unwrap();
+    crate::auth_incident::tick(
+        &context,
+        &record,
+        &tmux,
+        "fixture",
+        &mut crate::auth_incident::TerminalObservation::Absent,
+    )
+    .unwrap();
     let launch = launch_id(&record).unwrap();
     let screen = fs::read(tmp.path().join("screen")).unwrap();
     fs::write(
@@ -377,7 +391,14 @@ fn daemon_recheck_keeps_failed_resident_quarantined_after_publication() {
     );
     fs::write(path, serde_json::to_vec(&store).unwrap()).unwrap();
     let before = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
-    crate::auth_incident::tick(&context, &record, &tmux, "fixture", Some(false)).unwrap();
+    crate::auth_incident::tick(
+        &context,
+        &record,
+        &tmux,
+        "fixture",
+        &mut crate::auth_incident::TerminalObservation::Absent,
+    )
+    .unwrap();
     let after = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
     let store = incident_store(&context);
     assert_eq!(
@@ -443,7 +464,14 @@ fn scheduled_recheck_refusals_exhaust_and_survive_daemon_recreation() {
     let after = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
     assert_eq!(after[before.len()..].matches("materialize").count(), 3);
     assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
-    crate::auth_incident::tick(&context, &record, &tmux, "fixture", Some(false)).unwrap();
+    crate::auth_incident::tick(
+        &context,
+        &record,
+        &tmux,
+        "fixture",
+        &mut crate::auth_incident::TerminalObservation::Absent,
+    )
+    .unwrap();
     let store = incident_store(&context);
     let notification = &store["incidents"][0]["recovery_notification"];
     assert_eq!(notification["degraded_reason"], "owner_unavailable");

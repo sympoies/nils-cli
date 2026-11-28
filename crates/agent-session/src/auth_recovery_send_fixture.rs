@@ -80,7 +80,14 @@ pub(super) fn assert_retained_after_tick(
     assert!(crate::auth_incident::view(context, record).is_none());
     assert_alert(context, incident, "incident", "authentication");
     assert_alert(context, incident, "recovery", "blocked_no_credential");
-    crate::auth_incident::tick(context, record, tmux, "fixture", Some(false)).unwrap();
+    crate::auth_incident::tick(
+        context,
+        record,
+        tmux,
+        "fixture",
+        &mut crate::auth_incident::TerminalObservation::Absent,
+    )
+    .unwrap();
     let after: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     assert_eq!(after["incidents"].as_array().unwrap().len(), 1);
     assert_eq!(
