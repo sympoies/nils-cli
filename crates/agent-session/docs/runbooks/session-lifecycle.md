@@ -773,8 +773,11 @@ ingress. The lifecycle lock serializes resume, managed input, and mailbox
 delivery. The locks stay held through ownership-checked teardown and removal.
 
 - Claude requires settled hook activity for the bound conversation with no
-  open tool call or pending attention. Fresh `claude agents --json` reads
-  verify native idleness before and after the composer capture.
+  open tool call or pending attention. Retirement pauses tmux pane input before
+  capturing the composer, rechecks native idleness with `claude agents --json`,
+  then captures the composer again to catch a draft that rendered late. If
+  retirement is refused, input is restored. When graceful shutdown uses Ctrl-C,
+  a configured tmux `after-send-keys` hook prevents safe retirement.
 - Codex verifies the live primary thread. The proxy fences native provider
   requests such as turn starts, reviews, shell commands, and compaction.
   Read-only inspection requests can pass through.

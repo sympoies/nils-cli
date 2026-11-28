@@ -1,5 +1,5 @@
 use super::{Fixture, ID, assert_refused, delete_at, incarnation, unread, write_record};
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, os::fd::AsRawFd, os::unix::process::ExitStatusExt, thread, time::Duration};
@@ -20,6 +20,32 @@ fn claude_fixture() -> Fixture {
     .unwrap();
     fs::write(&fixture.name_status, "running").unwrap();
     fs::write(cwd.join("composer"), EMPTY_COMPOSER).unwrap();
+    let tmux = fs::read_to_string(&fixture.tmux).unwrap().replace(
+        " capture-pane)",
+        r#" show-options)
+   [ "$2:$3:$4:$5" = '-AHv:-t:%91:after-send-keys' ] || exit 42
+   if [ -f shutdown-hook ]; then cat shutdown-hook; fi ;;
+ select-pane)
+   case "$2:$3:$4" in
+     '-d:-t:%91') printf 'paused\n' >> input-events ;;
+     '-e:-t:%91') printf 'resumed\n' >> input-events ;;
+     *) exit 42 ;;
+   esac ;;
+ capture-pane)"#,
+    );
+    let tmux = tmux
+        .replace(
+            " display-message) ",
+            r#" display-message) if [ "$5" = '#{pane_id} #{pane_input_off}' ]; then echo '%91 0'; exit; fi; "#,
+        )
+        .replace(
+            " if-shell)",
+            r#" if-shell)
+   if grep -q '^paused$' input-events; then
+     [ "$6" = 'select-pane -e -t %91 ; send-keys -t %91 C-c ; select-pane -d -t %91' ] || exit 42
+   fi"#,
+        );
+    fs::write(&fixture.tmux, tmux).unwrap();
     fixture.record["runtime"]["agent_profile"] = json!("synthetic-claude");
     fixture.record["runtime"]["agent_profile_graceful_shutdown"] = json!("double-ctrl-c");
     write_record(&fixture);
@@ -53,6 +79,19 @@ fn write_activity(fixture: &Fixture, phase: &str, open_tool_calls: Value) {
     .unwrap();
 }
 
+fn delete_reaping_pane(fixture: &mut Fixture, guard: &[&str]) -> nils_test_support::cmd::CmdOutput {
+    let cwd = fixture._tmp.path();
+    let (state, tmux) = (&fixture.state, &fixture.tmux);
+    thread::scope(|scope| {
+        let delete = scope.spawn(|| delete_at(cwd, state, tmux, guard));
+        // Reap the pane child as tmux would, so process-group teardown can finish.
+        while !delete.is_finished() && fixture.pane.0.try_wait().unwrap().is_none() {
+            thread::sleep(Duration::from_millis(10));
+        }
+        delete.join().unwrap()
+    })
+}
+
 #[test]
 fn idle_delete_retires_claude_with_an_empty_composer() {
     let mut fixture = claude_fixture();
@@ -63,16 +102,7 @@ fn idle_delete_retires_claude_with_an_empty_composer() {
         &runtime,
         "--if-unread-empty",
     ];
-    let cwd = fixture._tmp.path();
-    let (state, tmux) = (&fixture.state, &fixture.tmux);
-    let output = thread::scope(|scope| {
-        let delete = scope.spawn(|| delete_at(cwd, state, tmux, &guard));
-        // Reap the pane child as tmux would, so process-group teardown can finish.
-        while !delete.is_finished() && fixture.pane.0.try_wait().unwrap().is_none() {
-            thread::sleep(Duration::from_millis(10));
-        }
-        delete.join().unwrap()
-    });
+    let output = delete_reaping_pane(&mut fixture, &guard);
     assert_eq!(
         output.code,
         0,
@@ -85,6 +115,10 @@ fn idle_delete_retires_claude_with_an_empty_composer() {
     assert_eq!(receipt["killed"], true);
     assert_eq!(receipt["deleted"], true);
     assert!(fixture.killed.exists());
+    assert_eq!(
+        fs::read_to_string(fixture._tmp.path().join("input-events")).unwrap(),
+        "paused\n"
+    );
     assert!(!fixture.session.exists());
     assert_eq!(fixture.pane.0.wait().unwrap().signal(), Some(libc::SIGINT));
 }
@@ -201,4 +235,64 @@ fn idle_delete_rechecks_claude_after_composer_capture() {
         "session-state-mismatch",
     );
     assert_eq!(error["details"]["state"], "working");
+}
+
+#[test]
+fn idle_delete_preserves_draft_appearing_during_final_claude_query() {
+    let mut fixture = claude_fixture();
+    let runtime = incarnation(&fixture).to_owned();
+    let cwd = fixture._tmp.path();
+    let draft = EMPTY_COMPOSER.replace("❯ ", "❯ owner draft");
+    fs::write(cwd.join("late-draft"), &draft).unwrap();
+    crate::cli::write_executable(
+        &cwd.join("claude"),
+        r#"#!/bin/sh
+[ "$*" = 'agents --json' ] || exit 42
+if [ -f native-query-seen ]; then
+    # Simulate input accepted just before the pause, rendered while Claude answers.
+    cp late-draft composer
+    printf 'final-query\n' >> input-events
+fi
+: > native-query-seen
+exec cat claude-agents.json
+"#,
+    );
+    let record = fixture.session.join("session.json");
+    let before = fs::read(&record).unwrap();
+
+    let output = delete_reaping_pane(
+        &mut fixture,
+        &["--if-idle", "--expected-incarnation", &runtime],
+    );
+    assert_ne!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["error"]["code"],
+        "send-composer-not-empty"
+    );
+    let cwd = fixture._tmp.path();
+    assert_eq!(fs::read(&record).unwrap(), before);
+    assert!(!fixture.killed.exists());
+    assert!(fixture.pane.0.try_wait().unwrap().is_none());
+    assert_eq!(fs::read_to_string(cwd.join("composer")).unwrap(), draft);
+    assert_eq!(
+        fs::read_to_string(cwd.join("input-events")).unwrap(),
+        "paused\nfinal-query\nresumed\n"
+    );
+}
+
+#[test]
+fn idle_delete_refuses_when_tmux_shutdown_hook_can_reopen_input() {
+    let mut fixture = claude_fixture();
+    let runtime = incarnation(&fixture).to_owned();
+    fs::write(
+        fixture._tmp.path().join("shutdown-hook"),
+        "run-shell 'sleep 1'",
+    )
+    .unwrap();
+    assert_refused(
+        &mut fixture,
+        &["--if-idle", "--expected-incarnation", &runtime],
+        "session-status-unknown",
+    );
+    assert!(!fixture._tmp.path().join("input-events").exists());
 }

@@ -111,6 +111,11 @@ pub(super) fn delete_if_idle(
     } else {
         require_waiting_activity(context, &record)?;
     }
+    let paused_input = if claude {
+        Some(pane_input::PausedPaneInput::pause(&tmux, &record).ok_or_else(|| unknown(&record))?)
+    } else {
+        None
+    };
     let deadline = Instant::now() + crate::send::guarded_hold_budget(&record, false);
     if !claude {
         require_codex_idle(&record, deadline)?;
@@ -127,27 +132,41 @@ pub(super) fn delete_if_idle(
         verify_composer: false,
         deadline,
     };
-    composer_guard
-        .check_preserving_draft("admission")
-        .map_err(|error| match error.code() {
-            "send-composer-not-empty" | "send-composer-unobservable" => error,
-            _ => unknown(&record),
-        })?;
+    let check_composer = || {
+        composer_guard
+            .check_preserving_draft("admission")
+            .map_err(|error| match error.code() {
+                "send-composer-not-empty" | "send-composer-unobservable" => error,
+                _ => unknown(&record),
+            })
+    };
+    check_composer()?;
 
     if claude {
-        // Refuse native work that appeared while capturing the composer.
+        // Refuse native work that appeared during capture, then check for late
+        // rendering of input accepted before the pane was paused.
         claude::require_native_idle(&record)?;
+        check_composer()?;
     }
 
     let resolved = resolve_session_record_path(context, &record.id)?;
-    let mut deleted = delete_session_locked_with_timeouts(
+    let mut options = DeleteSessionOptions::regular(
+        PANE_INPUT_COMMAND_TIMEOUT,
+        DELETE_TERMINATION_VERIFY_TIMEOUT,
+        board::CloseReason::Deleted,
+    );
+    options.paused_pane = paused_input.as_ref().map(pane_input::PausedPaneInput::pane);
+    let (_, mut deleted) = delete_session_locked_with_timeouts_and_prepare(
         context,
         record,
         resolved.session_dir,
         &tmux,
-        PANE_INPUT_COMMAND_TIMEOUT,
-        DELETE_TERMINATION_VERIFY_TIMEOUT,
+        options,
+        |_| Ok(()),
     )?;
+    if let Some(input) = paused_input {
+        input.disarm();
+    }
     deleted.children = Some(children);
     Ok(deleted)
 }
