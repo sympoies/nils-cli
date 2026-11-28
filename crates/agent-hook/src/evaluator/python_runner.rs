@@ -6,7 +6,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::error::HookError;
@@ -17,6 +17,7 @@ use super::terminate_process_group;
 
 const RUNNER_FILENAME: &str = "event-runner.py";
 const REPLY_HEADER_LIMIT: u64 = 16;
+const CHILD_STATUS_POLL_MS: u128 = 10;
 
 #[derive(Default)]
 pub(super) struct PythonRunner(Option<Runner>);
@@ -83,29 +84,36 @@ pub(super) fn validate_runner(root: &Path) -> Result<PathBuf, HookError> {
     Ok(path)
 }
 
-struct Runner(Child);
+struct Runner {
+    child: Child,
+    stdin: Option<ChildStdin>,
+    stdout: ChildStdout,
+}
 
 impl Runner {
     fn start(root: &Path, product: Product) -> Result<Self, HookError> {
         let path = validate_runner(root)?;
-        let runner = Self(
-            Command::new(path)
-                .env("AGENT_RUNTIME_PRODUCT", product.as_str())
-                .process_group(0)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .map_err(|_| {
-                    HookError::runtime(
-                        "capability-unavailable",
-                        "runtime-kit runner could not start",
-                    )
-                })?,
-        );
+        let mut child = Command::new(path)
+            .env("AGENT_RUNTIME_PRODUCT", product.as_str())
+            .process_group(0)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| {
+                HookError::runtime(
+                    "capability-unavailable",
+                    "runtime-kit runner could not start",
+                )
+            })?;
+        let runner = Self {
+            stdin: child.stdin.take(),
+            stdout: child.stdout.take().expect("piped stdout"),
+            child,
+        };
         for fd in [
-            runner.0.stdin.as_ref().expect("piped stdin").as_raw_fd(),
-            runner.0.stdout.as_ref().expect("piped stdout").as_raw_fd(),
+            runner.stdin.as_ref().expect("piped stdin").as_raw_fd(),
+            runner.stdout.as_raw_fd(),
         ] {
             // Keep pipe I/O inside the deadline even when the runner stops
             // reading the initial payload or sends a partial reply.
@@ -129,9 +137,9 @@ impl Runner {
         output_limit: usize,
         deadline: Instant,
     ) -> io::Result<(bool, Vec<u8>)> {
-        let stdin = self.0.stdin.as_mut().expect("piped stdin");
         let mut input = DeadlinePipe {
-            pipe: stdin,
+            child: &mut self.child,
+            pipe: self.stdin.as_mut().expect("piped stdin"),
             deadline,
         };
         if let Some(payload) = payload {
@@ -140,9 +148,9 @@ impl Runner {
         }
         writeln!(input, "{output_limit} {filename}")?;
 
-        let stdout = self.0.stdout.as_mut().expect("piped stdout");
         let mut output = BufReader::new(DeadlinePipe {
-            pipe: stdout,
+            child: &mut self.child,
+            pipe: &mut self.stdout,
             deadline,
         });
         let mut header = Vec::new();
@@ -167,8 +175,10 @@ impl Runner {
 
 impl Drop for Runner {
     fn drop(&mut self) {
-        drop(self.0.stdin.take());
-        terminate_process_group(&mut self.0);
+        drop(self.stdin.take());
+        // Signal the entire group before waiting for the direct child. Pipe
+        // EOF is unnecessary because descendants may have inherited the FDs.
+        terminate_process_group(&mut self.child);
     }
 }
 
@@ -181,6 +191,7 @@ fn decimal<T: std::str::FromStr>(field: &str) -> Option<T> {
 }
 
 struct DeadlinePipe<'a, T> {
+    child: &'a mut Child,
     pipe: &'a mut T,
     deadline: Instant,
 }
@@ -206,12 +217,23 @@ impl<T: AsRawFd> DeadlinePipe<'_, T> {
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
                 result => return result,
             }
-            let millis = remaining.as_millis().max(1) as libc::c_int;
-            if unsafe { libc::poll(&mut descriptor, 1, millis) } < 0 {
-                let error = io::Error::last_os_error();
-                if error.kind() != io::ErrorKind::Interrupted {
-                    return Err(error);
+            let millis = remaining.as_millis().clamp(1, CHILD_STATUS_POLL_MS) as libc::c_int;
+            match unsafe { libc::poll(&mut descriptor, 1, millis) } {
+                0 => {
+                    // A descendant can keep a pipe open after the runner has
+                    // exited. Preserve the standalone handler's failure
+                    // posture even when EOF cannot report that exit.
+                    if self.child.try_wait()?.is_some() {
+                        return Err(io::ErrorKind::UnexpectedEof.into());
+                    }
                 }
+                -1 => {
+                    let error = io::Error::last_os_error();
+                    if error.kind() != io::ErrorKind::Interrupted {
+                        return Err(error);
+                    }
+                }
+                _ => {}
             }
         }
     }

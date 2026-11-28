@@ -84,6 +84,24 @@ with open(os.environ["RUNNER_LOG"], "a") as log:
     print(json.dumps([Path(__file__).name, os.getpid(), payload]), file=log)
 "#;
 
+const SPAWN_DESCENDANT: &str = r#"
+import subprocess
+import time
+
+descendant = subprocess.Popen([sys.executable, "-c", """
+import fcntl
+from pathlib import Path
+import time
+
+with open("descendant.lock", "w") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    Path("descendant-ready").touch()
+    time.sleep(30)
+"""])
+while not Path("descendant-ready").exists():
+    time.sleep(0.01)
+"#;
+
 const FIRST: &str = "checkout-lease-guard.py";
 const SECOND: &str = "block-direct-python.py";
 const COORDINATION: &str = "session-coordination-guard.py";
@@ -204,6 +222,7 @@ fn python_runner_preserves_provider_decisions_and_dispatch_order() {
 
 #[test]
 fn python_runner_scopes_failed_requests_and_restarts_only_after_runner_loss() {
+    let runner_loss = format!("{SPAWN_DESCENDANT}\nos._exit(9)");
     let payload = payload("PreToolUse");
     for (first, second, names, shares_runner) in [
         (
@@ -212,12 +231,13 @@ fn python_runner_scopes_failed_requests_and_restarts_only_after_runner_loss() {
             &[FIRST, SECOND, COORDINATION][..],
             true,
         ),
-        ("os._exit(9)", "", &[FIRST, SECOND][..], false),
+        (runner_loss.as_str(), "", &[FIRST, SECOND][..], false),
     ] {
         let (baseline, baseline_log) = fixture("codex", false, first, second);
         let (batched, batched_log) = fixture("codex", true, first, second);
-        let expected = dispatch(&baseline, &baseline_log, "codex", &payload, "json", &[]);
-        let actual = dispatch(&batched, &batched_log, "codex", &payload, "json", &[]);
+        let env = [("AGENT_HOOK_HANDLER_TIMEOUT_MS", "2500")];
+        let expected = dispatch(&baseline, &baseline_log, "codex", &payload, "json", &env);
+        let actual = dispatch(&batched, &batched_log, "codex", &payload, "json", &env);
         let expected: Value = serde_json::from_str(&expected.1).unwrap();
         let actual: Value = serde_json::from_str(&actual.1).unwrap();
         assert_eq!(actual["data"]["reasons"], expected["data"]["reasons"]);
@@ -240,6 +260,9 @@ fn python_runner_scopes_failed_requests_and_restarts_only_after_runner_loss() {
             pids.windows(2)
                 .all(|pair| (pair[0] == pair[1]) == shares_runner)
         );
+        if !shares_runner {
+            assert_descendant_terminated(&batched);
+        }
     }
 }
 
@@ -275,25 +298,9 @@ fn python_runner_preserves_handler_and_dispatch_output_budgets() {
 
 #[test]
 fn python_runner_timeout_terminates_descendants_and_continues_with_next_request() {
-    use std::fs::File;
-    use std::thread;
-    use std::time::{Duration, Instant};
-
-    let stalled_handler = r#"
-import subprocess
-subprocess.run([sys.executable, "-c", """
-import fcntl
-from pathlib import Path
-import time
-
-with open("descendant.lock", "w") as lock:
-    fcntl.flock(lock, fcntl.LOCK_EX)
-    Path("descendant-ready").touch()
-    time.sleep(30)
-"""])
-"#;
+    let stalled_handler = format!("{SPAWN_DESCENDANT}\ndescendant.wait()");
     let payload = payload("PreToolUse");
-    let (fixture, log) = fixture("codex", true, stalled_handler, "");
+    let (fixture, log) = fixture("codex", true, &stalled_handler, "");
     let actual = dispatch(
         &fixture,
         &log,
@@ -310,6 +317,14 @@ with open("descendant.lock", "w") as lock:
     );
     let pids = requests(&log, &[FIRST, SECOND], &payload);
     assert_ne!(pids[0], pids[1]);
+    assert_descendant_terminated(&fixture);
+}
+
+fn assert_descendant_terminated(fixture: &Fixture) {
+    use std::fs::File;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
     assert!(fixture.root.join("descendant-ready").is_file());
 
     let descendant_lock = File::open(fixture.root.join("descendant.lock")).unwrap();
