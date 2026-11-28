@@ -264,6 +264,7 @@ fn run_github_search<R: BackendRunner>(
 }
 
 const REFS_TO_SCHEMA: &str = "search.refs-to";
+const REFS_TO_MAX_PAGES: usize = 100;
 
 /// Cross-reference events that reference the target issue / PR. The inline
 /// fragments cover the `issueOrPullRequest` union and the `source` of each
@@ -341,9 +342,11 @@ fn run_github_refs_to<R: BackendRunner>(
     let mut items = Vec::new();
     let mut cursors = HashSet::new();
     let mut scanned = 0usize;
+    let mut pages = 0usize;
     let limited;
     loop {
         let output = runner.run(&call)?;
+        pages += 1;
         let value: serde_json::Value = serde_json::from_str(output.stdout.trim()).map_err(|e| {
             ForgeError::software(
                 schema_err(),
@@ -375,6 +378,13 @@ fn run_github_refs_to<R: BackendRunner>(
         if !has_next {
             limited = false;
             break;
+        }
+        if pages == REFS_TO_MAX_PAGES {
+            return Err(ForgeError::software(
+                schema_err(),
+                format!("GitHub refs-to timeline exceeded the {REFS_TO_MAX_PAGES}-page limit"),
+                None,
+            ));
         }
         let next = page
             .get("endCursor")

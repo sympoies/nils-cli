@@ -586,6 +586,46 @@ printf '],"pageInfo":{"hasNextPage":false,"endCursor":"last"}}}}}}\n'
 }
 
 #[test]
+fn search_refs_to_rejects_unbounded_fresh_cursors() {
+    let stub = StubEnv::new().gh_stub(r#"#!/bin/sh
+n=0
+[ ! -f calls ] || n=$(cat calls)
+n=$((n + 1))
+printf '%s' "$n" > calls
+[ "$n" -le 100 ] || exit 97
+printf '{"data":{"repository":{"issueOrPullRequest":{"timelineItems":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"%s"}}}}}}\n' "$n"
+"#);
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widget",
+            "--format",
+            "json",
+            "search",
+            "refs-to",
+            "7",
+        ],
+    );
+    assert_ne!(out.code, 0);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["ok"], false);
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("100-page limit")
+    );
+    assert!(envelope.get("data").is_none());
+    assert_eq!(
+        std::fs::read_to_string(stub.tempdir.path().join("calls")).unwrap(),
+        "100"
+    );
+}
+
+#[test]
 fn search_refs_to_rejects_cursor_cycles_and_page_errors() {
     let args = [
         "--provider",
