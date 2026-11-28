@@ -96,6 +96,8 @@ pub struct PolicyBundle {
     pub schema_version: String,
     pub bundle_id: String,
     pub version: String,
+    #[serde(default)]
+    pub python_runner: bool,
     pub rules: Vec<PolicyRule>,
 }
 

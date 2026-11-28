@@ -587,27 +587,40 @@ compatibility, but requests fail closed with a migration diagnostic. The
 separate verified read-only fallback remains available. Policies must migrate
 that DSH binding to the current runtime-kit validation contract before edits.
 
-Handler resolution selects the compiled `.py` or `.sh` suffix, rejects
-symlinks/non-regular files and owner/permission drift, passes the original
-bounded provider JSON on standard input, and preserves the handler's provider
-output/exit semantics. One dispatch starts at most 17 executable capabilities,
-retains at most 512 KiB of aggregate child output, and shares a five-second
-absolute deadline aligned with the per-handler timeout. Each child leads an
-isolated process group; timeout or
-direct-child exit terminates descendants before bounded pipe draining. The
-policy cannot specify a path,
-interpreter, argv, environment assignment, shell fragment, timeout, or digest.
+Handler resolution selects the compiled `.py` or `.sh` suffix and rejects
+symlinks, non-regular files, and owner or permission drift. Each invocation
+receives the original bounded provider JSON. Each regular executable capability
+reserves one of 17 invocations and uses the remaining 512 KiB aggregate output
+budget, even when it shares a process. Runtime-kit handler stdout also has a
+256 KiB per-handler limit. The policy cannot specify a path, interpreter, argv,
+environment assignment, shell fragment, timeout, or digest.
+
+A policy bundle can set the top-level field `python_runner = true` to use
+`event-runner.py` for its Python invocations. Each dispatch starts the runner
+when the first selected Python handler is executed. Rust validates the runner
+and each allowlisted handler in the provider's owner-controlled hook directory,
+then sends the bounded payload and requests one handler at a time in policy
+order. The runner returns each handler's exit status and bounded stdout using
+the [runtime-kit framed protocol](https://github.com/sympoies/agent-runtime-kit/pull/453).
+Shell handlers and bundles without the opt-in use standalone processes.
+
+Each handler invocation has its own five-second deadline. A runner transport
+failure terminates its process group and applies the current rule's failure or
+timeout posture. Any later Python request starts a fresh runner. Dispatch
+terminates the remaining runner group at event completion. Standalone
+invocations retain their isolated process group and descendant cleanup.
 
 `AGENT_HOOK_HANDLER_TIMEOUT_MS` shortens that deadline for the invoking
-process and never lengthens it; zero or unparsable values are ignored. Tests
-use it to exercise timeout postures without waiting out five seconds.
+process. Zero or unparsable values are ignored. Tests use it to exercise timeout
+postures without waiting five seconds.
 
-Shadow mode never invokes it. Adding another handler requires a new nils-cli
-release or a new versioned capability ID.
+Shadow mode skips handler execution. Adding another handler requires a new
+nils-cli release or a new versioned capability ID.
 
 For Codex and Claude, `doctor` resolves every policy-referenced
 `runtime-kit.handler.v1` and `agent-session.coordination.v1` handler before an
-otherwise converged provider is reported healthy. Activation health and
+otherwise converged provider is reported healthy. It also validates the runner
+when the bundle opts in and references a Python handler. Activation health and
 immediate pre-execution validation share one trust predicate: the resolved
 handler must be a regular file, executable by its effective-user owner, and
 have no group/world write bits. Any failures are collected before returning a
@@ -618,12 +631,12 @@ each affected handler without exposing its private resolved path.
 not another configurable handler ID. It resolves only the exact
 `session-coordination-guard.py` consumer below the active provider's owned hook
 directory, applies the same type/owner/mode/output protections, and passes the
-original bounded provider payload on standard input. A dispatch can select at
-most one such rule. The fixed consumer has a 55-second process bound under the
-owned provider ingress's 60-second timeout so the #676 admit/complete/reconcile
-transaction is not forced through the ordinary five-second handler budget. The
-policy cannot select another command, path, arguments, environment assignment,
-or timeout through this capability.
+original bounded provider payload. A dispatch can select at most one such rule.
+A blocked pre-tool decision skips the consumer. Terminal events retain their
+coordination gate. The consumer requests the same runner when the bundle opts
+in and gets its own handler deadline and 256 KiB output limit. The policy
+cannot select another command, path, arguments, environment assignment, or
+timeout through this capability.
 
 ## Deterministic evaluation
 
