@@ -2245,7 +2245,7 @@ operations:
     summary: List issues/PRs that reference a ref via cross-reference events.
     inputs:
       - { name: <ref>,   type: string,  required: true }   # GitHub URL | owner/name#n | #n | n
-      - { name: --limit, type: integer, default: 30 }
+      - { name: --limit, type: integer, required: false }
     validations:
       - repo_required
       - ref_invalid
@@ -2263,7 +2263,7 @@ operations:
         item_count: integer
         limited: bool
         items: list<SearchItem>
-    notes: "Queries the target's CROSS_REFERENCED_EVENT timeline items and normalizes the referencing issues/PRs into SearchItem. <ref> is parsed as a URL, owner/name#n, or #n / n (repo from context)."
+    notes: "Paginates the target's CROSS_REFERENCED_EVENT timeline items to completion unless --limit bounds the scanned events; output limit is zero when unbounded. Returns an error without partial results if the timeline exceeds 100 pages. Normalizes the referencing issues/PRs into SearchItem. <ref> is parsed as a URL, owner/name#n, or #n / n (repo from context)."
 
 # ---------------------------------------------------------------------------
 # Macro operations.

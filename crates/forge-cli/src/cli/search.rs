@@ -65,9 +65,9 @@ pub struct SearchRefsToArgs {
     /// `owner/name#number`, or `#number` / `number` (repo from context).
     #[arg(value_name = "REF")]
     pub reference: String,
-    /// Cap the number of cross-reference events scanned (default: 30).
-    #[arg(long, default_value_t = 30)]
-    pub limit: u32,
+    /// Cap the number of cross-reference events scanned.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    pub limit: Option<u32>,
 }
 
 /// Shared arguments for `search issues` / `search prs`.

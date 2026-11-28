@@ -1110,10 +1110,13 @@ report which field matched, which the GitHub path never does).
   `#number` / `number` (repo from context); an unparseable ref is
   `DATA 65` with `error.kind=ref_invalid`. It runs `gh api graphql` over the
   target's `CROSS_REFERENCED_EVENT` timeline items and normalizes the
-  referencing issues / PRs into `SearchItem`s.
+  referencing issues / PRs into `SearchItem`s. It paginates to completion unless
+  `--limit` bounds the scanned events; `data.limit` is zero when unbounded.
+  If 100 pages do not exhaust the timeline, it returns an error without partial results.
 - All three render the exact backend argv under `--dry-run` (`data.plan`),
-  honor `--format json`, and set `limited=true` when the returned row count
-  reached the requested bound.
+  and honor `--format json`. Issue and PR search set `limited=true` when the
+  returned row count reaches the requested bound; reverse references set it
+  when the explicit bound leaves events unread.
 
 ## Inbox output contract
 

@@ -14,6 +14,7 @@
 //! (global by default) stays bounded to one repository. Qualified organization,
 //! user, or repository queries omit that implicit override.
 
+use std::collections::HashSet;
 use std::ffi::OsString;
 
 mod completions;
@@ -263,22 +264,25 @@ fn run_github_search<R: BackendRunner>(
 }
 
 const REFS_TO_SCHEMA: &str = "search.refs-to";
+const REFS_TO_MAX_PAGES: usize = 100;
 
 /// Cross-reference events that reference the target issue / PR. The inline
 /// fragments cover the `issueOrPullRequest` union and the `source` of each
 /// `CrossReferencedEvent` (itself an Issue or PullRequest).
 const REFS_TO_GRAPHQL_QUERY: &str = r#"
-query($owner: String!, $name: String!, $number: Int!, $first: Int!) {
+query($owner: String!, $name: String!, $number: Int!, $first: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
     issueOrPullRequest(number: $number) {
       __typename
       ... on Issue {
-        timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], first: $first) {
+        timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], first: $first, after: $after) {
+          pageInfo { hasNextPage endCursor }
           nodes { ...xref }
         }
       }
       ... on PullRequest {
-        timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], first: $first) {
+        timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], first: $first, after: $after) {
+          pageInfo { hasNextPage endCursor }
           nodes { ...xref }
         }
       }
@@ -323,9 +327,9 @@ fn run_github_refs_to<R: BackendRunner>(
     args: SearchRefsToArgs,
     format: OutputFormat,
 ) -> Result<i32, ForgeError> {
-    let limit = limit_for_provider(args.limit);
+    let limit = args.limit;
     let target = parse_ref(&args.reference, Some(default_slug))?;
-    let call = build_github_refs_to_call(ctx, &target, limit);
+    let call = build_github_refs_to_call(ctx, &target, limit.unwrap_or(100).min(100));
     if global.dry_run {
         return Ok(emit_search_dry_run(
             schema_ok(REFS_TO_SCHEMA),
@@ -334,8 +338,85 @@ fn run_github_refs_to<R: BackendRunner>(
             format,
         ));
     }
-    let output = runner.run(&call)?;
-    let payload = parse_refs_to_output(&output, &target, limit, ctx)?;
+    let mut call = call;
+    let mut items = Vec::new();
+    let mut cursors = HashSet::new();
+    let mut scanned = 0usize;
+    let mut pages = 0usize;
+    let limited;
+    loop {
+        let output = runner.run(&call)?;
+        pages += 1;
+        let value: serde_json::Value = serde_json::from_str(output.stdout.trim()).map_err(|e| {
+            ForgeError::software(
+                schema_err(),
+                "GitHub refs-to GraphQL JSON is invalid",
+                Some(e.to_string()),
+            )
+        })?;
+        let mut payload = parse_refs_to_output(&output, &target, limit.unwrap_or(0), ctx)?;
+        let page = value
+            .pointer("/data/repository/issueOrPullRequest/timelineItems/pageInfo")
+            .ok_or_else(|| missing("timelineItems.pageInfo"))?;
+        let has_next = page
+            .get("hasNextPage")
+            .and_then(|v| v.as_bool())
+            .ok_or_else(|| missing("timelineItems.pageInfo.hasNextPage"))?;
+        let nodes = value
+            .pointer("/data/repository/issueOrPullRequest/timelineItems/nodes")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| missing("timelineItems.nodes"))?;
+        scanned += nodes.len();
+        items.append(&mut payload.items);
+        if let Some(cap) = limit
+            && scanned >= cap as usize
+        {
+            items.truncate(cap as usize);
+            limited = has_next || scanned > cap as usize;
+            break;
+        }
+        if !has_next {
+            limited = false;
+            break;
+        }
+        if pages == REFS_TO_MAX_PAGES {
+            return Err(ForgeError::software(
+                schema_err(),
+                format!("GitHub refs-to timeline exceeded the {REFS_TO_MAX_PAGES}-page limit"),
+                None,
+            ));
+        }
+        let next = page
+            .get("endCursor")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| missing("timelineItems.pageInfo.endCursor"))?;
+        if !cursors.insert(next.to_string()) {
+            return Err(ForgeError::software(
+                schema_err(),
+                "GitHub refs-to cursor did not advance",
+                None,
+            ));
+        }
+        let first = limit
+            .map(|cap| cap.saturating_sub(scanned as u32).min(100))
+            .unwrap_or(100);
+        call = build_github_refs_to_call(ctx, &target, first);
+        call.argv.extend([
+            OsString::from("-f"),
+            OsString::from(format!("after={next}")),
+        ]);
+    }
+    let payload = RefsToPayload {
+        provider: ctx.provider.as_str(),
+        host: ctx.host.clone(),
+        repo: format!("{}/{}", target.owner, target.name),
+        reference_number: target.number,
+        limit: limit.unwrap_or(0),
+        item_count: items.len(),
+        limited,
+        items,
+    };
     Ok(emit_success(
         schema_ok(REFS_TO_SCHEMA),
         payload,
@@ -1298,7 +1379,7 @@ mod tests {
     fn refs_to(reference: &str) -> SearchCommand {
         SearchCommand::RefsTo(SearchRefsToArgs {
             reference: reference.into(),
-            limit: 30,
+            limit: None,
         })
     }
 
