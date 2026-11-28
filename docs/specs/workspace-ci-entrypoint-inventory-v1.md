@@ -41,7 +41,7 @@ out of scope for this governance inventory; flag it as a follow-up.
 
 | Job | Step | Canonical owner | Decision | Notes |
 | --- | --- | --- | --- | --- |
-| `test` | full Linux checks/doctests | canonical full checks entrypoint | keep | 50 minutes, nextest; caller event SHA, full audit stack. |
+| `test` | full Linux checks/doctests | canonical full checks entrypoint | keep | 56 minutes, nextest; caller event SHA, full audit stack. |
 | `test_containment` | Linux cgroup canary | workflow-local test command and systemd setup | keep | 25 minutes, required by final full gate. |
 | `isolation_guard` | poisoned-environment test isolation | workflow-local guard command | keep | 25 minutes; runs on nightly and manual validation, not release-candidate validation. |
 | `cargo_deny` | dependency policy | `scripts/ci/cargo-deny-audit.sh` | keep | 15 minutes, required by final full gate. |
