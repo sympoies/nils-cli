@@ -10,6 +10,28 @@ pub(crate) fn send_input_unlocked(
     manual_input: Option<&mut ManualInputSection>,
     paste_mode: PasteMode,
 ) -> Result<(), CliError> {
+    crate::conversation::ensure_input_available(context, record)?;
+    send_conversation_input_unlocked(
+        context,
+        record,
+        text,
+        keys,
+        tmux_bin,
+        manual_input,
+        paste_mode,
+    )
+}
+
+/// The clear controller owns the conversation fence and the record lock.
+pub(crate) fn send_conversation_input_unlocked(
+    context: &CliContext,
+    record: &SessionRecord,
+    text: Option<&str>,
+    keys: &[SpecialKey],
+    tmux_bin: &Path,
+    manual_input: Option<&mut ManualInputSection>,
+    paste_mode: PasteMode,
+) -> Result<(), CliError> {
     let _permission_admission =
         crate::cli::permission::input_admission(context, record, tmux_bin, text, keys)?;
     crate::auth_incident::recovery::guard_input(context, record, text, keys)?;

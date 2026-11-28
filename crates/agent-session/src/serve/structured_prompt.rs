@@ -89,6 +89,9 @@ pub(super) async fn submit_structured_prompt_locked(
                     Some(json!({ "id": current.id })),
                 ));
             }
+            if notification_fence.is_none() {
+                crate::conversation::ensure_input_available(&lock_context, &current)?;
+            }
             let input = if notification_fence.is_none() {
                 image_input::prepare(&lock_context, &current.id, &prompt)?
             } else {

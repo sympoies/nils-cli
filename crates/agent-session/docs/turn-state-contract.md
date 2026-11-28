@@ -185,17 +185,22 @@ runtime is omitted from the current projection.
 
 ## Conversation transitions
 
-`agent-session clear <id> [--expect-idle] [--allow-unread-mail] --format json`
-requires a verified idle interactive Codex or Claude Code session. Before sending
-any terminal input or changing session state, clear checks provider attention,
-the mailbox, and the exact composer.
+`agent-session clear <id> --format json` requires a verified idle interactive
+Codex or Claude Code session. Use `--wait-idle <seconds>` to wait for idle
+instead of requiring it at invocation. Use `--initial-prompt-file <path>` to
+submit one prompt to the confirmed new conversation. A caller running in the
+target's current turn needs a separate worker so that the turn can finish.
+
+Before sending terminal input, clear checks provider attention, the mailbox, and
+the exact composer. For Claude, either new option also requires fresh native
+idle observations and checks the composer again before sending input.
 
 - A reported approval or question returns `agent-blocked`. Pending provider
   event ingestion returns `send-provider-event-pending`.
-- Unread messages return `session-mailbox-not-empty`. The clear-only
-  `--allow-unread-mail` flag permits clear with unread messages and preserves
-  them. An unreadable registry returns `session-mailbox-unknown` even with the
-  flag.
+- Either new option permits unread messages without consuming them.
+  Without those options, unread messages still return `session-mailbox-not-empty`
+  unless `--allow-unread-mail` is set. An unreadable registry returns
+  `session-mailbox-unknown` regardless.
 - The same composer check as `notice --require-empty-composer` returns
   `send-composer-not-empty` for a draft. It returns `send-composer-unobservable`
   when it cannot verify an empty composer, including a dialog visible before
@@ -229,8 +234,31 @@ Claude requires a newly observed clear receipt and verified idle activity; a
 matching new idle projection can complete an interrupted record commit. A prior
 runtime receipt is ignored after resume. Recovery refuses a stale same-ID Claude
 receipt and does not infer missing native evidence from history.
-A clear confirmation timeout returns `conversation-clear-unconfirmed`, retaining
-state for inspection/rebind instead of claiming that tmux delivery proved clear.
+
+The initial prompt must be nonempty UTF-8 text in a regular file and at most
+16 KiB. Invalid files return `conversation-initial-prompt-invalid` before any
+terminal input. The prompt is submitted once after verifying that the
+provider's new identity was persisted. The clear keeps its input fence across native
+confirmation and prompt submission. The provider callback may take the record
+lock to commit its new identity, but managed input remains excluded and mailbox
+wakes remain eligible for delivery after the fence releases.
+
+Clear JSON includes `receipt` and `receipt_path` (under `error.details` on
+failure after receipt creation). Each private
+`sessions/<id>/clear-receipts/<clear-id>.json` file records the session and
+incarnation, old and verified new provider identities, an optional prompt
+SHA-256 digest, the outcome, and timestamps. It contains neither prompt text
+nor the source file path. `prompt_sent` is false before a prompt attempt,
+true when the single terminal submission succeeded, and null when its effect
+is unknown. A terminal submission is not proof that the provider finished a
+turn.
+
+The idle-wait bound is separate from `--timeout`, which bounds native clear
+confirmation. `conversation-idle-timeout` means no clear was submitted.
+`conversation-clear-unconfirmed` means no new identity was verified before
+the confirmation deadline. The command does not send the prompt or repeat the
+native clear in that case. Inspect the provider and use `agent-session rebind`
+before deciding whether to send any further input.
 
 ## Normalized turn event
 

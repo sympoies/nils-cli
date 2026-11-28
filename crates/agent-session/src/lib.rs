@@ -2399,7 +2399,7 @@ pub(crate) fn ensure_session_lifecycle_mutation_allowed(
     else {
         return Ok(());
     };
-    coordination::ensure_notification_submission_not_in_progress_for_session(
+    coordination::ensure_no_clear_or_notification_submission_in_progress_for_session(
         context,
         &record.id,
         incarnation,

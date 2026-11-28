@@ -59,9 +59,7 @@ fn run(context: &CliContext, command: Command, attested_create_token: Option<Str
         Command::Clear(args) => conversation::run(
             context,
             args.conversation,
-            conversation::Operation::Clear {
-                allow_unread_mail: args.allow_unread_mail,
-            },
+            conversation::Operation::Clear(args.options),
         ),
         Command::Rebind(args) => conversation::run(context, args, conversation::Operation::Rebind),
         Command::Account(args) => session_account::run_account(context, args),

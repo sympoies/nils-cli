@@ -147,7 +147,7 @@ impl Requests {
         {
             return Err(TuiMutationRejection::TurnGateBusy);
         }
-        if crate::restart::ensure_not_fenced(context, record).is_err() {
+        if crate::restart::ensure_not_restarting(context, record).is_err() {
             return Err(TuiMutationRejection::TurnGateBusy);
         }
         let authorization =

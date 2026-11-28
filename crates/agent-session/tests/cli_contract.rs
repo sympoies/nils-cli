@@ -317,7 +317,13 @@ fn conversation_clear_and_rebind_are_discoverable() {
         for flag in ["--expect-idle", "--format", "--tmux-bin"] {
             assert!(help.contains(flag), "missing {flag}: {help}");
         }
-        assert_eq!(help.contains("--allow-unread-mail"), verb == "clear");
+        for flag in [
+            "--allow-unread-mail",
+            "--wait-idle",
+            "--initial-prompt-file",
+        ] {
+            assert_eq!(help.contains(flag), verb == "clear", "{verb}: {flag}");
+        }
     }
 }
 

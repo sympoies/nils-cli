@@ -10,7 +10,7 @@ mod account_login;
 use account_login::drive_external_auth_login;
 mod exact_attention;
 pub(crate) mod guarded;
-mod idle_probe;
+pub(crate) mod idle_probe;
 pub(crate) mod interrupt;
 mod protocol_projection;
 use protocol_projection::{forwarded_server_value, server_observation};
