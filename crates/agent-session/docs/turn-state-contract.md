@@ -189,9 +189,10 @@ runtime is omitted from the current projection.
 Codex or Claude Code session. Use `--wait-idle <seconds>` to wait for idle
 instead of requiring it at invocation. Use `--initial-prompt-file <path>` to
 submit one prompt to the confirmed new conversation. A caller running in the
-target's current turn needs a separate worker so that the turn can finish. Before sending
-any terminal input or changing session state, clear checks provider attention,
-the mailbox, and the exact composer.
+target's current turn needs a separate worker so that the turn can finish.
+
+Before sending terminal input, clear checks provider attention, the mailbox, and
+the exact composer.
 
 - A reported approval or question returns `agent-blocked`. Pending provider
   event ingestion returns `send-provider-event-pending`.
@@ -232,6 +233,7 @@ Claude requires a newly observed clear receipt and verified idle activity; a
 matching new idle projection can complete an interrupted record commit. A prior
 runtime receipt is ignored after resume. Recovery refuses a stale same-ID Claude
 receipt and does not infer missing native evidence from history.
+
 The initial prompt must be nonempty UTF-8 text in a regular file and at most
 16 KiB. Its bytes are submitted once after verifying that the provider's new
 identity was persisted. The clear keeps its input fence across native
