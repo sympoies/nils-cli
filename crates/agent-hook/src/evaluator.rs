@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{Read, Write};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -10,9 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::contract::{
-    effective_mode_for_product, matcher_expression_matches, runtime_handler_filename,
-};
+use crate::contract::{effective_mode_for_product, matcher_expression_matches};
 use crate::degradation::StopCoordinationOutcome;
 use crate::error::HookError;
 use crate::handler_timeout::handler_timeout;
@@ -24,6 +22,12 @@ use crate::model::{
 };
 
 mod private_activity;
+mod python_runner;
+mod runtime_handlers;
+
+use python_runner::PythonRunner;
+pub(crate) use runtime_handlers::validate_policy_handlers;
+use runtime_handlers::{run_runtime_handler, run_session_coordination};
 
 pub(crate) const MAX_AGGREGATE_CONTEXT: usize = 16 * 1024;
 pub(crate) const MAX_REASONS: usize = 64;
@@ -384,6 +388,7 @@ fn evaluate_with_io(
     let mut advised = BTreeSet::new();
     let mut downgraded_by = None;
     let mut execution_budgets = ExecutionBudgets::new();
+    let mut python_runner = loaded.bundle.python_runner.then(PythonRunner::default);
     let operation_effect = if prepared.rules.iter().any(|prepared_rule| {
         prepared_rule.mode.executes()
             && (prepared_rule.rule.timeout_posture == TimeoutPosture::EffectGated
@@ -513,6 +518,7 @@ fn evaluate_with_io(
             raw,
             &mut execution_budgets.enforced,
             liveness.as_ref(),
+            python_runner.as_mut(),
         ) {
             Ok(outcome) => outcome,
             Err(error)
@@ -594,13 +600,14 @@ fn evaluate_with_io(
         &advised,
         downgraded_by,
     )?;
-    apply_session_coordination(
+    apply_session_coordination_with_runner(
         Some(loaded),
         decision,
         request,
         raw,
         prepared.session_coordination,
         CoordinationExecution::new(coordination_mode, operation_effect, coordination.unmanaged),
+        python_runner.as_mut(),
     )
 }
 
@@ -741,6 +748,7 @@ fn evaluate_capability(
     raw: &[u8],
     execution_budget: &mut ExecutionBudget,
     liveness: Option<&liveness::DispatchProjection<'_, '_>>,
+    python_runner: Option<&mut PythonRunner>,
 ) -> Result<RuleOutcome, HookError> {
     Ok(match capability {
         Capability::Allow { reason_code } => simple(DecisionAction::Allow, reason_code),
@@ -832,9 +840,13 @@ fn evaluate_capability(
                 Err(error) => simple(DecisionAction::Block, &error.code),
             }
         }
-        Capability::RuntimeKitHandler { handler_id } => {
-            run_runtime_handler(request.product, handler_id, raw, execution_budget)?
-        }
+        Capability::RuntimeKitHandler { handler_id } => run_runtime_handler(
+            request.product,
+            handler_id,
+            raw,
+            execution_budget,
+            python_runner,
+        )?,
         Capability::DshPolicy { group } => match group {
             crate::policy_parity::DshCapabilityGroup::AgentActivity => {
                 match run_session_activity(request, raw, execution_budget) {
@@ -957,12 +969,23 @@ fn terminal_coordination_failure_outcome(
 }
 
 pub fn apply_session_coordination(
+    decision: NormalizedDecision,
+    request: &NormalizedRequest,
+    raw: &[u8],
+    rule: Option<&crate::model::PolicyRule>,
+    execution: CoordinationExecution,
+) -> Result<NormalizedDecision, HookError> {
+    apply_session_coordination_with_runner(None, decision, request, raw, rule, execution, None)
+}
+
+fn apply_session_coordination_with_runner(
     loaded: Option<&LoadedPolicy>,
     mut decision: NormalizedDecision,
     request: &NormalizedRequest,
     raw: &[u8],
     rule: Option<&crate::model::PolicyRule>,
     execution: CoordinationExecution,
+    python_runner: Option<&mut PythonRunner>,
 ) -> Result<NormalizedDecision, HookError> {
     let Some(rule) = rule else {
         return Ok(crate::degradation::apply_stop_reentry(
@@ -1041,7 +1064,7 @@ pub fn apply_session_coordination(
             }
         })
     } else {
-        run_session_coordination(request.product, raw)
+        run_session_coordination(request.product, raw, python_runner)
     };
     let (outcome, coordination_outcome) = match run_result {
         Ok(mut handler) => {
@@ -1709,70 +1732,6 @@ fn executable_file(path: &Path) -> bool {
         .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
-fn run_runtime_handler(
-    product: Product,
-    handler_id: &str,
-    raw: &[u8],
-    execution_budget: &mut ExecutionBudget,
-) -> Result<RuleOutcome, HookError> {
-    let filename = runtime_handler_filename(handler_id).ok_or_else(|| {
-        HookError::data(
-            "handler-id-unsupported",
-            "runtime-kit handler is not in the compiled v1 allowlist",
-        )
-    })?;
-    let path = runtime_hook_root(product)?.join(filename);
-    validate_handler(&path)?;
-    let mut command = Command::new(&path);
-    command
-        .env("AGENT_RUNTIME_PRODUCT", product.as_str())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let output = run_with_budget(command, raw, execution_budget)?;
-    if output.stdout.len() > MAX_HANDLER_OUTPUT {
-        return Err(HookError::data(
-            "handler-output-too-large",
-            "runtime-kit handler output exceeds 256 KiB",
-        ));
-    }
-    if !output.status.success() {
-        return Err(HookError::runtime(
-            "handler-failed",
-            "runtime-kit handler returned failure",
-        ));
-    }
-    handler_outcome(handler_id, &output.stdout)
-}
-
-fn run_session_coordination(
-    product: Product,
-    raw: &[u8],
-) -> Result<CoordinationHandlerOutcome, HookError> {
-    let path = runtime_hook_root(product)?.join(SESSION_COORDINATION_HANDLER);
-    validate_handler(&path)?;
-    let mut command = Command::new(&path);
-    command
-        .env("AGENT_RUNTIME_PRODUCT", product.as_str())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let output = run_bounded(command, raw, handler_timeout(), MAX_HANDLER_OUTPUT, false)?;
-    if output.stdout.len() > MAX_HANDLER_OUTPUT {
-        return Err(HookError::data(
-            "handler-output-too-large",
-            "session coordination handler output exceeds 256 KiB",
-        ));
-    }
-    if !output.status.success() {
-        return Err(HookError::runtime(
-            "handler-failed",
-            "session coordination handler returned failure",
-        ));
-    }
-    session_coordination_outcome(&output.stdout)
-}
-
 const SESSION_COORDINATION_RESULT_SCHEMA: &str = "runtime-kit.session-coordination-result.v1";
 
 #[derive(Clone, Copy, Debug, serde::Deserialize, PartialEq, Eq)]
@@ -1891,120 +1850,6 @@ fn infer_provider_action(value: &Value) -> DecisionAction {
         return DecisionAction::Context;
     }
     DecisionAction::Allow
-}
-
-fn runtime_hook_root(product: Product) -> Result<PathBuf, HookError> {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .ok_or_else(|| HookError::runtime("home-unavailable", "HOME is required"))?;
-    Ok(match product {
-        Product::Codex => std::env::var_os("CODEX_HOME")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .unwrap_or_else(|| home.join(".codex"))
-            .join("hooks"),
-        Product::Claude => home.join(".claude/hooks"),
-        Product::Dsh => home.join(".dsh/hooks"),
-        Product::Hermes => home.join(".hermes/hooks"),
-    })
-}
-
-pub(crate) fn validate_policy_handlers(
-    loaded: &LoadedPolicy,
-    product: Product,
-) -> Result<(), HookError> {
-    let mut handlers = BTreeSet::new();
-    let mut needs_activity_helper = false;
-    for rule in &loaded.bundle.rules {
-        if !rule.products.contains(&product) {
-            continue;
-        }
-        match &rule.capability {
-            Capability::RuntimeKitHandler { handler_id } => {
-                if let Some(filename) = runtime_handler_filename(handler_id) {
-                    handlers.insert((handler_id.clone(), filename));
-                }
-            }
-            Capability::SessionCoordination { .. } => {
-                handlers.insert((
-                    "session-coordination".to_string(),
-                    SESSION_COORDINATION_HANDLER,
-                ));
-            }
-            Capability::SessionActivity { .. } => needs_activity_helper = true,
-            _ => {}
-        }
-    }
-
-    // Ingress registration is not capability health. A provider can be fully
-    // converged while the activity helper is unexecutable, which is how a stale
-    // `AGENT_SESSION_BIN` deadlocked sessions with every health surface reporting
-    // green (`sympoies/nils-cli#1414`).
-    if needs_activity_helper && locate_activity_helper().is_none() {
-        return Err(HookError::data(
-            ACTIVITY_HELPER_UNRESOLVABLE,
-            format!(
-                "the {} activity capability helper could not be resolved to an \
-                 executable file through {HELPER_BIN_ENV}, approved roots, or the same-release sibling",
-                nils_common::session_binary::NAME
-            ),
-        ));
-    }
-
-    let root = runtime_hook_root(product)?;
-    let failures = handlers
-        .into_iter()
-        .filter_map(|(handler_id, filename)| {
-            validate_handler(&root.join(filename))
-                .err()
-                .map(|error| (handler_id, error.code))
-        })
-        .collect::<Vec<_>>();
-    if failures.is_empty() {
-        return Ok(());
-    }
-    let summary = failures
-        .iter()
-        .map(|(handler_id, code)| format!("{handler_id} ({code})"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    if failures.iter().any(|(_, code)| code == "handler-untrusted") {
-        Err(HookError::data(
-            "handler-untrusted",
-            format!(
-                "runtime-kit handlers are untrusted for {}: {summary}",
-                product.as_str()
-            ),
-        ))
-    } else {
-        Err(HookError::runtime(
-            "handler-unavailable",
-            format!(
-                "runtime-kit handlers are unavailable for {}: {summary}",
-                product.as_str()
-            ),
-        ))
-    }
-}
-
-fn validate_handler(path: &Path) -> Result<(), HookError> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| {
-        HookError::runtime("handler-unavailable", "runtime-kit handler is unavailable")
-    })?;
-    let mode = metadata.permissions().mode();
-    if metadata.file_type().is_symlink()
-        || !metadata.is_file()
-        || metadata.uid() != unsafe { libc::geteuid() }
-        || mode & 0o100 == 0
-        || mode & 0o022 != 0
-    {
-        return Err(HookError::data(
-            "handler-untrusted",
-            "runtime-kit handler type, executable bit, owner, or mode is untrusted",
-        ));
-    }
-    Ok(())
 }
 
 fn run_with_budget(
@@ -2399,6 +2244,7 @@ mod tests {
                 overrides: BTreeMap::new(),
             },
             bundle: crate::model::PolicyBundle {
+                python_runner: false,
                 schema_version: crate::model::POLICY_VERSION.to_string(),
                 bundle_id: "runtime-kit".to_string(),
                 version: "2026.07.20.1".to_string(),

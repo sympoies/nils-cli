@@ -578,7 +578,6 @@ fn run_dispatch(
                 }
             };
             let decision = match evaluator::apply_session_coordination(
-                None,
                 decision,
                 &request,
                 &raw,

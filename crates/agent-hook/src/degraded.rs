@@ -656,6 +656,7 @@ mod tests {
                 overrides: BTreeMap::new(),
             },
             bundle: PolicyBundle {
+                python_runner: false,
                 schema_version: "agent-hook.policy.v1".to_string(),
                 bundle_id: "runtime-kit".to_string(),
                 version: "2026.07.23.1".to_string(),
