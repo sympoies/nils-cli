@@ -54,6 +54,11 @@ jobs:
             exit 1
           }
 
+      - name: Require curated release notes
+        env:
+          VERSION: ${{ inputs.version }}
+        run: bash scripts/ci/validate-release-notes.sh "$VERSION"
+
       - name: Prepare and validate the canonical release patch
         env:
           VERSION: ${{ inputs.version }}
