@@ -113,6 +113,12 @@ elif command == 'kill-session':
     let provider = root.join("provider-config");
     fs::create_dir_all(&provider).unwrap();
     let state = root.join("state");
+    let rules = root.join("rules.json");
+    let mut rule = json!({"schema_version":"agent-session.operator-rules.v1"});
+    if gate != "unset" {
+        rule["claude_native_notice"] = json!(gate == "1");
+    }
+    fs::write(&rules, rule.to_string()).unwrap();
     if resume {
         let session = state.join("sessions/synthetic");
         fs::create_dir_all(&session).unwrap();
@@ -163,7 +169,11 @@ elif command == 'kill-session':
         &CmdOptions::new()
             .with_cwd(root)
             .with_env_remove_prefix("AGENT_SESSION_")
-            .with_env("AGENT_SESSION_NOTICE_WRITERS", gate)
+            .with_env("AGENT_SESSION_RULES_FILE", rules.to_str().unwrap())
+            .with_env(
+                "AGENT_SESSION_NOTICE_WRITERS",
+                if gate == "1" { "0" } else { "1" },
+            )
             .with_env("AGENT_SESSION_FAKE_TMUX_LOG", log.to_str().unwrap())
             .with_env("AGENT_SESSION_CODEX_CAPTURE_TIMEOUT_MS", "100")
             .with_env("AGENT_HOME", root.join("agent-home").to_str().unwrap())
@@ -240,7 +250,7 @@ fn claude_notice_supported_writer_launch_mounts_native_module() {
 
 #[test]
 fn claude_notice_gate_off_and_other_versions_do_not_mount_a_module() {
-    for (gate, version) in [("0", "2.1.296"), ("1", "2.1.295")] {
+    for (gate, version) in [("0", "2.1.296"), ("unset", "2.1.296"), ("1", "2.1.295")] {
         for resume in [false, true] {
             let (temp, _) = nils_test_support::short_socket_path("socket");
             let (output, calls) = launch_case(temp.path(), gate, version, resume);
@@ -252,6 +262,47 @@ fn claude_notice_gate_off_and_other_versions_do_not_mount_a_module() {
                 output.stderr_text()
             );
             assert_eq!(mounted_module(&calls), None);
+            if resume && gate != "1" {
+                assert_eq!(
+                    output.stdout_json()["data"]["native_notice"],
+                    json!({"state":"not-attached", "reason":"host-rule-disabled"})
+                );
+                let state = temp.path().join("state");
+                let tmux = temp.path().join("launch-tmux");
+                let options = CmdOptions::new()
+                    .with_env_remove_prefix("AGENT_SESSION_")
+                    .with_env("AGENT_SESSION_TMUX_BIN", tmux.to_str().unwrap());
+                for command in ["glance", "board"] {
+                    for format in ["json", "text"] {
+                        let mut args = vec!["--state-dir", state.to_str().unwrap(), command];
+                        if command == "glance" {
+                            args.push("synthetic");
+                        }
+                        args.extend(["--format", format]);
+                        let view = run_resolved("agent-session", &args, &options);
+                        assert_eq!(view.code, 0, "{}", view.stderr_text());
+                        if format == "json" {
+                            let body = view.stdout_json();
+                            let notice = if command == "glance" {
+                                &body["data"]["native_notice"]
+                            } else {
+                                &body["data"]["board"]["records"][0]["native_notice"]
+                            };
+                            assert_eq!(
+                                *notice,
+                                json!({"state":"not-attached", "reason":"host-rule-disabled"})
+                            );
+                        } else {
+                            assert!(
+                                view.stdout_text()
+                                    .contains("native_notice: not-attached (host-rule-disabled)"),
+                                "{}",
+                                view.stdout_text()
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -847,7 +898,8 @@ fn claude_notice_launch_mounts_the_tested_range_and_records_why_not() {
             "2.1.295",
         ),
         ("1", "garbled", false, "provider-version-unreadable", ""),
-        ("0", "2.1.296", false, "writers-disabled", ""),
+        ("0", "2.1.296", false, "host-rule-disabled", ""),
+        ("unset", "2.1.296", false, "host-rule-disabled", ""),
     ];
     let cases: Vec<_> = [false, true]
         .into_iter()
@@ -916,9 +968,9 @@ fn claude_notice_unattached_session_refuses_with_a_typed_reason() {
             Value::Null,
         ),
         (
-            Some(status("writers-disabled", None)),
+            Some(status("host-rule-disabled", None)),
             "notice-transport-unsupported",
-            "writers-disabled",
+            "host-rule-disabled",
             Value::Null,
         ),
         (

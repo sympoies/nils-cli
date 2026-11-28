@@ -307,6 +307,10 @@ def cleanup(created):
 
 
 def run_enabled():
+    rules = ROOT / "rules.json"
+    rules.write_text(json.dumps({"schema_version": "agent-session.operator-rules.v1",
+                                 "claude_native_notice": True}))
+    os.environ["AGENT_SESSION_RULES_FILE"] = str(rules)
     os.environ["AGENT_SESSION_NOTICE_WRITERS"] = "1"
     endpoint = inference.start()
     with endpoint:

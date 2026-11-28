@@ -179,8 +179,8 @@ pub(crate) fn prepare_launch(
     if record.agent != "claude" {
         return Ok(None);
     }
-    if !crate::notice::writers_enabled() {
-        attach::record(state, record, Reason::WritersDisabled, None);
+    if !crate::cli::operator_rules::claude_native_notice() {
+        attach::record(state, record, Reason::HostRuleDisabled, None);
         return Ok(None);
     }
     let mut command = Command::new(agent_bin);

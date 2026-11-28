@@ -29,12 +29,14 @@ pub struct RulesArgs {
 #[derive(Clone, Copy, Debug, Serialize)]
 struct Rules {
     coordinator_requires_root: bool,
+    claude_native_notice: bool,
 }
 
 impl Default for Rules {
     fn default() -> Self {
         Self {
             coordinator_requires_root: true,
+            claude_native_notice: false,
         }
     }
 }
@@ -99,7 +101,10 @@ fn load(path: Option<&Path>) -> Result<(Rules, bool), Invalid> {
         ));
     }
     for key in root.keys() {
-        if !matches!(key.as_str(), "schema_version" | "coordinator_requires_root") {
+        if !matches!(
+            key.as_str(),
+            "schema_version" | "coordinator_requires_root" | "claude_native_notice"
+        ) {
             return Err(invalid(key, "unknown operator rule"));
         }
     }
@@ -109,9 +114,16 @@ fn load(path: Option<&Path>) -> Result<(Rules, bool), Invalid> {
             .as_bool()
             .ok_or_else(|| invalid("coordinator_requires_root", "expected a boolean"))?,
     };
+    let claude_native_notice = match root.get("claude_native_notice") {
+        None => false,
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| invalid("claude_native_notice", "expected a boolean"))?,
+    };
     Ok((
         Rules {
             coordinator_requires_root,
+            claude_native_notice,
         },
         true,
     ))
@@ -237,10 +249,11 @@ pub(crate) fn prepare(command: &Command) -> Option<i32> {
 fn render(format: OutputFormat, view: Value) -> i32 {
     crate::render_single_success("rules", format, &view, |view| {
         format!(
-            "operator rules: {}\nfile: {}\ncoordinator_requires_root: {}\nretained_last_good: {}\n",
+            "operator rules: {}\nfile: {}\ncoordinator_requires_root: {}\nclaude_native_notice: {}\nretained_last_good: {}\n",
             view["source"].as_str().unwrap_or_default(),
             view["file"],
             view["rules"]["coordinator_requires_root"],
+            view["rules"]["claude_native_notice"],
             view["retained_last_good"],
         )
     })
@@ -267,4 +280,16 @@ async fn serve_view() -> axum::Json<Value> {
     let mut state = active.lock().unwrap();
     state.refresh_or_warn();
     axum::Json(json!({"schema_version":"cli.agent-session.rules.v1","ok":true,"data":state.view()}))
+}
+
+/// Host-wide launch setting, loaded through the operator rules file.
+pub(crate) fn claude_native_notice() -> bool {
+    let Some(active) = ACTIVE.get() else {
+        return false;
+    };
+    let mut state = active.lock().unwrap();
+    if state.reload {
+        state.refresh_or_warn();
+    }
+    state.rules.claude_native_notice
 }

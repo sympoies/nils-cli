@@ -186,6 +186,7 @@ the extension. A session with lineage and work looks like this:
 | Progress | `auth_detection_health` | optional string | `structured`, `degraded_terminal_fallback`, `degraded_source_unavailable`, `degraded_store_unavailable`, or `degraded_queue_capacity`; absent before observation. Unrecognized values are omitted. |
 | Progress | `turn_state.source.confidence` | string | `TurnState.source.confidence`: `authoritative`, `observed`, or `inferred`. |
 | Lifecycle | `state` | string | New derivation: `live`, `stopped`, or `closed`. See [Lifecycle states](#lifecycle-states). |
+| Lifecycle | `native_notice` | object or absent | Recorded Claude module absence for the current incarnation: `state` is `not-attached` and `reason` is `host-rule-disabled`, `provider-version-unsupported`, or `provider-version-unreadable`. |
 | Lifecycle | `runtime_status` | string or null | `SessionView.status` (`running`, `stopped`, `missing`, or `unknown`) at projection time; `null` on a closed record. New on the board so a consumer can tell a proven stop from an unverified probe. |
 | Lifecycle | `created_at` | string | `SessionView.created_at`. |
 | Lifecycle | `updated_at` | string | `SessionView.updated_at`; on a closed record, the last value before close. |

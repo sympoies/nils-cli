@@ -355,6 +355,21 @@ pub(crate) fn project_record(
         "work": project_work(view),
         "launch_env": crate::launch_env::projection(view.get("launch_env")),
     });
+    if let Some(
+        reason @ ("host-rule-disabled"
+        | "provider-version-unsupported"
+        | "provider-version-unreadable"),
+    ) = view
+        .get("native_notice")
+        .and_then(|notice| notice.get("reason"))
+        .and_then(Value::as_str)
+        && view
+            .get("native_notice")
+            .and_then(|notice| notice.get("state"))
+            == Some(&json!("not-attached"))
+    {
+        projected["native_notice"] = json!({"state":"not-attached", "reason":reason});
+    }
     if let Some(receipt) = view.get("boot_recovery") {
         projected["boot_recovery"] = receipt.clone();
     }

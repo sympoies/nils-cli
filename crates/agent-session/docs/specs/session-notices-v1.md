@@ -163,7 +163,8 @@ Accepted LF, row-trailing spaces and final LF bytes are preserved. The shared
 codec does not acquire this delivery limit. Unsupported text returns
 `notice-native-text-unsupported` before a new claim or input authorization.
 
-Mounting uses the existing writer gate at launch. Old runtimes, gate-off
+Mounting uses the host operator rule `claude_native_notice` at launch; the
+notice writer gate remains separate. Old runtimes, rule-disabled
 launches and releases outside the tested range do not gain the module later.
 They are never injected into, restarted or sent through a plain fallback by
 `notice`. Matching private readiness must be followed by a fresh
@@ -266,9 +267,10 @@ it does not define host pinning or update policy.
 Every Claude launch, resume and restart that does not mount the module records
 why in a private `attach.json` beside the incarnation (`state` `not-attached`,
 `reason`, the observed `provider_version` or null, and the `supported_min` /
-`supported_max` in force at launch). Reasons are `writers-disabled`,
+`supported_max` in force at launch). Reasons are `host-rule-disabled`,
 `provider-version-unsupported` and `provider-version-unreadable`. The record is
-diagnostic only and grants nothing.
+diagnostic only and grants nothing. Restart and resume output and board and
+glance views expose the recorded `native_notice` state and reason.
 
 Admitted Claude notices without matching candidate module readiness are refused
 with `guard=transport`, `stage=admission`, `atomic=false`, `pasted=false` and
@@ -280,7 +282,7 @@ or a new idempotency claim, and carry `native_module`:
 - `notice-native-version-unsupported` when the recorded reason is
   `provider-version-unsupported` or `provider-version-unreadable`.
 - `notice-transport-unsupported` for every other case, with `reason`
-  `writers-disabled` or `unrecorded` (a runtime that recorded nothing).
+  `host-rule-disabled` or `unrecorded` (a runtime that recorded nothing).
 
 Existing identity, idle, empty-composer and used-key checks still take
 precedence. A fresh key refused at this boundary remains available for a

@@ -357,3 +357,26 @@ pub(super) fn resume_session_with_kind(
         bootstrap,
     })
 }
+
+pub(super) fn render_glance_text(result: &GlanceResult) -> String {
+    let mut text = format!("{} {} [{}]\n", result.id, result.agent, result.status);
+    if let Some(notice) = &result.native_notice {
+        text.push_str(&notice.text());
+    }
+    text.push_str(&result.tail);
+    if !result.tail.is_empty() && !result.tail.ends_with('\n') {
+        text.push('\n');
+    }
+    text
+}
+
+pub(super) fn render_resumed_text(result: &SessionView) -> String {
+    let mut text = format!(
+        "resumed {} session {}\ntmux: {}\nattach: {}\n",
+        result.agent, result.id, result.tmux_session, result.attach_command
+    );
+    if let Some(notice) = &result.native_notice {
+        text.push_str(&notice.text());
+    }
+    text
+}

@@ -15,7 +15,7 @@ const STATE: &str = "not-attached";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Reason {
-    WritersDisabled,
+    HostRuleDisabled,
     ProviderVersionUnsupported,
     ProviderVersionUnreadable,
 }
@@ -23,7 +23,7 @@ pub(crate) enum Reason {
 impl Reason {
     fn as_str(self) -> &'static str {
         match self {
-            Self::WritersDisabled => "writers-disabled",
+            Self::HostRuleDisabled => "host-rule-disabled",
             Self::ProviderVersionUnsupported => "provider-version-unsupported",
             Self::ProviderVersionUnreadable => "provider-version-unreadable",
         }
@@ -31,7 +31,7 @@ impl Reason {
 
     fn parse(text: &str) -> Option<Self> {
         [
-            Self::WritersDisabled,
+            Self::HostRuleDisabled,
             Self::ProviderVersionUnsupported,
             Self::ProviderVersionUnreadable,
         ]
@@ -40,7 +40,7 @@ impl Reason {
     }
 
     fn version_related(self) -> bool {
-        self != Self::WritersDisabled
+        self != Self::HostRuleDisabled
     }
 }
 
@@ -113,6 +113,29 @@ fn read(context: &CliContext, session: &SessionRecord) -> Option<Recorded> {
     })
 }
 
+/// The recorded launch outcome, independent of the inspecting process environment.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct Diagnostic {
+    state: &'static str,
+    reason: &'static str,
+}
+
+pub(crate) fn diagnostic(context: &CliContext, session: &SessionRecord) -> Option<Diagnostic> {
+    if session.agent != "claude" {
+        return None;
+    }
+    read(context, session).map(|recorded| Diagnostic {
+        state: STATE,
+        reason: recorded.reason.as_str(),
+    })
+}
+
+impl Diagnostic {
+    pub(crate) fn text(&self) -> String {
+        format!("native_notice: {} ({})\n", self.state, self.reason)
+    }
+}
+
 /// A known launch/configuration absence permits the mailbox's guarded text
 /// wake. An installed module with missing readiness remains uncertain.
 pub(crate) fn mailbox_text_reason(
@@ -127,7 +150,7 @@ pub(crate) fn mailbox_text_reason(
     }
     if let Some(recorded) = read(context, session) {
         return Some(match recorded.reason {
-            Reason::WritersDisabled => "notice-writers-disabled",
+            Reason::HostRuleDisabled => "notice-receiver-not-attached",
             Reason::ProviderVersionUnsupported | Reason::ProviderVersionUnreadable => {
                 "notice-provider-unsupported"
             }

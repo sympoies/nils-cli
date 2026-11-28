@@ -534,6 +534,9 @@ fn render_text(data: &Value, caller: Option<&Caller>, local_machine: &str) -> St
                 ));
             }
         }
+        if let Some(reason) = record["native_notice"]["reason"].as_str() {
+            out.push_str(&format!("  native_notice: not-attached ({reason})"));
+        }
         if is_caller(record, caller) {
             out.push_str("  (this session)");
         } else if let Some(target) = send_target(record, local_machine) {
