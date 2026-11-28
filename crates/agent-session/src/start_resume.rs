@@ -2,6 +2,8 @@
 use super::*;
 
 mod codex;
+mod source_lock;
+use source_lock::lock_source;
 
 #[derive(Debug)]
 pub struct StartView {
@@ -248,30 +250,6 @@ impl Request {
         }
         Ok(agent)
     }
-}
-
-fn lock_source(context: &CliContext, id: &str) -> Result<fs::File, CliError> {
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(
-            context
-                .state_dir
-                .join(SESSION_LOCKS_DIR)
-                .join(format!("{id}.lock")),
-        )
-        .map_err(|_| refusal("resume-source-unknown"))?;
-    // SAFETY: the descriptor remains owned by Admission for the whole launch.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        return Err(refusal(
-            if io::Error::last_os_error().kind() == io::ErrorKind::WouldBlock {
-                "resume-source-live"
-            } else {
-                "resume-source-unknown"
-            },
-        ));
-    }
-    Ok(file)
 }
 
 fn source_account(
