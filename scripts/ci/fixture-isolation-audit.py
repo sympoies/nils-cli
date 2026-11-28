@@ -29,16 +29,6 @@ FUNCTION = re.compile(r"\bfn\s+\w+\s*\(")
 SOCKET_IN_FIXTURE = re.compile(r"&?\s*\w+\s*\.\s*runtime_dir\s*\(\s*\)\s*\.\s*join\s*\(")
 SOCKET_ARG = re.compile(r"&?\s*(\w+)\s*\)")
 
-# #4167 moves these exact Git launches while this audit is in flight.
-RETRO_TEST = "crates/agent-workflow-primitives/tests/integration/cli.rs"
-RETRO_HELPER = "crates/agent-workflow-primitives/tests/integration/cli/retro_git.rs"
-RETRO_BEFORE = {
-    (RETRO_TEST, "git", 'let mut command = Command::new("git");'),
-    (RETRO_TEST, "git", 'let status = Command::new("git")'),
-}
-RETRO_AFTER = (RETRO_HELPER, "git", 'let mut command = Command::new("git");')
-
-
 def socket_in_fixture(masked, start, argument):
     if SOCKET_IN_FIXTURE.match(masked, argument):
         return True
@@ -102,13 +92,6 @@ def load_allowlist(root):
             raise ValueError(f"{path}:{number}: invalid or duplicate allowlist entry")
         counts[key] = int(count)
 
-    # Select the applicable entries before accounting. The old and new
-    # locations cannot both spend their allowance in the same tree.
-    if (root / RETRO_HELPER).is_file():
-        for key in RETRO_BEFORE:
-            counts.pop(key, None)
-    else:
-        counts.pop(RETRO_AFTER, None)
     return counts
 
 
