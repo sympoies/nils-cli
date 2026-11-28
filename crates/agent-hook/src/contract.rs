@@ -907,6 +907,7 @@ pub const RUNTIME_HANDLERS: &[(&str, &str)] = &[
     ),
     ("portable-paths-scan", "portable-paths-scan.py"),
     ("pre-edit-intent-gate", "pre-edit-intent-gate.py"),
+    ("remote-ssh-advisory", "remote-ssh-advisory.py"),
     ("semantic-commit-body-gate", "semantic-commit-body-gate.py"),
     ("session-start-healthcheck", "session-start-healthcheck.sh"),
     ("skill-usage-reminder", "skill-usage-reminder.py"),
