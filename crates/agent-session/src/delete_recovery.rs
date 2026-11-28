@@ -2,7 +2,7 @@ use super::*;
 
 #[cfg(target_os = "linux")]
 pub(crate) mod codex_daemons;
-mod idle;
+pub(crate) mod idle;
 #[cfg(target_os = "macos")]
 mod macos_codex_daemons;
 #[cfg(target_os = "macos")]

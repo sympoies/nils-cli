@@ -388,14 +388,13 @@ pub(crate) fn project_record(
     if let Some(incident) = view.get("auth_incident").and_then(|value| {
         serde_json::from_value::<crate::auth_incident::AuthIncident>(value.clone()).ok()
     }) {
-        if let Some(outcome) = incident
-            .same_account_recovery
-            .as_ref()
-            .and_then(crate::auth_incident::recovery::report::project)
-        {
-            projected["auth_recovery"] = json!(outcome);
-        }
         projected["auth_incident"] = json!(incident);
+    }
+    if let Some(outcome) = view.get("auth_recovery").and_then(|value| {
+        serde_json::from_value::<crate::auth_incident::recovery::report::Outcome>(value.clone())
+            .ok()
+    }) {
+        projected["auth_recovery"] = json!(outcome);
     }
     if let Some(health) = view
         .get("auth_detection_health")

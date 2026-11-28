@@ -37,7 +37,7 @@ fn failed_runtime(context: &CliContext, root: &Path, tmux: &Path, bound: bool) -
     record
 }
 
-type BrokerFixture = (EnvGuard, EnvGuard);
+type BrokerFixture = (EnvGuard, [EnvGuard; 2]);
 
 fn broker(root: &Path, lock: &GlobalStateLock) -> BrokerFixture {
     let dir = root.join("alpha");
@@ -148,7 +148,11 @@ fn auth_recovery_waits_for_publication_and_resumes_once_without_replaying_input(
     );
     crate::coordination::auth_effects::test_support::assert_retired(&context, &record);
     assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &current).is_ok());
-    assert!(crate::auth_incident::view(&context, &current).is_none());
+    assert_eq!(
+        crate::auth_incident::recovery::report::for_record(&context, &current)
+            .map(|report| serde_json::to_value(report).unwrap()["state"].clone()),
+        Some(json!("restarted")),
+    );
     crate::auth_incident::tick(&context, &current, &tmux, "fixture", Some(false)).unwrap();
     let store: Value = serde_json::from_slice(
         &fs::read(crate::session_dir(&context, ID).join("auth-incidents.json")).unwrap(),
@@ -172,7 +176,11 @@ fn auth_recovery_waits_for_publication_and_resumes_once_without_replaying_input(
             "missing {phase}/{result}: {alerts}"
         );
     }
-    assert!(crate::auth_incident::view(&context, &current).is_none());
+    assert_eq!(
+        crate::auth_incident::recovery::report::for_record(&context, &current)
+            .map(|report| serde_json::to_value(report).unwrap()["state"].clone()),
+        Some(json!("restarted")),
+    );
     let effects = &log(tmp.path())[before.len()..];
     assert!(!effects.contains("load-buffer"));
     assert!(!effects.contains("send-keys"));
@@ -890,7 +898,7 @@ fn auth_recovery_unknown_effect_sample_is_bounded_without_losing_the_total() {
 
 // The provider command must use only the materialized account and must not
 // inherit a caller OAuth override. A response body can contain sensitive text.
-fn fake_usage_provider(root: &Path, lock: &GlobalStateLock) -> EnvGuard {
+fn fake_usage_provider(root: &Path, lock: &GlobalStateLock) -> [EnvGuard; 2] {
     let helper = format!(
         r#"#!/bin/sh
 root={root}
@@ -917,7 +925,17 @@ fi
         std::iter::once(root.to_path_buf()).chain(std::env::split_paths(&old)),
     )
     .unwrap();
-    EnvGuard::set(lock, "PATH", path.to_str().unwrap())
+    let native = executable(
+        &root.join("claude-agents"),
+        &format!(
+            "#!/bin/sh\n[ \"$*\" = 'agents --json' ] || exit 2\nprintf '%s\\n' '{}'\n",
+            json!([{"sessionId": CONVERSATION, "status": "idle"}])
+        ),
+    );
+    [
+        EnvGuard::set(lock, "PATH", path.to_str().unwrap()),
+        EnvGuard::set(lock, "AGENT_SESSION_CLAUDE_BIN", native.to_str().unwrap()),
+    ]
 }
 
 #[test]

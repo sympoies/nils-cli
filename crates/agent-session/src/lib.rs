@@ -1263,6 +1263,8 @@ pub struct SessionView {
     auth_incident: Option<auth_incident::AuthIncident>,
     #[serde(skip_serializing_if = "Option::is_none")]
     auth_detection_health: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_recovery: Option<auth_incident::recovery::report::Outcome>,
     #[serde(flatten)]
     previews: provider_prompt::SessionPreviews,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -5880,7 +5882,8 @@ fn session_view_from_parts(
             schedule_shadow_sampling,
         )
     });
-    let (auth_incident, auth_detection_health) = auth_incident::projection(context, record);
+    let (auth_incident, auth_detection_health, auth_recovery) =
+        auth_incident::projection(context, record);
     SessionView {
         native_notice: send::claude_notice::attach::diagnostic(context, record),
         launch_notice: None,
@@ -5946,6 +5949,7 @@ fn session_view_from_parts(
         turn_state,
         auth_incident,
         auth_detection_health,
+        auth_recovery,
         // Populated on demand by the list handler; never computed in the shared
         // collector so the expensive transcript path stays out of the hot build.
         previews: provider_prompt::SessionPreviews::default(),

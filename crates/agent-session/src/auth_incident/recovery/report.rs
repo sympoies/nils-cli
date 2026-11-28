@@ -2,17 +2,38 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{Receipt, Verification};
 use crate::{CliContext, SessionRecord};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum State {
+    ReVerified,
+    DeferredUntilIdle,
+    Restarted,
+    StillFailing,
+}
+
+impl State {
+    fn code(&self) -> &'static str {
+        match self {
+            Self::ReVerified => "re_verified",
+            Self::DeferredUntilIdle => "deferred_until_idle",
+            Self::Restarted => "restarted",
+            Self::StillFailing => "still_failing",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Outcome {
     account: String,
     generation: String,
-    state: &'static str,
+    state: State,
     provider_verified: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
@@ -26,25 +47,45 @@ impl Outcome {
             .map_or_else(String::new, |reason| format!(" ({reason})"));
         format!(
             "auth recovery: {} generation {} {}{}\n",
-            self.account, self.generation, self.state, reason
+            self.account,
+            self.generation,
+            self.state.code(),
+            reason
         )
     }
 }
 
 pub(crate) fn for_record(context: &CliContext, record: &SessionRecord) -> Option<Outcome> {
-    super::super::projection(context, record)
-        .0
-        .and_then(|incident| incident.same_account_recovery.as_ref().and_then(project))
+    super::super::projection(context, record).2
 }
 
-pub(crate) fn project(receipt: &Receipt) -> Option<Outcome> {
+pub(in crate::auth_incident) fn from_incidents(
+    incidents: &[super::super::AuthIncident],
+    record: &SessionRecord,
+) -> Option<Outcome> {
+    incidents
+        .iter()
+        .rev()
+        .find(|incident| {
+            super::super::same_runtime(incident, record)
+                || incident
+                    .same_account_recovery
+                    .as_ref()
+                    .is_some_and(|receipt| matches_replacement(receipt, record))
+        })?
+        .same_account_recovery
+        .as_ref()
+        .and_then(project)
+}
+
+fn project(receipt: &Receipt) -> Option<Outcome> {
     let publication = receipt.replacement.as_ref()?;
     let verification = receipt.verification?;
     let state = match (verification, receipt.state.as_str()) {
-        (Verification::Verified, "runtime_resumed") => "restarted",
-        (Verification::Verified, "deferred_until_idle") => "deferred_until_idle",
-        (Verification::Verified, "blocked") | (Verification::Failed(_), _) => "still_failing",
-        (Verification::Verified, _) => "re_verified",
+        (Verification::Verified, "runtime_resumed") => State::Restarted,
+        (Verification::Verified, "deferred_until_idle") => State::DeferredUntilIdle,
+        (Verification::Verified, "blocked") | (Verification::Failed(_), _) => State::StillFailing,
+        (Verification::Verified, _) => State::ReVerified,
         (Verification::Started, _) => return None,
     };
     Some(Outcome {
@@ -56,10 +97,7 @@ pub(crate) fn project(receipt: &Receipt) -> Option<Outcome> {
     })
 }
 
-pub(in crate::auth_incident) fn matches_replacement(
-    receipt: &Receipt,
-    record: &SessionRecord,
-) -> bool {
+fn matches_replacement(receipt: &Receipt, record: &SessionRecord) -> bool {
     receipt.verification == Some(Verification::Verified)
         && record.runtime.as_ref().is_some_and(|runtime| {
             receipt.new_runtime_incarnation.as_deref() == Some(runtime.launch_id.as_str())

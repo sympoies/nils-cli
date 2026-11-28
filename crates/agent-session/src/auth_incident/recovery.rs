@@ -4,6 +4,7 @@ use super::*;
 use crate::claude_account::generation::{self, Publication};
 use crate::cli::SpecialKey;
 use crate::coordination::auth_effects::UnknownOperation;
+use crate::delete_recovery::idle;
 
 pub(crate) mod report;
 mod verification;
@@ -169,6 +170,17 @@ fn save_receipt(
 fn blocked(receipt: &mut Receipt, reason: &str) {
     receipt.state = "blocked".into();
     receipt.last_reason = Some(reason.into());
+}
+
+fn defer_until_idle(receipt: &mut Receipt, cause: &CliError) {
+    receipt.state = "deferred_until_idle".into();
+    receipt.last_reason = Some(
+        cause
+            .details()
+            .and_then(|details| details["state"].as_str())
+            .unwrap_or(cause.code())
+            .into(),
+    );
 }
 
 fn account_matches(record: &SessionRecord, account: &str) -> bool {
@@ -390,7 +402,10 @@ pub(crate) fn tick(
         }
     }
     save_receipt(context, &record, &mut store, index, &receipt)?;
-    if matches!(receipt.state.as_str(), "stopping" | "stopped") {
+    if matches!(
+        receipt.state.as_str(),
+        "deferred_until_idle" | "stopping" | "stopped"
+    ) {
         let result = (|| {
             // Revalidate the exact verified publication before stopping,
             // including crash re-entry. A newer one needs its own request.
@@ -400,15 +415,48 @@ pub(crate) fn tick(
                     .as_ref()
                     .is_some_and(verification::current)
             {
+                if receipt.state == "deferred_until_idle" {
+                    receipt.last_reason = Some("publication_unavailable".into());
+                    return Ok(());
+                }
                 return Err(error());
             }
             let _fence = crate::restart::auth_recovery::fence(context, &record)?;
+            // A committed stop can recover an already-stopped boundary. For
+            // a running pane, always use the shared live Claude idle guard.
+            let guard = if receipt.state != "deferred_until_idle"
+                && crate::session_status(context, tmux, &record) == "stopped"
+            {
+                None
+            } else {
+                match idle::require_running(context, &record, tmux)
+                    .and_then(|()| idle::claude::acquire(context, &record, tmux))
+                {
+                    Ok(guard) => Some(guard),
+                    Err(cause) => {
+                        defer_until_idle(&mut receipt, &cause);
+                        return Ok(());
+                    }
+                }
+            };
+            if receipt.state == "deferred_until_idle" {
+                receipt.state = "stopping".into();
+                receipt.last_reason = None;
+                save_receipt(context, &record, &mut store, index, &receipt)?;
+            }
             crate::auto_resume::cancel_for_manual_input_locked(
                 context,
                 &record.id,
                 &jiff::Timestamp::now().to_string(),
             )?;
+            if let Some(guard) = &guard
+                && let Err(cause) = guard.check_before_teardown(tmux, &record)
+            {
+                defer_until_idle(&mut receipt, &cause);
+                return Ok(());
+            }
             crate::stop_session_runtime_locked(context, &mut record, tmux)?;
+            drop(guard);
             // The process is stopped before taking the final operation snapshot.
             if receipt.state == "stopping" {
                 (

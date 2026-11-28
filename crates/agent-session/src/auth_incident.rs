@@ -195,22 +195,20 @@ fn runtime_matches(left: &SessionRecord, right: &SessionRecord) -> bool {
 pub(crate) fn projection(
     context: &CliContext,
     record: &SessionRecord,
-) -> (Option<AuthIncident>, Option<String>) {
+) -> (
+    Option<AuthIncident>,
+    Option<String>,
+    Option<recovery::report::Outcome>,
+) {
     match read(context, record) {
-        Ok(store) => (
-            store.incidents.into_iter().rev().find(|incident| {
-                same_runtime(incident, record)
-                    || auto_settle::matches(incident, record)
-                    || incident
-                        .same_account_recovery
-                        .as_ref()
-                        .is_some_and(|receipt| {
-                            recovery::report::matches_replacement(receipt, record)
-                        })
-            }),
-            store.detection_health,
-        ),
-        Err(_) => (None, Some("degraded_store_unavailable".into())),
+        Ok(store) => {
+            let outcome = recovery::report::from_incidents(&store.incidents, record);
+            let incident = store.incidents.into_iter().rev().find(|incident| {
+                same_runtime(incident, record) || auto_settle::matches(incident, record)
+            });
+            (incident, store.detection_health, outcome)
+        }
+        Err(_) => (None, Some("degraded_store_unavailable".into()), None),
     }
 }
 #[cfg(test)]

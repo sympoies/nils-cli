@@ -180,9 +180,15 @@ pub(super) fn observe_result(
         } else {
             r.mark_credentials_refreshed();
         }
-        incident.status = "recovered".into();
-        incident.settle(observed_path(result), result, at);
-        incident.recovery_notification = Notification::default();
+        if !incident
+            .same_account_recovery
+            .as_ref()
+            .is_some_and(recovery::verified_restart_pending)
+        {
+            incident.status = "recovered".into();
+            incident.settle(observed_path(result), result, at);
+            incident.recovery_notification = Notification::default();
+        }
         changed = true;
     }
     changed

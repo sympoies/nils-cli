@@ -1,16 +1,54 @@
-use super::{Confidence, SourceKind, TurnPhase, active, unknown};
+use super::{
+    ActivityFence, Confidence, SourceKind, TurnPhase, acquire_activity, active, check_composer,
+    unknown,
+};
 use crate::activity::{bound_claude_state, pending, shadow::claude_agents};
 use crate::{
     CliContext, CliError, PANE_OBSERVATION_COMMAND_TIMEOUT, SessionRecord, exact_tmux_target,
     run_output_with_timeout,
 };
 use serde_json::json;
-use std::{path::Path, process::Command};
+use std::{path::Path, process::Command, time::Instant};
 
-pub(super) fn require_waiting(
+/// Held under the caller's session record lock through verified teardown.
+pub(crate) struct Guard {
+    _activity: ActivityFence,
+}
+
+impl Guard {
+    pub(crate) fn check_before_teardown(
+        &self,
+        tmux: &Path,
+        record: &SessionRecord,
+    ) -> Result<(), CliError> {
+        // Repeat the attached-client check as late as possible. The remaining
+        // check-to-teardown interval is the same residual as idle retirement.
+        require_detached(tmux, record)
+    }
+}
+
+/// The caller already established the exact running managed Claude runtime.
+/// Neither probing nor refusing this admission changes the pane.
+pub(crate) fn acquire(
     context: &CliContext,
     record: &SessionRecord,
-) -> Result<(), CliError> {
+    tmux: &Path,
+) -> Result<Guard, CliError> {
+    let activity = acquire_activity(context, record)?;
+    require_waiting(context, record)?;
+    require_native_idle(record)?;
+    let deadline = Instant::now() + crate::send::guarded_hold_budget(record, false);
+    check_composer(context, record, tmux, deadline)?;
+    // Bracket the final native query with captures to catch a late draft.
+    require_native_idle(record)?;
+    check_composer(context, record, tmux, deadline)?;
+    require_detached(tmux, record)?;
+    Ok(Guard {
+        _activity: activity,
+    })
+}
+
+fn require_waiting(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
     if pending::open_claude_tools(context, record).ok_or_else(|| unknown(record))? {
         return Err(active(record, "provider-tool-pending"));
     }
@@ -34,7 +72,7 @@ pub(super) fn require_waiting(
     }
 }
 
-pub(super) fn require_native_idle(record: &SessionRecord) -> Result<(), CliError> {
+fn require_native_idle(record: &SessionRecord) -> Result<(), CliError> {
     match claude_agents::fresh_state_for(record).map_err(|_| unknown(record))? {
         claude_agents::AgentState::Idle => Ok(()),
         claude_agents::AgentState::Busy => Err(active(record, "working")),
@@ -48,7 +86,7 @@ pub(super) fn require_native_idle(record: &SessionRecord) -> Result<(), CliError
 }
 
 /// A human can only type into the pane through an attached tmux client.
-pub(super) fn require_detached(tmux: &Path, record: &SessionRecord) -> Result<(), CliError> {
+fn require_detached(tmux: &Path, record: &SessionRecord) -> Result<(), CliError> {
     let mut command = Command::new(tmux);
     command
         .args(["list-clients", "-F", "#{client_name}", "-t"])

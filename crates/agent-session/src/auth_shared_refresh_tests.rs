@@ -255,7 +255,7 @@ fn shared_refresh_recovers_idle_and_busy_siblings_on_one_late_publication() {
         &busy.initial.id,
         &busy_launch,
         json!({"hook_event_name":"UserPromptSubmit","prompt":"synthetic turn",
-            "session_id":CONVERSATION}),
+            "prompt_id":"synthetic-turn","session_id":CONVERSATION}),
     );
     publisher(tmp.path(), "publish", 2);
     busy.poll(219);
@@ -266,6 +266,7 @@ fn shared_refresh_recovers_idle_and_busy_siblings_on_one_late_publication() {
         board["records"][0]["auth_recovery"]["state"],
         "deferred_until_idle"
     );
+    assert_eq!(board["records"][0]["auth_recovery"]["reason"], "working");
     assert_eq!(board["auth_recovery_summary"][0]["re_verified"], 1);
     assert_eq!(board["auth_recovery_summary"][0]["deferred_until_idle"], 1);
     idle.recover_at(219);
@@ -281,8 +282,11 @@ fn shared_refresh_recovers_idle_and_busy_siblings_on_one_late_publication() {
         &busy.context,
         &busy.initial.id,
         &busy_launch,
-        json!({"hook_event_name":"Stop","session_id":CONVERSATION}),
+        json!({"hook_event_name":"Notification","notification_type":"idle_prompt",
+            "prompt_id":"synthetic-turn","session_id":CONVERSATION}),
     );
+    let state = crate::activity::bound_claude_state(&busy.context, &busy.initial).unwrap();
+    assert_eq!(state.phase, crate::activity::TurnPhase::Waiting);
     busy.recover_at(235);
     assert_eq!(
         fs::read_to_string(tmp.path().join("provider.log")).unwrap(),
@@ -297,7 +301,7 @@ fn shared_refresh_recovers_idle_and_busy_siblings_on_one_late_publication() {
 }
 
 #[test]
-fn shared_refresh_rejects_wrong_account_and_expires_before_late_adoption() {
+fn shared_refresh_rejects_wrong_account_then_adopts_a_matching_late_publication() {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::tempdir().unwrap();
     let _broker = synthetic_broker(tmp.path(), &lock);
@@ -316,7 +320,5 @@ fn shared_refresh_rejects_wrong_account_and_expires_before_late_adoption() {
     sibling.assert_quarantined();
     assert_eq!(log(&sibling.root).matches("new-session").count(), 1);
     fs::write(&receipt_path, correct).unwrap();
-    sibling.poll(220);
-    sibling.assert_quarantined();
-    assert_eq!(log(&sibling.root).matches("new-session").count(), 1);
+    sibling.recover_at(221);
 }

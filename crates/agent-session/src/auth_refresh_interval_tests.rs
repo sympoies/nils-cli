@@ -148,12 +148,16 @@ fn refresh_interval_missing_failed_or_late_publication_remains_bounded() {
         assert!(!safe_request(&context, &record, "2"));
         assert_eq!(log(tmp.path()).matches("new-session").count(), 1);
         let calls = fs::read_to_string(tmp.path().join("broker.log")).unwrap();
-        tick(&context, &record, &tmux, start + 900);
         crate::auth_incident::auto_settle::tick(&context, &record, start + 900).unwrap();
         assert_eq!(
             fs::read_to_string(tmp.path().join("broker.log")).unwrap(),
             calls
         );
+        if outcome == "late" {
+            // The controller can now try a late publication independently.
+            // Keep this fixture focused on the scheduled recheck's outbox.
+            fs::remove_file(tmp.path().join("provider-verified")).unwrap();
+        }
         crate::auth_incident::tick(&context, &record, &tmux, "fixture", Some(false)).unwrap();
         let alerts = crate::auth_incident::alert_delivery::list(&context, 100).unwrap();
         let alert = alerts["alerts"]
