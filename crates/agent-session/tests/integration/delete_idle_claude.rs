@@ -27,8 +27,8 @@ fn claude_fixture() -> Fixture {
    if [ -f shutdown-hook ]; then cat shutdown-hook; fi ;;
  select-pane)
    case "$2:$3:$4" in
-     '-d:-t:%91') printf 'paused\n' >> input-events ;;
-     '-e:-t:%91') printf 'resumed\n' >> input-events ;;
+     '-d:-t:%91') : > input-off; printf 'paused\n' >> input-events ;;
+     '-e:-t:%91') rm -f input-off; printf 'resumed\n' >> input-events ;;
      *) exit 42 ;;
    esac ;;
  capture-pane)"#,
@@ -36,7 +36,7 @@ fn claude_fixture() -> Fixture {
     let tmux = tmux
         .replace(
             " display-message) ",
-            r#" display-message) if [ "$5" = '#{pane_id} #{pane_input_off}' ]; then echo '%91 0'; exit; fi; "#,
+            r#" display-message) if [ "$5" = '#{pane_id} #{pane_input_off} #{socket_path}' ]; then printf '%%91 %s fixture.sock\n' "$([ -f input-off ] && echo 1 || echo 0)"; exit; fi; "#,
         )
         .replace(
             " if-shell)",
@@ -278,6 +278,7 @@ exec cat claude-agents.json
         fs::read_to_string(cwd.join("input-events")).unwrap(),
         "paused\nfinal-query\nresumed\n"
     );
+    assert!(!fixture.session.join(RECEIPT).exists());
 }
 
 #[test]
@@ -289,6 +290,119 @@ fn idle_delete_refuses_when_tmux_shutdown_hook_can_reopen_input() {
         "run-shell 'sleep 1'",
     )
     .unwrap();
+    assert_refused(
+        &mut fixture,
+        &["--if-idle", "--expected-incarnation", &runtime],
+        "session-status-unknown",
+    );
+    assert!(!fixture._tmp.path().join("input-events").exists());
+}
+
+const RECEIPT: &str = "pane-input-pause.json";
+
+fn interrupt_during_composer_check(fixture: &Fixture, interrupt: &str) {
+    let script = fs::read_to_string(&fixture.tmux).unwrap().replace(
+        " capture-pane) cat ",
+        &format!(
+            " capture-pane) [ ! -f interrupt-once ] || {{ rm interrupt-once; {interrupt}; }}; cat "
+        ),
+    );
+    fs::write(&fixture.tmux, script).unwrap();
+    fs::write(fixture._tmp.path().join("interrupt-once"), "").unwrap();
+}
+
+#[test]
+fn idle_delete_restores_the_pane_a_killed_run_left_paused() {
+    let mut fixture = claude_fixture();
+    let runtime = incarnation(&fixture).to_owned();
+    let guard = ["--if-idle", "--expected-incarnation", &runtime];
+    interrupt_during_composer_check(&fixture, "kill -9 $PPID");
+    let cwd = fixture._tmp.path().to_path_buf();
+    let killed = delete_at(&cwd, &fixture.state, &fixture.tmux, &guard);
+    assert_ne!(killed.code, 0);
+    // No destructor ran: the pause and its receipt are all that is left.
+    assert_eq!(
+        fs::read_to_string(cwd.join("input-events")).unwrap(),
+        "paused\n"
+    );
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(fixture.session.join(RECEIPT)).unwrap()).unwrap();
+    assert_eq!(receipt["pane_id"], "%91");
+    assert_eq!(receipt["socket_path"], "fixture.sock");
+    assert_eq!(receipt["id"], ID);
+    assert_eq!(receipt["launch_id"], runtime);
+
+    // The retry restores the recorded pane first, then retires normally.
+    let output = delete_reaping_pane(&mut fixture, &guard);
+    assert_eq!(
+        output.code,
+        0,
+        "{} {}",
+        output.stdout_text(),
+        output.stderr_text()
+    );
+    assert_eq!(
+        fs::read_to_string(cwd.join("input-events")).unwrap(),
+        "paused\nresumed\npaused\n"
+    );
+    assert!(!fixture.session.exists());
+}
+
+#[test]
+fn idle_delete_restores_the_pane_when_terminated_during_the_final_checks() {
+    let mut fixture = claude_fixture();
+    let runtime = incarnation(&fixture).to_owned();
+    interrupt_during_composer_check(&fixture, "kill -TERM $PPID; sleep 5");
+    let record = fixture.session.join("session.json");
+    let before = fs::read(&record).unwrap();
+    let cwd = fixture._tmp.path().to_path_buf();
+    let output = delete_at(
+        &cwd,
+        &fixture.state,
+        &fixture.tmux,
+        &["--if-idle", "--expected-incarnation", &runtime],
+    );
+    assert_ne!(output.code, 0);
+    assert_eq!(
+        fs::read_to_string(cwd.join("input-events")).unwrap(),
+        "paused\nresumed\n"
+    );
+    assert!(!cwd.join("input-off").exists());
+    assert!(!fixture.session.join(RECEIPT).exists());
+    assert_eq!(fs::read(&record).unwrap(), before);
+    assert!(!fixture.killed.exists());
+    assert!(fixture.pane.0.try_wait().unwrap().is_none());
+}
+
+#[test]
+fn idle_delete_ignores_a_receipt_for_a_different_pane_identity() {
+    let mut fixture = claude_fixture();
+    let runtime = incarnation(&fixture).to_owned();
+    let cwd = fixture._tmp.path().to_path_buf();
+    fs::write(cwd.join("input-off"), "").unwrap();
+    let receipt = json!({
+        "schema_version": "agent-session.pane-input-pause.v1",
+        "id": ID,
+        "launch_id": runtime,
+        "tmux_session": fixture.record["tmux_session"],
+        "socket_path": "another-server.sock",
+        "pane_id": "%91",
+    });
+    fs::write(fixture.session.join(RECEIPT), receipt.to_string()).unwrap();
+    assert_refused(
+        &mut fixture,
+        &["--if-idle", "--expected-incarnation", &runtime],
+        "session-status-unknown",
+    );
+    assert!(!cwd.join("input-events").exists());
+    assert!(cwd.join("input-off").exists());
+}
+
+#[test]
+fn idle_delete_still_refuses_a_pane_disabled_without_a_receipt() {
+    let mut fixture = claude_fixture();
+    let runtime = incarnation(&fixture).to_owned();
+    fs::write(fixture._tmp.path().join("input-off"), "").unwrap();
     assert_refused(
         &mut fixture,
         &["--if-idle", "--expected-incarnation", &runtime],

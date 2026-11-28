@@ -776,8 +776,13 @@ delivery. The locks stay held through ownership-checked teardown and removal.
   open tool call or pending attention. Retirement pauses tmux pane input before
   capturing the composer, rechecks native idleness with `claude agents --json`,
   then captures the composer again to catch a draft that rendered late. If
-  retirement is refused, input is restored. When graceful shutdown uses Ctrl-C,
-  a configured tmux `after-send-keys` hook prevents safe retirement.
+  retirement is refused, input is restored. Before pausing, it writes a pause
+  receipt in the session directory naming the tmux server socket and pane id.
+  SIGINT or SIGTERM restores that pane, and a retry after a run that died
+  without cleanup restores the receipt's pane first when it still matches the
+  session, then proceeds. A pane disabled without a receipt is still refused.
+  When graceful shutdown uses Ctrl-C, a configured tmux `after-send-keys` hook
+  prevents safe retirement.
 - Codex verifies the live primary thread. The proxy fences native provider
   requests such as turn starts, reviews, shell commands, and compaction.
   Read-only inspection requests can pass through.

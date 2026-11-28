@@ -52,6 +52,12 @@ pub(super) fn delete_if_idle(
             Some(json!({"id": record.id})),
         ));
     }
+    let session_dir = resolve_session_record_path(context, &record.id)?.session_dir;
+    if claude {
+        // We hold the record lock, so a pause receipt here belongs to a run that
+        // died before restoring input. Restore that exact pane before the checks.
+        pane_input::restore_interrupted(&tmux, &record, &session_dir)?;
+    }
     if persisted_tmux_termination_state(&record)
         .map_err(|_| unknown(&record))?
         .is_some()
@@ -112,7 +118,10 @@ pub(super) fn delete_if_idle(
         require_waiting_activity(context, &record)?;
     }
     let paused_input = if claude {
-        Some(pane_input::PausedPaneInput::pause(&tmux, &record).ok_or_else(|| unknown(&record))?)
+        Some(
+            pane_input::PausedPaneInput::pause(&tmux, &record, &session_dir)
+                .ok_or_else(|| unknown(&record))?,
+        )
     } else {
         None
     };
@@ -149,7 +158,6 @@ pub(super) fn delete_if_idle(
         check_composer()?;
     }
 
-    let resolved = resolve_session_record_path(context, &record.id)?;
     let mut options = DeleteSessionOptions::regular(
         PANE_INPUT_COMMAND_TIMEOUT,
         DELETE_TERMINATION_VERIFY_TIMEOUT,
@@ -159,7 +167,7 @@ pub(super) fn delete_if_idle(
     let (_, mut deleted) = delete_session_locked_with_timeouts_and_prepare(
         context,
         record,
-        resolved.session_dir,
+        session_dir,
         &tmux,
         options,
         |_| Ok(()),
