@@ -577,7 +577,7 @@ The v1 allowlist is:
 `block-unsafe-default-delivery`,
 `checkout-lease-guard`, `finish-line-record`, `forge-label-reminder`,
 `mcp-secret-scan`, `memory-write-principle-reminder`,
-`portable-paths-scan`, `pre-edit-intent-gate`,
+`portable-paths-scan`, `pre-edit-intent-gate`, `remote-ssh-advisory`,
 `semantic-commit-body-gate`, `session-start-healthcheck`,
 `skill-usage-reminder`, `stop-finish-line-gate`, `stop-pre-pr-reminder`,
 `user-prompt-agent-docs`, and `user-prompt-agent-memory`.

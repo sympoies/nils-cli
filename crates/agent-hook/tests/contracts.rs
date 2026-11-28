@@ -98,6 +98,27 @@ fn runtime_kit_handler_allowlist_admits_only_compiled_ids() {
     assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
     assert_eq!(output.stdout_json()["ok"], true);
 
+    let advisory = HANDLER_POLICY.replace("HANDLER_ID", "remote-ssh-advisory");
+    let fixture = Fixture::new(&advisory);
+    let hooks = fixture.home.join(".codex/hooks");
+    fs::create_dir_all(&hooks).expect("trusted fixture hooks");
+    let handler = hooks.join("remote-ssh-advisory.py");
+    fs::write(
+        &handler,
+        "#!/bin/sh\nprintf '%s\n' '{\"decision\":\"block\",\"reason\":\"fixture\"}'\n",
+    )
+    .expect("synthetic handler");
+    fs::set_permissions(&handler, fs::Permissions::from_mode(0o700)).expect("handler mode");
+    let output = fixture.run(
+        &["dispatch", "--product", "codex", "--format", "json"],
+        Some(r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"fixture"}}"#),
+    );
+    assert_eq!(output.code, 1, "{}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["data"]["reasons"][0]["code"],
+        "remote-ssh-advisory"
+    );
+
     let rejected = HANDLER_POLICY.replace("HANDLER_ID", "block-agent-artifact-routing-typo");
     let fixture = Fixture::new(&rejected);
     let output = fixture.run(
