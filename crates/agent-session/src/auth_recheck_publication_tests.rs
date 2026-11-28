@@ -122,7 +122,14 @@ fn revoked_exhaustion_keeps_credential_recheck_guidance() {
         "credentials_not_republished"
     );
     assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &record).is_err());
-    crate::auth_incident::tick(&context, &record, &tmux, "fixture", Some(false)).unwrap();
+    crate::auth_incident::tick(
+        &context,
+        &record,
+        &tmux,
+        "fixture",
+        &mut crate::auth_incident::TerminalObservation::Absent,
+    )
+    .unwrap();
     let alerts = crate::auth_incident::alert_delivery::list(&context, 100).unwrap();
     let exhausted = alerts["alerts"]
         .as_array()

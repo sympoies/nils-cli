@@ -6,6 +6,8 @@ use std::fs;
 pub(crate) mod alert_delivery;
 pub(crate) mod auto_settle;
 mod escalation;
+mod terminal_poll;
+pub(crate) use terminal_poll::{PanePoll, PaneSample, TerminalObservation};
 #[cfg(test)]
 mod escalation_tests;
 pub(crate) mod failover;
@@ -488,7 +490,12 @@ fn claude_terminal_error(line: &str) -> Option<&str> {
         .or_else(|| line.strip_prefix("API Error: "))
 }
 
-fn sample(context: &CliContext, record: &SessionRecord, tmux: &Path) -> Result<(), CliError> {
+fn sample(
+    context: &CliContext,
+    record: &SessionRecord,
+    tmux: &Path,
+    pane: &mut PanePoll,
+) -> Result<(), CliError> {
     let state = crate::activity::state_for_view(context, record);
     // Reconcile the durable activity transaction after a crash between its
     // commit and incident persistence. It uses the same key as event ingress.
@@ -549,6 +556,12 @@ fn sample(context: &CliContext, record: &SessionRecord, tmux: &Path) -> Result<(
     }) {
         return Ok(());
     }
+    let revision = state.as_ref().map(|state| state.revision);
+    let sampled_at = jiff::Timestamp::now();
+    if pane.unchanged(record, revision, sampled_at) {
+        return Ok(());
+    }
+    pane.sample = None;
     let mut command = Command::new(tmux);
     command.args([
         "capture-pane",
@@ -568,6 +581,7 @@ fn sample(context: &CliContext, record: &SessionRecord, tmux: &Path) -> Result<(
     }
     let mut store = read(context, &current)?;
     let before = serde_json::to_vec(&store).map_err(|_| error())?;
+    let captured = output.as_ref().is_ok_and(|output| output.status.success());
     match output {
         Ok(output) if output.status.success() => {
             let text = String::from_utf8_lossy(&output.stdout);
@@ -602,6 +616,9 @@ fn sample(context: &CliContext, record: &SessionRecord, tmux: &Path) -> Result<(
     }
     if serde_json::to_vec(&store).map_err(|_| error())? != before {
         save(context, &current, &store)?;
+    }
+    if captured {
+        pane.record_sample(&current, revision, sampled_at);
     }
     Ok(())
 }
@@ -826,11 +843,11 @@ pub(crate) fn tick(
     record: &SessionRecord,
     tmux: &Path,
     local_machine: &str,
-    terminal_available: Option<bool>,
+    terminal: &mut TerminalObservation,
 ) -> Result<(), CliError> {
-    if terminal_available == Some(true) {
-        sample(context, record, tmux)?;
-    } else if terminal_available.is_none() {
+    if let TerminalObservation::Live(pane) = terminal {
+        sample(context, record, tmux, pane)?;
+    } else if matches!(terminal, TerminalObservation::Unavailable) {
         let _lock = crate::acquire_session_record_lock_timed(
             context,
             &record.id,
@@ -953,7 +970,7 @@ mod tests {
     use serde_json::json;
     use std::os::unix::fs::PermissionsExt;
 
-    fn record() -> SessionRecord {
+    pub(super) fn record() -> SessionRecord {
         serde_json::from_value(json!({
             "schema_version":"agent-session.session.v1", "id":"auth-fixture", "agent":"claude", "mode":"interactive", "title":null,
             "cwd":"/fixture/repository", "tmux_session":"auth-fixture", "prompt_file":null, "log_file":null,
@@ -1024,7 +1041,7 @@ mod tests {
             &replacement,
             Path::new("unused"),
             "fixture",
-            Some(false),
+            &mut TerminalObservation::Absent,
         )
         .unwrap();
         let store = read(&context, &replacement).unwrap();
@@ -1379,7 +1396,7 @@ mod tests {
         )
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
-        sample(&context, &record, &tmux).unwrap();
+        sample(&context, &record, &tmux, &mut PanePoll::default()).unwrap();
         let mut refused = read(&context, &record).unwrap();
         assert_eq!(
             refused.detection_health.as_deref(),
@@ -1394,7 +1411,7 @@ mod tests {
         });
         save(&context, &record, &refused).unwrap();
         for _ in 0..3 {
-            sample(&context, &record, &tmux).unwrap();
+            sample(&context, &record, &tmux, &mut PanePoll::default()).unwrap();
         }
         let admitted = read(&context, &record).unwrap();
         assert_eq!(admitted.incidents.len(), MAX_INCIDENTS);
@@ -1577,7 +1594,7 @@ mod tests {
         fs::write(&tmux, "#!/bin/sh\nprintf 'private-terminal-canary\\n⎿  OAuth token revoked · Please run /login\\n❯\\n'\n").unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
         for _ in 0..3 {
-            sample(&context, &record, &tmux).unwrap();
+            sample(&context, &record, &tmux, &mut PanePoll::default()).unwrap();
         }
         let incident = view(&context, &record).unwrap();
         assert_eq!(incident.confidence, Confidence::Inferred);
@@ -1594,20 +1611,20 @@ mod tests {
             &jiff::Timestamp::now().to_string(),
         )
         .unwrap();
-        sample(&context, &record, &tmux).unwrap();
+        sample(&context, &record, &tmux, &mut PanePoll::default()).unwrap();
         assert_eq!(
             read(&context, &record).unwrap().incidents.len(),
             1,
             "persistent screen must stay deduped after recovery"
         );
         fs::write(&tmux, "#!/bin/sh\nprintf '❯\\n'\n").unwrap();
-        sample(&context, &record, &tmux).unwrap();
+        sample(&context, &record, &tmux, &mut PanePoll::default()).unwrap();
         fs::write(
             &tmux,
             "#!/bin/sh\nprintf '⎿  OAuth token revoked · Please run /login\\n❯\\n'\n",
         )
         .unwrap();
-        sample(&context, &record, &tmux).unwrap();
+        sample(&context, &record, &tmux, &mut PanePoll::default()).unwrap();
         assert_eq!(
             read(&context, &record).unwrap().incidents.len(),
             2,

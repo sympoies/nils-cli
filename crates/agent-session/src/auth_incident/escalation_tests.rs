@@ -50,7 +50,14 @@ fn failed(record: &SessionRecord) -> (tempfile::TempDir, CliContext) {
 }
 
 fn tick_once(context: &CliContext, record: &SessionRecord) {
-    tick(context, record, Path::new("unused"), "fixture", Some(false)).unwrap();
+    tick(
+        context,
+        record,
+        Path::new("unused"),
+        "fixture",
+        &mut TerminalObservation::Absent,
+    )
+    .unwrap();
 }
 
 fn incident(context: &CliContext, record: &SessionRecord) -> Value {

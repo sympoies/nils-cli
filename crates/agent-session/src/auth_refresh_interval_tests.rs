@@ -154,7 +154,14 @@ fn refresh_interval_missing_failed_or_late_publication_remains_bounded() {
             fs::read_to_string(tmp.path().join("broker.log")).unwrap(),
             calls
         );
-        crate::auth_incident::tick(&context, &record, &tmux, "fixture", Some(false)).unwrap();
+        crate::auth_incident::tick(
+            &context,
+            &record,
+            &tmux,
+            "fixture",
+            &mut crate::auth_incident::TerminalObservation::Absent,
+        )
+        .unwrap();
         let alerts = crate::auth_incident::alert_delivery::list(&context, 100).unwrap();
         let alert = alerts["alerts"]
             .as_array()

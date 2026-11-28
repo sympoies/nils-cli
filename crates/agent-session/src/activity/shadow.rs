@@ -70,6 +70,7 @@ pub(crate) fn annotate_for_view(
     tmux_bin: &Path,
     mut state: TurnState,
     schedule_sampling: bool,
+    window_activity: Option<&str>,
 ) -> TurnState {
     if !eligible(&record.agent, status, &state) {
         state.shadow_observation = None;
@@ -91,10 +92,17 @@ pub(crate) fn annotate_for_view(
         claude_outcome::project(record, cached, &mut state);
         project_interrupt_uncertainty(record, cached, &mut state);
     }
-    if cached
-        .as_ref()
-        .is_some_and(|cached| is_recent(&cached.observation.observed_at, SAMPLE_INTERVAL_SECONDS))
-    {
+    if cached.as_ref().is_some_and(|cached| {
+        is_recent(&cached.observation.observed_at, SAMPLE_INTERVAL_SECONDS)
+            || (record.agent == "codex"
+                && cached.activity_revision == Some(state.revision)
+                && cached.observation.rule_id == "codex_prompt_visible"
+                && crate::tmux_inventory::quiet_since_sample(
+                    window_activity,
+                    &cached.observation.observed_at,
+                    Timestamp::now(),
+                ))
+    }) {
         return state;
     }
 
@@ -611,6 +619,7 @@ mod tests {
                 Path::new("unused-tmux"),
                 state,
                 false,
+                None,
             )
         };
         let uncertain = view(working.clone(), &cached);
@@ -716,6 +725,7 @@ mod tests {
                 &tmux,
                 crate::activity::state_for_view(&context, &record).unwrap(),
                 true,
+                None,
             )
         };
         collect();
@@ -798,7 +808,8 @@ mod tests {
                 "running",
                 &tmux,
                 crate::activity::state_for_view(&context, &record).unwrap(),
-                false
+                false,
+                None,
             )
             .phase,
             TurnPhase::Working

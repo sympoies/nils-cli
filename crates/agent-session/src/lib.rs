@@ -82,6 +82,10 @@ mod session_record;
 mod session_views;
 use resume_session::{resume_session_by_id, resume_session_locked};
 use session_views::{list_sessions_for_serve, visit_session_views};
+mod tmux_inventory;
+use tmux_inventory::{TmuxSessionSnapshots, tmux_session_snapshots};
+mod host_name;
+use host_name::short_hostname;
 mod usage;
 
 #[cfg(test)]
@@ -5969,6 +5973,7 @@ fn session_view_from_parts(
             tmux_bin,
             state,
             schedule_shadow_sampling,
+            last_terminal_activity_at.as_deref(),
         )
     });
     let (auth_incident, auth_detection_health) = auth_incident::projection(context, record);
@@ -6221,29 +6226,6 @@ fn last_terminal_activity_at(
     tmux_window_activity_at(tmux_bin, &record.tmux_session)
 }
 
-#[derive(Debug, Clone)]
-struct TmuxSessionSnapshot {
-    last_terminal_activity_at: Option<String>,
-}
-
-struct TmuxSessionSnapshots {
-    started_at: Timestamp,
-    sessions: BTreeMap<String, TmuxSessionSnapshot>,
-}
-
-// tmux sanitizes control characters in format output under a C locale. Keep
-// the bulk snapshot delimiter printable, parse it from the right so even an
-// unusual pre-existing session name containing the delimiter remains intact,
-// and continue accepting prior tab-delimited fixture or wrapper output.
-const TMUX_SESSION_SNAPSHOT_FORMAT: &str = "#{session_name}|#{window_activity}";
-const TMUX_SESSION_SNAPSHOT_SEPARATOR: char = '|';
-
-impl TmuxSessionSnapshots {
-    fn contains_key(&self, tmux_session: &str) -> bool {
-        self.sessions.contains_key(tmux_session)
-    }
-}
-
 fn session_list_runtime_snapshot(
     context: &CliContext,
     tmux_bin: &Path,
@@ -6263,70 +6245,9 @@ fn session_list_runtime_snapshot(
         return lifecycle::stopped_activity_snapshot(context, record);
     }
     let activity = tmux_snapshots
-        .and_then(|snapshots| snapshots.sessions.get(&record.tmux_session))
-        .and_then(|snapshot| snapshot.last_terminal_activity_at.clone());
+        .and_then(|snapshots| snapshots.last_activity(&record.tmux_session))
+        .map(str::to_owned);
     (status, activity)
-}
-
-fn tmux_session_snapshots(tmux_bin: &Path) -> Option<TmuxSessionSnapshots> {
-    let started_at = Timestamp::now();
-    let output = ProcessCommand::new(tmux_bin)
-        .env("LC_ALL", "C")
-        .arg("list-windows")
-        .arg("-a")
-        .arg("-F")
-        .arg(TMUX_SESSION_SNAPSHOT_FORMAT)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        if tmux_output_reports_absent(&output) {
-            return Some(TmuxSessionSnapshots {
-                started_at,
-                sessions: BTreeMap::new(),
-            });
-        }
-        return None;
-    }
-    let raw = String::from_utf8_lossy(&output.stdout);
-    let mut activity_by_session: BTreeMap<String, Option<i64>> = BTreeMap::new();
-    for line in raw.lines() {
-        let Some((session, activity)) = line
-            .rsplit_once(TMUX_SESSION_SNAPSHOT_SEPARATOR)
-            .or_else(|| line.split_once('\t'))
-        else {
-            continue;
-        };
-        if session.is_empty() {
-            continue;
-        }
-        let Some(epoch_seconds) = parse_tmux_window_activity_seconds(activity) else {
-            activity_by_session
-                .entry(session.to_string())
-                .or_insert(None);
-            continue;
-        };
-        activity_by_session
-            .entry(session.to_string())
-            .and_modify(|current| {
-                *current = Some(current.map_or(epoch_seconds, |value| value.max(epoch_seconds)));
-            })
-            .or_insert(Some(epoch_seconds));
-    }
-    Some(TmuxSessionSnapshots {
-        started_at,
-        sessions: activity_by_session
-            .into_iter()
-            .map(|(session, maybe_epoch_seconds)| {
-                (
-                    session,
-                    TmuxSessionSnapshot {
-                        last_terminal_activity_at: maybe_epoch_seconds
-                            .and_then(format_tmux_window_activity),
-                    },
-                )
-            })
-            .collect(),
-    })
 }
 
 fn tmux_window_activity_at(tmux_bin: &Path, tmux_session: &str) -> Option<String> {
@@ -11549,15 +11470,6 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-fn short_hostname() -> Option<String> {
-    let output = ProcessCommand::new("hostname").arg("-s").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if value.is_empty() { None } else { Some(value) }
-}
-
 fn tail_lines(text: &str, tail: usize) -> String {
     if tail == 0 {
         return String::new();
@@ -16280,7 +16192,7 @@ fi
         let snapshots = super::tmux_session_snapshots(&tmux)
             .expect("an absent tmux server is an authoritative empty snapshot");
 
-        assert_eq!(snapshots.sessions.len(), 0);
+        assert!(snapshots.is_empty());
     }
 
     #[test]
@@ -16297,7 +16209,7 @@ fi
         let snapshots = super::tmux_session_snapshots(&tmux)
             .expect("a missing tmux socket is an authoritative empty snapshot");
 
-        assert_eq!(snapshots.sessions.len(), 0);
+        assert!(snapshots.is_empty());
     }
 
     #[test]

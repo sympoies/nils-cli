@@ -72,7 +72,14 @@ esac
 }
 
 fn reconcile(context: &CliContext, record: &SessionRecord) {
-    tick(context, record, Path::new("unused"), "fixture", Some(false)).unwrap();
+    tick(
+        context,
+        record,
+        Path::new("unused"),
+        "fixture",
+        &mut TerminalObservation::Absent,
+    )
+    .unwrap();
 }
 
 fn receipt(context: &CliContext, record: &SessionRecord) -> Value {

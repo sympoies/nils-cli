@@ -96,7 +96,13 @@ use activity_stream::activity_notify_event_relevant;
 
 mod account_drain;
 mod activity_stream;
+mod retitle_poll;
+use retitle_poll::auto_retitle_loop;
+#[cfg(test)]
+use retitle_poll::{AutomaticRetitleTracker, automatic_retitle_candidate};
+mod tmux_poll;
 use account_drain::{apply_pending_codex_accounts, repair_blocked_codex_accounts};
+use tmux_poll::{auth_incident_loop, discover_codex_controls};
 #[path = "serve_claude_completion.rs"]
 mod claude_completion;
 #[path = "serve_claude_prompt_ack.rs"]
@@ -4581,212 +4587,6 @@ fn observed_provider_failure_stage(
         .unwrap_or("provider")
 }
 
-#[derive(Clone)]
-struct AutomaticRetitleCandidate {
-    id: String,
-    tracking_key: String,
-    request: crate::retitle_v3::RetitleV3Request,
-}
-
-#[derive(Default)]
-struct AutomaticRetitleTracker {
-    entries: HashMap<String, AutomaticRetitleAttempt>,
-}
-
-struct AutomaticRetitleAttempt {
-    attempts: u8,
-    retry_after: Instant,
-    in_flight: bool,
-    terminal: bool,
-}
-
-fn automatic_retitle_scanner_error_is_retryable(code: &str) -> bool {
-    code == "retitle-v3-history-unavailable"
-        || crate::retitle::is_retryable_automatic_error_code(code)
-}
-
-impl AutomaticRetitleTracker {
-    fn begin(&mut self, key: &str, now: Instant) -> bool {
-        match self.entries.entry(key.to_string()) {
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(AutomaticRetitleAttempt {
-                    attempts: 1,
-                    retry_after: now,
-                    in_flight: true,
-                    terminal: false,
-                });
-                true
-            }
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                let attempt = entry.get_mut();
-                if attempt.terminal || attempt.in_flight || now < attempt.retry_after {
-                    return false;
-                }
-                attempt.attempts = attempt.attempts.saturating_add(1);
-                attempt.in_flight = true;
-                true
-            }
-        }
-    }
-
-    fn finish(&mut self, key: &str, result: Result<&str, &CliError>, now: Instant) {
-        let Some(attempt) = self.entries.get_mut(key) else {
-            return;
-        };
-        attempt.in_flight = false;
-        match result {
-            Ok("terminal") => attempt.terminal = true,
-            Ok(_) => {
-                // An accepted durable operation is still pending. Polling it
-                // must not consume the bounded provider-failure retry budget.
-                attempt.attempts = attempt.attempts.saturating_sub(1);
-                attempt.retry_after = now + Duration::from_secs(1);
-            }
-            Err(error)
-                if automatic_retitle_scanner_error_is_retryable(error.code())
-                    && attempt.attempts < crate::retitle::MAX_AUTOMATIC_ATTEMPTS =>
-            {
-                let shift = u32::from(attempt.attempts.saturating_sub(1));
-                attempt.retry_after = now + Duration::from_secs(1_u64 << shift);
-            }
-            Err(_) => attempt.terminal = true,
-        }
-    }
-
-    fn prune(&mut self) {
-        if self.entries.len() <= 4096 {
-            return;
-        }
-        self.entries
-            .retain(|_, attempt| !attempt.terminal || attempt.in_flight);
-        if self.entries.len() > 4096 {
-            self.entries.clear();
-        }
-    }
-}
-
-fn automatic_retitle_candidate(session: &SessionView) -> Option<AutomaticRetitleCandidate> {
-    if session.title_mode == crate::display_metadata::TitleMode::Pinned
-        || session.status != "running"
-        || session.provider_resume.is_none()
-    {
-        return None;
-    }
-    let incarnation = session.session_incarnation.as_deref()?;
-    let state = session.turn_state.as_ref()?;
-    let (turn_id, trigger) = if let Some(turn_id) = state
-        .current_turn
-        .as_ref()
-        .and_then(|turn| turn.provider_turn_id.as_deref())
-    {
-        let trigger = if session.title_revision == 0 && session.title.is_none() {
-            crate::retitle::RetitleTrigger::Initial
-        } else {
-            crate::retitle::RetitleTrigger::Prompt
-        };
-        (turn_id, trigger)
-    } else {
-        (
-            state
-                .last_turn
-                .as_ref()
-                .and_then(|turn| turn.provider_turn_id.as_deref())?,
-            crate::retitle::RetitleTrigger::CompletionRecovery,
-        )
-    };
-    let tracking_identity = format!("{incarnation}\0{turn_id}\0{trigger:?}");
-    let request_identity = format!(
-        "{tracking_identity}\0{}\0{}",
-        state.revision, session.title_revision
-    );
-    // The request key identifies the latest observation, while v3's automatic
-    // operation fingerprint intentionally coalesces all revisions of this
-    // incarnation/provider-turn pair into one durable operation.
-    Some(AutomaticRetitleCandidate {
-        id: session.id.clone(),
-        tracking_key: format!(
-            "auto-track-{}",
-            crate::retitle::hash_identity(&tracking_identity).trim_start_matches("sha256:")
-        ),
-        request: crate::retitle_v3::RetitleV3Request {
-            schema_version: crate::retitle_v3::REQUEST_SCHEMA.to_string(),
-            trigger: "automatic".to_string(),
-            idempotency_key: format!(
-                "auto-{}",
-                crate::retitle::hash_identity(&request_identity).trim_start_matches("sha256:")
-            ),
-            expected: crate::retitle_v3::RetitleV3FenceInput {
-                session_incarnation: incarnation.to_string(),
-                title_revision: session.title_revision,
-                memory_revision: session.retitle_v3_memory_revision,
-                activity_revision: Some(state.revision),
-                provider_turn_id: Some(turn_id.to_string()),
-            },
-        },
-    })
-}
-
-async fn auto_retitle_loop(state: Arc<ServeState>) {
-    let mut tracker = AutomaticRetitleTracker::default();
-    let mut interval = tokio::time::interval(Duration::from_secs(1));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        interval.tick().await;
-        if state.retitle.configured_provider_kind().is_none() {
-            continue;
-        }
-        let context = state.context.clone();
-        let tmux = state.tmux_bin.clone();
-        let collect = state.session_collector.clone();
-        let Ok(Ok(sessions)) = tokio::task::spawn_blocking(move || collect(&context, &tmux)).await
-        else {
-            continue;
-        };
-        let mut tasks = JoinSet::new();
-        let mut pending_keys = HashSet::new();
-        let now = Instant::now();
-        for candidate in sessions
-            .iter()
-            .filter_map(automatic_retitle_candidate)
-            .collect::<Vec<_>>()
-        {
-            let operation_hash =
-                crate::retitle_v3::request_operation_hash(&candidate.id, &candidate.request);
-            if RetitleV3ContinuationGuard::is_registered(
-                &state.retitle_v3_continuations,
-                &operation_hash,
-            ) {
-                continue;
-            }
-            let key = candidate.tracking_key.clone();
-            if !tracker.begin(&key, now) {
-                continue;
-            }
-            pending_keys.insert(key.clone());
-            let state = state.clone();
-            tasks.spawn(async move {
-                let result = execute_retitle_v3(state, candidate.id, candidate.request).await;
-                (key, result)
-            });
-        }
-        while let Some(result) = tasks.join_next().await {
-            if let Ok((key, result)) = result {
-                pending_keys.remove(&key);
-                let outcome = match result.as_ref() {
-                    Ok((_, response)) => Ok(response.status.as_str()),
-                    Err(error) => Err(error),
-                };
-                tracker.finish(&key, outcome, Instant::now());
-            }
-        }
-        let worker_failed = retitle_worker_failed();
-        for key in pending_keys {
-            tracker.finish(&key, Err(&worker_failed), Instant::now());
-        }
-        tracker.prune();
-    }
-}
-
 async fn record_retitle_failure(
     state: &ServeState,
     id: &str,
@@ -6792,80 +6592,6 @@ async fn auto_resume_cancel_handler(
     }
 }
 
-async fn auth_incident_loop(state: Arc<ServeState>) {
-    let mut interval = tokio::time::interval(Duration::from_secs(15));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        interval.tick().await;
-        let context = state.context.clone();
-        let discovery_tmux = state.tmux_bin.clone();
-        let records = tokio::task::spawn_blocking(move || {
-            let mut records = Vec::new();
-            let mut command = ProcessCommand::new(&discovery_tmux);
-            command.args(["list-sessions", "-F", "#{session_name}"]);
-            let live_tmux = crate::run_output_with_timeout_and_strict_cap(
-                command,
-                Duration::from_millis(250),
-                64 * 1024,
-            )
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|output| {
-                String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .map(str::to_string)
-                    .collect::<HashSet<_>>()
-            });
-            if let Ok(entries) = fs::read_dir(context.state_dir.join("sessions")) {
-                for entry in entries.flatten() {
-                    if let Some(id) = entry.file_name().to_str()
-                        && let Ok(record) = crate::load_session_record(&context, id)
-                        && record.mode == "interactive"
-                        && matches!(record.agent.as_str(), "claude" | "codex")
-                        && record.runtime.is_some()
-                    {
-                        let terminal_available = live_tmux
-                            .as_ref()
-                            .map(|sessions| sessions.contains(&record.tmux_session));
-                        records.push((record, terminal_available));
-                    }
-                }
-            }
-            records
-        })
-        .await;
-        let Ok(records) = records else {
-            continue;
-        };
-        // Bound concurrent sampling and mailbox requests; no provider text is
-        // copied to the async scheduler or diagnostic output.
-        let mut tasks = tokio::task::JoinSet::new();
-        for (record, terminal_available) in records {
-            if tasks.len() >= 4 {
-                let _ = tasks.join_next().await;
-            }
-            let context = state.context.clone();
-            let tmux = state.tmux_bin.clone();
-            let machine = state.machine.clone();
-            tasks.spawn_blocking(move || {
-                if let Err(error) = crate::auth_incident::tick(
-                    &context,
-                    &record,
-                    &tmux,
-                    &machine,
-                    terminal_available,
-                ) {
-                    eprintln!(
-                        "warning: provider authentication observation degraded: {}",
-                        error.code()
-                    );
-                }
-            });
-        }
-        while tasks.join_next().await.is_some() {}
-    }
-}
-
 async fn auto_resume_loop(state: Arc<ServeState>) {
     const POLL_INTERVAL: Duration = Duration::from_secs(15);
     loop {
@@ -7392,32 +7118,6 @@ fn fence_codex_controls_before_listen(context: &CliContext, tmux: &Path) -> Resu
         crate::codex_account::prepare_control_reconnect(context, &record.id, launch_id)?;
     }
     Ok(())
-}
-
-fn discover_codex_controls(context: &CliContext, tmux: &Path) -> Vec<SessionRecord> {
-    let Some(tmux_snapshots) = crate::tmux_session_snapshots(tmux) else {
-        return Vec::new();
-    };
-    discover_codex_controls_from_snapshots(context, &tmux_snapshots)
-}
-
-fn discover_codex_controls_from_snapshots(
-    context: &CliContext,
-    tmux_snapshots: &crate::TmuxSessionSnapshots,
-) -> Vec<SessionRecord> {
-    let root = context.state_dir.join("sessions");
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return Vec::new();
-    };
-    entries
-        .filter_map(Result::ok)
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter_map(|id| load_session_record(context, &id).ok())
-        .filter(|record| {
-            codex_app_server::runtime_is_supported(record)
-                && tmux_snapshots.contains_key(&record.tmux_session)
-        })
-        .collect()
 }
 
 async fn process_auto_resume_ids(state: Arc<ServeState>, ids: Vec<String>, usage: UsageSnapshot) {

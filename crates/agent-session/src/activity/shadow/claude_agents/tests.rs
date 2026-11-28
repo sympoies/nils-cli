@@ -425,6 +425,7 @@ impl Sampled {
             &self.tmux,
             activity::state_for_view(&self.context, &self.record).unwrap(),
             schedule,
+            None,
         )
     }
 
@@ -896,6 +897,7 @@ fn structured_idle_outcome_unknown_keeps_runtime_revision_and_freshness_fences()
             &sampled.tmux,
             state,
             false,
+            None,
         );
         assert_eq!(
             view.phase,

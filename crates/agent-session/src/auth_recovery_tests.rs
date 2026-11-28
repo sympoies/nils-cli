@@ -139,7 +139,14 @@ fn auth_recovery_waits_for_publication_and_resumes_once_without_replaying_input(
     crate::coordination::auth_effects::test_support::assert_retired(&context, &record);
     assert!(crate::auth_incident::recovery::ensure_input_allowed(&context, &current).is_ok());
     assert!(crate::auth_incident::view(&context, &current).is_none());
-    crate::auth_incident::tick(&context, &current, &tmux, "fixture", Some(false)).unwrap();
+    crate::auth_incident::tick(
+        &context,
+        &current,
+        &tmux,
+        "fixture",
+        &mut crate::auth_incident::TerminalObservation::Absent,
+    )
+    .unwrap();
     let store: Value = serde_json::from_slice(
         &fs::read(crate::session_dir(&context, ID).join("auth-incidents.json")).unwrap(),
     )
