@@ -49,7 +49,7 @@ fn run(context: &CliContext, command: Command, attested_create_token: Option<Str
         Command::Permission(args) => cli::permission::run(context, args),
         Command::Notice(args) => notice::run(context, args),
         Command::NoticeStore(args) => send::claude_notice::store::audit::run(context, args),
-        Command::Glance(args) => run_glance(context, args),
+        Command::Glance(args) => glance::run(context, args),
         Command::PrepareShutdown(args) => {
             runtime_environment::boot_recovery::run_prepare(context, args)
         }

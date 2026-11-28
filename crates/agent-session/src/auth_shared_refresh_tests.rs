@@ -28,12 +28,16 @@ struct Resident {
 
 impl Resident {
     fn start(parent: &Path, id: &str) -> Self {
+        Self::start_for_account(parent, id, "alpha")
+    }
+
+    fn start_for_account(parent: &Path, id: &str, account: &str) -> Self {
         let root = parent.join(id);
         fs::create_dir(&root).unwrap();
         let context = context(&root);
         let tmux = fake_tmux(&root);
         let mut seed = seed_exited_session_for(&context, &root, id);
-        crate::claude_account::bind_initial(&mut seed, "alpha", "explicit").unwrap();
+        crate::claude_account::bind_initial(&mut seed, account, "explicit").unwrap();
         crate::write_session_record(&context, &seed).unwrap();
         crate::resume_session_by_id(&context, id, &tmux).unwrap();
         let initial = load_session_record(&context, id).unwrap();
@@ -190,11 +194,23 @@ impl Resident {
 }
 
 #[test]
-fn shared_refresh_recovers_two_revoked_siblings_on_one_late_publication() {
+fn shared_refresh_recovers_idle_and_busy_siblings_on_one_late_publication() {
     let lock = GlobalStateLock::new();
     let tmp = tempfile::tempdir().unwrap();
     let _broker = synthetic_broker(tmp.path(), &lock);
     let first = Resident::start(tmp.path(), "refreshing-session");
+    for verb in ["stage", "publish"] {
+        assert!(
+            publisher_command(tmp.path(), verb, 1)
+                .args(["--account", "beta"])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    let other = Resident::start_for_account(tmp.path(), "unrelated-account", "beta");
+    other.observe_revocation();
     let siblings = [
         Resident::start(tmp.path(), "revoked-sibling-a"),
         Resident::start(tmp.path(), "revoked-sibling-b"),
@@ -232,10 +248,46 @@ fn shared_refresh_recovers_two_revoked_siblings_on_one_late_publication() {
         sibling.poll(130);
         sibling.assert_quarantined();
     }
+    let [idle, busy] = &siblings;
+    let busy_launch = launch_id(&busy.initial).unwrap();
+    claude_hook_for(
+        &busy.context,
+        &busy.initial.id,
+        &busy_launch,
+        json!({"hook_event_name":"UserPromptSubmit","prompt":"synthetic turn",
+            "session_id":CONVERSATION}),
+    );
     publisher(tmp.path(), "publish", 2);
-    for sibling in &siblings {
-        sibling.recover_at(219);
-    }
+    busy.poll(219);
+    busy.assert_quarantined();
+    assert_eq!(log(&busy.root).matches("new-session").count(), 1);
+    let board = crate::board::snapshot(&busy.context, &busy.tmux, "fixture", false).unwrap();
+    assert_eq!(
+        board["records"][0]["auth_recovery"]["state"],
+        "deferred_until_idle"
+    );
+    assert_eq!(board["auth_recovery_summary"][0]["re_verified"], 1);
+    assert_eq!(board["auth_recovery_summary"][0]["deferred_until_idle"], 1);
+    idle.recover_at(219);
+    let other_before = log(&other.root);
+    other.poll(219);
+    other.assert_quarantined();
+    assert_eq!(log(&other.root), other_before);
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("provider.log")).unwrap(),
+        "probe\nprobe\n"
+    );
+    claude_hook_for(
+        &busy.context,
+        &busy.initial.id,
+        &busy_launch,
+        json!({"hook_event_name":"Stop","session_id":CONVERSATION}),
+    );
+    busy.recover_at(235);
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("provider.log")).unwrap(),
+        "probe\nprobe\n"
+    );
     assert_eq!(log(&first.root), first_log);
     assert_eq!(
         launch_id(&load_session_record(&first.context, &first.initial.id).unwrap()),
@@ -255,7 +307,7 @@ fn shared_refresh_rejects_wrong_account_and_expires_before_late_adoption() {
     sibling.poll(130);
     publisher(tmp.path(), "stage", 2);
     publisher(tmp.path(), "publish", 2);
-    let receipt_path = tmp.path().join("publication.json");
+    let receipt_path = tmp.path().join("publication-alpha.json");
     let correct = fs::read(&receipt_path).unwrap();
     let mut wrong: Value = serde_json::from_slice(&correct).unwrap();
     wrong["account"] = json!("other-account");

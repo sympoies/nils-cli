@@ -37,7 +37,9 @@ fn failed_runtime(context: &CliContext, root: &Path, tmux: &Path, bound: bool) -
     record
 }
 
-fn broker(root: &Path, lock: &GlobalStateLock) -> EnvGuard {
+type BrokerFixture = (EnvGuard, EnvGuard);
+
+fn broker(root: &Path, lock: &GlobalStateLock) -> BrokerFixture {
     let dir = root.join("alpha");
     fs::create_dir(&dir).unwrap();
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
@@ -53,14 +55,22 @@ fn broker(root: &Path, lock: &GlobalStateLock) -> EnvGuard {
         materialized = shell_words::quote(&materialized)
     );
     let path = executable(&root.join("broker"), &script);
-    EnvGuard::set(
-        lock,
-        "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER",
-        &json!([path]).to_string(),
+    (
+        EnvGuard::set(
+            lock,
+            "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER",
+            &json!([path]).to_string(),
+        ),
+        fake_usage_provider(root, lock),
     )
 }
 
 fn publish(root: &Path, n: u64) {
+    fs::write(
+        root.join("alpha/.credentials.json"),
+        json!({"synthetic": true, "generation": n}).to_string(),
+    )
+    .unwrap();
     fs::write(
         root.join("credential-state.json"),
         serde_json::to_vec(&crate::claude_account::generation::tests::envelope(n)).unwrap(),
@@ -876,4 +886,106 @@ fn auth_recovery_unknown_effect_sample_is_bounded_without_losing_the_total() {
         assert_eq!(fields, ["claim_id", "lease_id", "revision", "state"]);
     }
     assert!(!receipt.to_string().contains("sensitive-canary"));
+}
+
+// The provider command must use only the materialized account and must not
+// inherit a caller OAuth override. A response body can contain sensitive text.
+fn fake_usage_provider(root: &Path, lock: &GlobalStateLock) -> EnvGuard {
+    let helper = format!(
+        r#"#!/bin/sh
+root={root}
+[ "$*" = 'diag rate-limits --format json' ] || exit 2
+[ "$CLAUDE_CONFIG_DIR" = "$root/alpha" ] || exit 2
+[ "$CLAUDE_AUTH_KEYCHAIN" = off ] || exit 2
+[ -z "${{CLAUDE_PROMPT_SEGMENT_ACCESS_TOKEN:-}}" ] || exit 2
+grep -q synthetic "$CLAUDE_CONFIG_DIR/.credentials.json" || exit 2
+printf '%s\n' probe >> "$root/provider.log"
+if [ -f "$root/provider-verified" ]; then
+  printf '%s\n' '{{"schema_version":"claude-cli.diag.rate-limits.v1","command":"diag rate-limits","mode":"single","ok":true,"result":{{"provider":"claude","ok":true,"source":"network"}}}}'
+else
+  printf '%s\n' '{{"schema_version":"claude-cli.diag.rate-limits.v1","command":"diag rate-limits","mode":"single","ok":false,"result":{{"provider":"claude","ok":false,"source":"network","reason_code":"auth_expired","error":{{"message":"synthetic-sensitive-canary"}}}}}}'
+  printf '%s\n' synthetic-sensitive-canary >&2
+  exit 1
+fi
+"#,
+        root = shell_words::quote(&root.to_string_lossy()),
+    );
+    executable(&root.join("claude-cli"), &helper);
+    fs::write(root.join("provider-verified"), "").unwrap();
+    let old = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(
+        std::iter::once(root.to_path_buf()).chain(std::env::split_paths(&old)),
+    )
+    .unwrap();
+    EnvGuard::set(lock, "PATH", path.to_str().unwrap())
+}
+
+#[test]
+fn new_publication_without_provider_success_does_not_restart_or_clear_quarantine() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _broker = broker(tmp.path(), &lock);
+    fs::remove_file(tmp.path().join("provider-verified")).unwrap();
+    let _override = EnvGuard::set(
+        &lock,
+        "CLAUDE_PROMPT_SEGMENT_ACCESS_TOKEN",
+        "synthetic-other-account",
+    );
+    let context = context(tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let record = failed_runtime(&context, tmp.path(), &tmux, true);
+    let launch = launch_id(&record).unwrap();
+    tick(&context, &record, &tmux, 100);
+    publish(tmp.path(), 2);
+    let before = log(tmp.path()).matches("new-session").count();
+    tick(&context, &record, &tmux, 115);
+    assert_eq!(log(tmp.path()).matches("new-session").count(), before);
+
+    let current = load_session_record(&context, ID).unwrap();
+    assert_eq!(
+        launch_id(&current).as_deref(),
+        Some(launch.as_str()),
+        "publication must not restart the session without provider success",
+    );
+    assert_eq!(
+        crate::auth_incident::recovery::ensure_input_allowed(&context, &current)
+            .unwrap_err()
+            .code(),
+        "auth-quarantined"
+    );
+    let receipt = recovery_receipt(&context);
+    assert_eq!(receipt["last_reason"], "auth_expired");
+    assert!(!receipt.to_string().contains("synthetic-sensitive-canary"));
+    let board = crate::board::snapshot(&context, &tmux, "fixture", false).unwrap();
+    assert_eq!(
+        board["records"][0]["auth_recovery"]["state"],
+        "still_failing"
+    );
+    assert_eq!(
+        board["records"][0]["auth_recovery"]["reason"],
+        "auth_expired"
+    );
+    assert_eq!(board["auth_recovery_summary"][0]["still_failing"], 1);
+    assert!(!board.to_string().contains("synthetic-sensitive-canary"));
+    let glance = crate::glance_session(
+        &context,
+        crate::cli::GlanceArgs {
+            id: ID.into(),
+            tail: 1,
+            tmux_bin: Some(tmux.to_path_buf()),
+            format: nils_common::cli_contract::OutputFormat::Json,
+        },
+    )
+    .unwrap();
+    let glance = serde_json::to_value(glance).unwrap();
+    assert_eq!(
+        glance["auth_recovery"],
+        board["records"][0]["auth_recovery"]
+    );
+    assert!(!glance.to_string().contains("synthetic-sensitive-canary"));
+    tick(&context, &current, &tmux, 130);
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("provider.log")).unwrap(),
+        "probe\n"
+    );
 }

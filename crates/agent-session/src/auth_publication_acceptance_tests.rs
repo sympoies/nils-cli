@@ -26,13 +26,16 @@ fn publisher(root: &Path, verb: &str, generation: u64) {
     assert!(result.status.success(), "synthetic publisher {verb} failed");
 }
 
-fn synthetic_broker(root: &Path, lock: &GlobalStateLock) -> EnvGuard {
+fn synthetic_broker(root: &Path, lock: &GlobalStateLock) -> BrokerFixture {
     publisher(root, "stage", 1);
     publisher(root, "publish", 1);
-    EnvGuard::set(
-        lock,
-        "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER",
-        &json!(["python3", publisher_path(), "--root", root]).to_string(),
+    (
+        EnvGuard::set(
+            lock,
+            "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER",
+            &json!(["python3", publisher_path(), "--root", root]).to_string(),
+        ),
+        fake_usage_provider(root.canonicalize().unwrap().as_path(), lock),
     )
 }
 
@@ -116,7 +119,8 @@ fn synthetic_publication_recovers_only_after_verified_completion() {
     publisher(tmp.path(), "stage", 2);
     assert_ne!(resident, 2, "resident still uses the rejected generation");
     let staged: Value =
-        serde_json::from_slice(&fs::read(tmp.path().join("publication.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(tmp.path().join("publication-alpha.json")).unwrap())
+            .unwrap();
     assert_eq!(
         staged["state"]["publication"]["last_published"]["version"]["generation"],
         "1"
@@ -142,7 +146,8 @@ fn synthetic_publication_recovers_only_after_verified_completion() {
             .success()
     );
     let refused: Value =
-        serde_json::from_slice(&fs::read(tmp.path().join("publication.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(tmp.path().join("publication-alpha.json")).unwrap())
+            .unwrap();
     assert_eq!(
         refused, staged,
         "failed verification must not publish completion"

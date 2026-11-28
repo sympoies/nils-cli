@@ -2,7 +2,7 @@
 use super::*;
 use pretty_assertions::{assert_eq, assert_ne};
 
-fn failover_broker(root: &Path, lock: &GlobalStateLock, candidate: Value) -> EnvGuard {
+fn failover_broker(root: &Path, lock: &GlobalStateLock, candidate: Value) -> BrokerFixture {
     let guard = broker(root, lock);
     let beta = root.join("beta");
     fs::create_dir(&beta).unwrap();

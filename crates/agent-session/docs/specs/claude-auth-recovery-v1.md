@@ -168,28 +168,39 @@ after the turn ends and cannot request a retry. The supported
 [`--resume` entry point](https://code.claude.com/docs/en/cli-reference#cli-flags)
 restores the same conversation in the fresh process.
 
-A main-thread authentication failure with an exact OAuth revocation message, or
-the corresponding terminal status when structured evidence is unavailable,
-allows a verified newer publication to trigger one automatic stop/resume within
-120 seconds of the first recovery tick. Other authentication failures use the
-30-second window.
+The daemon observes complete, newer publications on the existing 15-second
+incident loop. The normal 30-second publication window and the 120-second
+window for exact OAuth revocation still gate eligibility for policy-controlled
+account failover. A session that remains quarantined on the same account
+continues observing newer publications after that window.
 
-Shared Claude account profiles require Claude Code 2.1.248 or newer. File
-replacements that the broker does not publish rely on Claude's native refresh
-handling. The broker-backed recovery window is independent of the launch path.
+For each affected session and generation, the daemon materializes the bound
+account and invokes the matching `claude-cli diag rate-limits --format json`
+in an isolated cache with only that account's configuration. The authenticated
+usage read is read-only. It is not a model turn, does not send session input,
+and does not replay a prompt or tool request. A cache response, credential
+materialization, an authority status, or a provider process becoming ready is
+not proof of request success. Changes to the publication during the read
+invalidate the attempt. A failed read leaves quarantine in effect and does
+not stop the runtime. The daemon records the fixed reason and waits for a
+newer generation before attempting verification again.
 
-Publication leaves the failed process fenced. The replacement uses the same
-bound account and conversation. Readiness admits the next request without
-manual restart or replay of the previous turn or unknown effects. An observed
-successful provider turn is the evidence of model health. A recovery tick at or after the
-publication deadline leaves quarantine and failover available.
+After provider success, the controller holds quarantine through replacement
+readiness. It uses the same idleness predicate as conditional Claude
+retirement, including current native state, provider ingress and an empty
+composer. Busy or unverified idleness defers restart. The next idle tick
+reuses the proof if the publication is still current. The restart preserves
+the same account and canonical provider conversation, uses the normal host
+notice configuration, and does not force an active or indeterminate session.
 
-The shared-account fixture covers two revoked siblings, late recovery inside
-the window, rejection of a different-account publication and expiry at the
-boundary. It uses a synthetic publisher and records fresh guarded submission
-through the replacement runtime. Live publication, credential adoption and
-model request timing require the disposable fixture in
-[#2954](https://github.com/sympoies/nils-cli/issues/2954).
+The optional `auth_recovery` board and glance field records the account
+nickname, generation, whether provider verification succeeded, and outcome
+(`re_verified`, `deferred_until_idle`, `restarted`, or `still_failing`). A
+refusal has a fixed, credential-free reason. The board's
+`auth_recovery_summary` contains one row per visible machine, account, and
+generation and counts verified, restarted, deferred, and still-failing
+sessions. A restarted session appears under its replacement incarnation.
+No provider body, token, or configuration path enters these projections.
 
 ## Publication prerequisite
 
@@ -233,38 +244,30 @@ an independent public history endpoint. Current-runtime incident projections
 retain their existing visibility rules.
 
 The controller commits identity and its publication deadline before broker or
-lifecycle work. Controller ticks poll local publication metadata;
-frequent ticks do not shorten the elapsed-time window. Waiting ticks return
-and release their per-session operation and record locks; no sleep or global
-lock spans the window. Temporary broker failures wait within that budget;
-expiry reports `publication_deadline`.
-An account intent, changed conversation, invalid canonical resume metadata or
-superseded runtime blocks the operation. It never selects another account.
+lifecycle work. Waiting ticks release their per-session locks. An account
+intent, changed conversation, invalid canonical resume metadata, or superseded
+runtime blocks the operation. It never selects another account. An attempt is
+committed before the provider read, so a daemon interruption does not turn an
+unknown result into success. The provider read does not hold the lifecycle
+record lock. Its result is applied only if the exact incident, runtime, and
+account still own the attempt.
 
-Claude currently exposes no supported credential reread operation, so the
-receipt records `reread: "unsupported"` and proceeds to controlled stop once a
-new publication is proven. No prompt is sent to test credential adoption.
+Claude currently exposes no supported credential reread operation. The
+controller revalidates the exact publication that passed provider verification,
+and the replacement launch must capture that same publication. If the
+publication changed, a later generation needs independent verification.
+Existing exact-runtime stop proofs and restart readiness deadlines remain
+mandatory. A healthy provider turn on the old runtime can settle the incident
+before provider verification is committed. A verified deferred restart remains
+scheduled when the old turn completes.
 
-The controller revalidates publication, acquires the existing restart input
-fence, and calls the lifecycle stop without waiting for idle or typing an exit
-command. The existing exact-runtime and platform stop proofs remain mandatory.
-It records unknown operation selectors after verified stop, retires the old
-coordination incarnation and claims, and resumes using only the canonical
-stored provider conversation arguments. The replacement launch must capture
-the selected generation or a newer publication in the same identity domain.
-Existing lifecycle substep deadlines apply, followed by a ten-second readiness
-budget. `runtime_resumed` proves readiness, not a healthy model turn.
-
-Stages are `waiting_generation`, `stopping`, `stopped`, `resuming`,
-`awaiting_ready`, `runtime_resumed`, `recovered_in_place` and terminal `blocked`.
-An observed healthy turn while waiting settles `recovered_in_place` and cancels
-the replacement. A per-session private
-operation lock and the session record lock serialize effects. Persisted stop
-stages can re-enter the stopped-proof path. A persisted replacement identity
-can reconcile readiness after a controller crash. A `resuming` attempt with
-only the old durable runtime identity reports `resume_outcome_unknown`; it
-never blindly launches again. Operator lifecycle reconciliation owns that
-ambiguous case.
+Stages are `waiting_generation`, `verifying`, `deferred_until_idle`,
+`stopping`, `stopped`, `resuming`, `awaiting_ready`, `runtime_resumed`,
+`recovered_in_place`, and `blocked`. A per-session operation lock and the
+session record lock serialize effects. A persisted replacement identity can
+reconcile readiness after a controller crash. A `resuming` attempt with only
+the old durable identity reports `resume_outcome_unknown`, never launching
+again blindly.
 
 `unknown_operation_count` counts nonterminal leases and abandoned leases without
 an effect outcome observed after stop. This includes leases already retired by

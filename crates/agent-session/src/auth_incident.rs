@@ -199,7 +199,14 @@ pub(crate) fn projection(
     match read(context, record) {
         Ok(store) => (
             store.incidents.into_iter().rev().find(|incident| {
-                same_runtime(incident, record) || auto_settle::matches(incident, record)
+                same_runtime(incident, record)
+                    || auto_settle::matches(incident, record)
+                    || incident
+                        .same_account_recovery
+                        .as_ref()
+                        .is_some_and(|receipt| {
+                            recovery::report::matches_replacement(receipt, record)
+                        })
             }),
             store.detection_health,
         ),
@@ -432,6 +439,10 @@ pub(crate) fn recover(
     if let Some(incident) = store.incidents.last_mut().filter(|incident| {
         same_runtime(incident, &current)
             && incident.status == "auth_failed"
+            && !incident
+                .same_account_recovery
+                .as_ref()
+                .is_some_and(recovery::verified_restart_pending)
             && at
                 .parse::<jiff::Timestamp>()
                 .ok()
