@@ -5,13 +5,16 @@
 //! `semantic-commit` and `git push`; both are stubbed (a local-commit stub on
 //! PATH; the archive is given a bare push remote).
 
+#[path = "support/isolated_test.rs"]
+mod isolated_test;
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use evidence::purge::{self, PurgeArgs, PurgeError};
 use evidence::validate::hosts::HostClass;
 use nils_common::cli_contract::OutputFormat;
+use nils_test_support::fixture::Fixture;
 
 /// Point forge identity and config lookups at an empty per-test directory, so
 /// the developer's forge profiles cannot leak into the in-process purge.
@@ -27,7 +30,9 @@ fn isolate_config() -> tempfile::TempDir {
 }
 
 fn git(repo: &Path, args: &[&str]) {
-    let out = Command::new("git")
+    let fixture = Fixture::new();
+    let out = fixture
+        .git_command(repo)
         .args(args)
         .current_dir(repo)
         .env("GIT_AUTHOR_NAME", "tester")
@@ -118,7 +123,9 @@ fn args(archive: &Path, host: Vec<String>, class: Option<HostClass>, apply: bool
 }
 
 fn git_count_commits(repo: &Path) -> usize {
-    let out = Command::new("git")
+    let fixture = Fixture::new();
+    let out = fixture
+        .git_command(repo)
         .args(["rev-list", "--count", "HEAD"])
         .current_dir(repo)
         .output()
@@ -131,7 +138,9 @@ fn git_count_commits(repo: &Path) -> usize {
 
 fn configure_push_remote(a: &Archive) {
     let remote = a.root.join("archive-remote.git");
-    let out = Command::new("git")
+    let fixture = Fixture::new();
+    let out = fixture
+        .git_command(&a.root)
         .args(["init", "--bare", "-q"])
         .arg(&remote)
         .output()
@@ -209,6 +218,9 @@ fn with_path<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
 
 #[test]
 fn purge_requires_a_scope() {
+    if isolated_test::run("purge_requires_a_scope") {
+        return;
+    }
     // Safety: never an implicit whole-archive purge.
     let a = build();
     let err = purge::run(&args(&a.archive, vec![], None, false)).unwrap_err();
@@ -220,6 +232,9 @@ fn purge_requires_a_scope() {
 
 #[test]
 fn purge_dry_run_by_class_scopes_employer_hosts_only() {
+    if isolated_test::run("purge_dry_run_by_class_scopes_employer_hosts_only") {
+        return;
+    }
     let a = build();
     let report = purge::run(&args(&a.archive, vec![], Some(HostClass::Employer), false)).unwrap();
     assert_eq!(report.scope_hosts, vec!["gitlab.example.com".to_string()]);
@@ -237,6 +252,9 @@ fn purge_dry_run_by_class_scopes_employer_hosts_only() {
 #[cfg(unix)]
 #[test]
 fn purge_apply_by_host_deletes_only_that_host_and_commits() {
+    if isolated_test::run("purge_apply_by_host_deletes_only_that_host_and_commits") {
+        return;
+    }
     let _config = isolate_config();
     let a = build();
     configure_push_remote(&a);
@@ -300,6 +318,9 @@ fn seed_commit(archive: &Path, msg: &str) {
 
 #[test]
 fn purge_rejects_path_like_host() {
+    if isolated_test::run("purge_rejects_path_like_host") {
+        return;
+    }
     // A `--host` value that is not a plain host label could escape
     // `archive/evidence` once joined and `remove_dir_all`-ed. It must be
     // refused before any path join or deletion.
@@ -338,6 +359,9 @@ fn purge_rejects_path_like_host() {
 #[cfg(unix)]
 #[test]
 fn purge_apply_refuses_foreign_staged_changes() {
+    if isolated_test::run("purge_apply_refuses_foreign_staged_changes") {
+        return;
+    }
     // The dirty guard only covers evidence/ + catalog.json, but semantic-commit
     // commits the whole index. A pre-staged change elsewhere in the archive must
     // be refused so purge never folds it into the purge commit.
@@ -373,6 +397,9 @@ fn purge_apply_refuses_foreign_staged_changes() {
 #[cfg(unix)]
 #[test]
 fn purge_apply_deletes_host_tree_without_rollups() {
+    if isolated_test::run("purge_apply_deletes_host_tree_without_rollups") {
+        return;
+    }
     let _config = isolate_config();
     // A scoped host tree that holds only orphaned files (no
     // skill-usage.rollup.json) must still be removed; the no-op decision is
@@ -421,6 +448,9 @@ fn purge_apply_deletes_host_tree_without_rollups() {
 #[cfg(unix)]
 #[test]
 fn purge_apply_rolls_back_on_catalog_failure() {
+    if isolated_test::run("purge_apply_rolls_back_on_catalog_failure") {
+        return;
+    }
     // If catalog regeneration fails on a malformed surviving (out-of-scope)
     // rollup after the scoped host tree is deleted, the deletion must be rolled
     // back so apply never leaves uncommitted destructive state.
@@ -461,7 +491,9 @@ fn purge_apply_rolls_back_on_catalog_failure() {
     );
     // Working tree is fully clean: proves the deletion was both attempted and
     // completely reverted (a partial rollback would leave deleted entries).
-    let st = std::process::Command::new("git")
+    let fixture = Fixture::new();
+    let st = fixture
+        .git_command(&a.archive)
         .args(["status", "--porcelain"])
         .current_dir(&a.archive)
         .output()
@@ -476,6 +508,9 @@ fn purge_apply_rolls_back_on_catalog_failure() {
 #[cfg(unix)]
 #[test]
 fn purge_apply_rejects_class_host_path_traversal() {
+    if isolated_test::run("purge_apply_rejects_class_host_path_traversal") {
+        return;
+    }
     // A crafted/corrupt config host key must not escape evidence/ through the
     // --class scope either: every resolved scope host is validated, not only
     // explicit --host values.
@@ -520,6 +555,9 @@ fn purge_apply_rejects_class_host_path_traversal() {
 #[cfg(unix)]
 #[test]
 fn purge_apply_noop_when_scoped_host_absent() {
+    if isolated_test::run("purge_apply_noop_when_scoped_host_absent") {
+        return;
+    }
     // A safe but on-disk-absent scoped host is a clean no-op: applied, but no
     // deletion and no commit (the existing_host_roots == 0 branch).
     let a = build();
@@ -550,6 +588,9 @@ fn purge_apply_noop_when_scoped_host_absent() {
 
 #[test]
 fn purge_dry_run_flags_host_tree_without_rollups() {
+    if isolated_test::run("purge_dry_run_flags_host_tree_without_rollups") {
+        return;
+    }
     // Dry-run must describe what apply removes: a scoped host tree with no
     // rollups still surfaces host_tree_present so it does not read as empty.
     let tmp = tempfile::tempdir().unwrap();
@@ -591,6 +632,9 @@ fn purge_dry_run_flags_host_tree_without_rollups() {
 #[cfg(unix)]
 #[test]
 fn purge_apply_rolls_back_when_commit_fails() {
+    if isolated_test::run("purge_apply_rolls_back_when_commit_fails") {
+        return;
+    }
     // A failure in the commit step (here: a failing semantic-commit) after the
     // host tree is deleted must roll the deletion back, not just catalog errors.
     let a = build();
@@ -620,7 +664,9 @@ fn purge_apply_rolls_back_when_commit_fails() {
         "deletion rolled back after commit failure"
     );
     assert_eq!(git_count_commits(&a.archive), before, "no purge commit");
-    let st = std::process::Command::new("git")
+    let fixture = Fixture::new();
+    let st = fixture
+        .git_command(&a.archive)
         .args(["status", "--porcelain"])
         .current_dir(&a.archive)
         .output()
@@ -635,6 +681,9 @@ fn purge_apply_rolls_back_when_commit_fails() {
 #[cfg(unix)]
 #[test]
 fn purge_apply_refuses_ignored_files_in_scope() {
+    if isolated_test::run("purge_apply_refuses_ignored_files_in_scope") {
+        return;
+    }
     // A rollback (git checkout) cannot restore ignored files, so apply refuses a
     // scoped host tree that carries them rather than risk permanent loss.
     let a = build();

@@ -5,12 +5,15 @@
 //! shells out to `semantic-commit` and `git push`; both are stubbed (the stub
 //! commits locally; the archive is given a bare push remote).
 
+#[path = "support/isolated_test.rs"]
+mod isolated_test;
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use evidence::migrate::{self, DispatchArgs};
 use nils_common::cli_contract::OutputFormat;
+use nils_test_support::fixture::Fixture;
 
 struct Scenario {
     _tmp: tempfile::TempDir,
@@ -33,7 +36,9 @@ fn isolate_config() -> tempfile::TempDir {
 }
 
 fn git(repo: &Path, args: &[&str]) {
-    let out = Command::new("git")
+    let fixture = Fixture::new();
+    let out = fixture
+        .git_command(repo)
         .args(args)
         .current_dir(repo)
         .env("GIT_AUTHOR_NAME", "tester")
@@ -332,6 +337,9 @@ fn dry_run_args(s: &Scenario) -> DispatchArgs {
 
 #[test]
 fn migrate_skips_and_reports_unresolvable_records_without_aborting() {
+    if isolated_test::run("migrate_skips_and_reports_unresolvable_records_without_aborting") {
+        return;
+    }
     // Core fix (A): under a multi-host hosts.yaml a slug-only record whose cwd
     // cannot be resolved is UNRESOLVABLE (F8 refuses to guess a host). It must
     // be SKIPPED and REPORTED in `blocked`, never abort the whole batch. The
@@ -386,6 +394,9 @@ fn migrate_skips_and_reports_unresolvable_records_without_aborting() {
 
 #[test]
 fn migrate_enumerates_workflow_owned_nested_skill_usage_records() {
+    if isolated_test::run("migrate_enumerates_workflow_owned_nested_skill_usage_records") {
+        return;
+    }
     let s = build_empty_scenario();
     let record_path = write_nested_record(
         &s.source_out,
@@ -410,6 +421,9 @@ fn migrate_enumerates_workflow_owned_nested_skill_usage_records() {
 
 #[test]
 fn migrate_blocks_resolved_host_absent_from_hosts_yaml() {
+    if isolated_test::run("migrate_blocks_resolved_host_absent_from_hosts_yaml") {
+        return;
+    }
     // Core safety fix: a record whose host RESOLVES (via cwd -> origin) but is
     // ABSENT from config/hosts.yaml must be SKIPPED and REPORTED in `blocked`,
     // not silently archived as "unknown personal". The archive can only hold
@@ -469,6 +483,9 @@ fn migrate_blocks_resolved_host_absent_from_hosts_yaml() {
 
 #[test]
 fn migrate_rescues_unresolvable_identity_via_working_repo_roots() {
+    if isolated_test::run("migrate_rescues_unresolvable_identity_via_working_repo_roots") {
+        return;
+    }
     // N2 part 1: a record whose recorded cwd no longer exists (e.g. a removed
     // agent worktree) is normally UNRESOLVABLE under a multi-host config. When a
     // configured working_repo_roots entry holds a matching local checkout, the
@@ -514,6 +531,9 @@ fn migrate_rescues_unresolvable_identity_via_working_repo_roots() {
 
 #[test]
 fn migrate_single_host_blocks_record_whose_cwd_resolves_to_other_host() {
+    if isolated_test::run("migrate_single_host_blocks_record_whose_cwd_resolves_to_other_host") {
+        return;
+    }
     // #872 part 1: under a SINGLE-host config the slug used to map straight to
     // the sole host without consulting the record's own cwd. A record whose
     // cwd -> origin resolves to a DIFFERENT, unclassified host must instead be
@@ -548,6 +568,9 @@ fn migrate_single_host_blocks_record_whose_cwd_resolves_to_other_host() {
 
 #[test]
 fn migrate_rescues_nested_gitlab_checkout_via_working_repo_roots() {
+    if isolated_test::run("migrate_rescues_nested_gitlab_checkout_via_working_repo_roots") {
+        return;
+    }
     // #872 part 2: a nested GitLab group has a full origin org such as
     // `acme/platform/backend`, but the agent-out slug keeps only the last owner
     // segment (`backend__svc`). The working_repo_roots rescue must still find
@@ -589,6 +612,9 @@ fn migrate_rescues_nested_gitlab_checkout_via_working_repo_roots() {
 
 #[test]
 fn migrate_single_host_uses_slug_when_cwd_repointed_to_other_repo() {
+    if isolated_test::run("migrate_single_host_uses_slug_when_cwd_repointed_to_other_repo") {
+        return;
+    }
     // #876 part 1: under a single-host config a record's recorded cwd may have
     // been repointed or reused for a DIFFERENT checkout on the same host. The
     // cwd identity then disagrees with the agent-out slug; trusting it would
@@ -630,6 +656,9 @@ fn migrate_single_host_uses_slug_when_cwd_repointed_to_other_repo() {
 
 #[test]
 fn migrate_blocks_ambiguous_rescue_slug() {
+    if isolated_test::run("migrate_blocks_ambiguous_rescue_slug") {
+        return;
+    }
     // #876 part 2: when two checkouts under working_repo_roots normalize to the
     // SAME agent-out slug but resolve to DIFFERENT identities, the slug is
     // ambiguous. With the record's own cwd gone there is no signal to pick one,
@@ -685,6 +714,9 @@ fn migrate_blocks_ambiguous_rescue_slug() {
 
 #[test]
 fn migrate_rescue_ignores_checkout_whose_slug_does_not_match() {
+    if isolated_test::run("migrate_rescue_ignores_checkout_whose_slug_does_not_match") {
+        return;
+    }
     // The rescue matches strictly by normalized slug: a decoy checkout under
     // working_repo_roots that does NOT match the record's slug must be ignored,
     // so the record stays blocked rather than being mis-attributed to the wrong
@@ -721,6 +753,11 @@ fn migrate_rescue_ignores_checkout_whose_slug_does_not_match() {
 
 #[test]
 fn migrate_single_host_local_fallback_slug_with_changed_origin_uses_placeholder() {
+    if isolated_test::run(
+        "migrate_single_host_local_fallback_slug_with_changed_origin_uses_placeholder",
+    ) {
+        return;
+    }
     // #879 follow-up: agent-out's local-fallback slug (`local__<base>-<hash>`,
     // emitted when a repo had NO resolvable origin) is INDISTINGUISHABLE by
     // string from a real provider repo owned by `local`, so there is no sound
@@ -759,6 +796,10 @@ fn migrate_single_host_local_fallback_slug_with_changed_origin_uses_placeholder(
 
 #[test]
 fn migrate_multi_host_accepts_manual_slug_with_case_only_origin_difference() {
+    if isolated_test::run("migrate_multi_host_accepts_manual_slug_with_case_only_origin_difference")
+    {
+        return;
+    }
     // #879 follow-up (r495): a manual dir `acme__my_repo` whose origin
     // differs only by CASE (`Acme/my_repo`) must still match — case is folded,
     // the underscore is not. (The earlier raw-only check wrongly blocked this.)
@@ -787,6 +828,9 @@ fn migrate_multi_host_accepts_manual_slug_with_case_only_origin_difference() {
 
 #[test]
 fn migrate_multi_host_blocks_real_local_repo_repointed_to_nonlocal_owner() {
+    if isolated_test::run("migrate_multi_host_blocks_real_local_repo_repointed_to_nonlocal_owner") {
+        return;
+    }
     // #879 follow-up (r499): a real provider repo shaped like a fallback
     // (`local__widget-deadbeef`) repointed to a DIFFERENT owner (`other/widget`)
     // must be blocked. The earlier `is_local_fallback && org != local` special
@@ -815,6 +859,9 @@ fn migrate_multi_host_blocks_real_local_repo_repointed_to_nonlocal_owner() {
 
 #[test]
 fn migrate_multi_host_accepts_manual_underscore_slug_matching_cwd() {
+    if isolated_test::run("migrate_multi_host_accepts_manual_underscore_slug_matching_cwd") {
+        return;
+    }
     // #877 follow-up part 2: a manual slug whose repo half keeps an
     // underscore (`acme__my_repo`) is compared against a cwd origin
     // (`acme/my_repo`) that the slug rule normalizes to `acme__my-repo`.
@@ -853,6 +900,9 @@ fn migrate_multi_host_accepts_manual_underscore_slug_matching_cwd() {
 
 #[test]
 fn migrate_host_override_blocks_resolvable_mismatched_cwd() {
+    if isolated_test::run("migrate_host_override_blocks_resolvable_mismatched_cwd") {
+        return;
+    }
     // #877 follow-up part 3: `--host` is a GLOBAL operator override meant to
     // rescue slug-only records whose cwd is GONE. A record whose cwd still
     // RESOLVES but to a DIFFERENT checkout (repointed/reused) is not slug-only;
@@ -889,6 +939,11 @@ fn migrate_host_override_blocks_resolvable_mismatched_cwd() {
 
 #[test]
 fn migrate_multi_host_blocks_manual_underscore_slug_repointed_to_hyphen_repo() {
+    if isolated_test::run(
+        "migrate_multi_host_blocks_manual_underscore_slug_repointed_to_hyphen_repo",
+    ) {
+        return;
+    }
     // #878 follow-up A: normalizing BOTH sides over-collapsed `_` and `-`, so a
     // manual slug `acme__my_repo` matched a cwd repointed to the UNRELATED
     // repo `acme/my-repo` (provider repo names distinguish `_` from `-`). The
@@ -919,6 +974,9 @@ fn migrate_multi_host_blocks_manual_underscore_slug_repointed_to_hyphen_repo() {
 
 #[test]
 fn migrate_multi_host_blocks_real_local_org_repo_repointed_cwd() {
+    if isolated_test::run("migrate_multi_host_blocks_real_local_org_repo_repointed_cwd") {
+        return;
+    }
     // #878 follow-up B: a legitimate provider repo whose slug is shaped like a
     // local fallback (`local__widget-deadbeef`: owner `local`, repo ending in
     // `-<8 hex>`) must still get mismatch protection. The hash-suffix shape alone
@@ -952,6 +1010,9 @@ fn migrate_multi_host_blocks_real_local_org_repo_repointed_cwd() {
 
 #[test]
 fn migrate_single_host_real_local_org_repo_matches_own_cwd() {
+    if isolated_test::run("migrate_single_host_real_local_org_repo_matches_own_cwd") {
+        return;
+    }
     // Guard for #878 follow-up B: a real `local/widget-deadbeef` repo whose cwd
     // still points at itself is trusted (exact (org, repo) match), so tightening
     // the fallback heuristic does not regress legitimate `local/...` repos.
@@ -982,6 +1043,9 @@ fn migrate_single_host_real_local_org_repo_matches_own_cwd() {
 
 #[test]
 fn migrate_skips_and_reports_unparseable_records_without_aborting() {
+    if isolated_test::run("migrate_skips_and_reports_unparseable_records_without_aborting") {
+        return;
+    }
     // Core fix (A), parse path: a malformed / truncated skill-usage.record.json
     // (trailing characters after the JSON object) must be SKIPPED and REPORTED
     // in `blocked`, never abort the whole batch.
@@ -1030,6 +1094,9 @@ fn migrate_skips_and_reports_unparseable_records_without_aborting() {
 
 #[test]
 fn migrate_all_blocked_is_successful_no_op() {
+    if isolated_test::run("migrate_all_blocked_is_successful_no_op") {
+        return;
+    }
     // A run where every record is blocked is a success (no-op), reporting them.
     let s = build_multi_host_empty_scenario();
     write_record(
@@ -1045,6 +1112,9 @@ fn migrate_all_blocked_is_successful_no_op() {
 
 #[test]
 fn migrate_host_override_resolves_slug_only_record() {
+    if isolated_test::run("migrate_host_override_resolves_slug_only_record") {
+        return;
+    }
     // Fix (B): `--host github.com` lets a slug-only record (empty cwd) resolve
     // to github.com/<org>/<repo>, bypassing the multi-host cwd ambiguity.
     let s = build_multi_host_empty_scenario();
@@ -1067,6 +1137,9 @@ fn migrate_host_override_resolves_slug_only_record() {
 
 #[test]
 fn migrate_host_override_rejects_host_absent_from_config() {
+    if isolated_test::run("migrate_host_override_rejects_host_absent_from_config") {
+        return;
+    }
     // Fix (B): `--host nope.example` is not present in hosts.yaml; the record
     // is blocked with a clear reason rather than silently archived.
     let s = build_multi_host_empty_scenario();
@@ -1090,6 +1163,9 @@ fn migrate_host_override_rejects_host_absent_from_config() {
 
 #[test]
 fn host_override_does_not_clobber_a_resolvable_cwd() {
+    if isolated_test::run("host_override_does_not_clobber_a_resolvable_cwd") {
+        return;
+    }
     // `--host` is global and meant to rescue slug-only records whose cwd cannot
     // resolve. It must NOT override the authoritative `cwd -> origin` identity
     // of a record that DOES resolve (even to a different configured host) —
@@ -1121,6 +1197,9 @@ fn host_override_does_not_clobber_a_resolvable_cwd() {
 
 #[test]
 fn dry_run_derives_rollups_and_scrubs_without_writing() {
+    if isolated_test::run("dry_run_derives_rollups_and_scrubs_without_writing") {
+        return;
+    }
     let s = build_scenario();
     let report = migrate::prepare(&dry_run_args(&s)).expect("dry-run prepare");
 
@@ -1174,6 +1253,9 @@ fn dry_run_derives_rollups_and_scrubs_without_writing() {
 
 #[test]
 fn migrate_home_relativizes_skill_path_no_machine_leak() {
+    if isolated_test::run("migrate_home_relativizes_skill_path_no_machine_leak") {
+        return;
+    }
     // Regression: skill_slug() slugs the FULL skill path, so an absolute skill
     // path (e.g. /Users/<user>/.../SKILL.md) leaked the machine home both into
     // the committed rollup `skill` field AND the derived rollup `id` / directory
@@ -1212,6 +1294,9 @@ fn migrate_home_relativizes_skill_path_no_machine_leak() {
 
 #[test]
 fn dry_run_dedups_already_archived_via_catalog_source_digest() {
+    if isolated_test::run("dry_run_dedups_already_archived_via_catalog_source_digest") {
+        return;
+    }
     let s = build_scenario();
     // First compute the digest the prepare would assign.
     let report = migrate::prepare(&dry_run_args(&s)).expect("prepare");
@@ -1236,6 +1321,9 @@ fn dry_run_dedups_already_archived_via_catalog_source_digest() {
 
 #[test]
 fn filters_by_skill_and_since() {
+    if isolated_test::run("filters_by_skill_and_since") {
+        return;
+    }
     let s = build_scenario();
     let mut args = dry_run_args(&s);
     args.skill = Some("deliver".to_string());
@@ -1247,6 +1335,9 @@ fn filters_by_skill_and_since() {
 #[test]
 #[cfg(unix)]
 fn apply_writes_one_batch_commit() {
+    if isolated_test::run("apply_writes_one_batch_commit") {
+        return;
+    }
     let _config = isolate_config();
     let s = build_scenario();
     configure_push_remote(&s);
@@ -1308,6 +1399,9 @@ fn apply_writes_one_batch_commit() {
 #[test]
 #[cfg(unix)]
 fn apply_refuses_dirty_archive() {
+    if isolated_test::run("apply_refuses_dirty_archive") {
+        return;
+    }
     let s = build_scenario();
     // Make the archive dirty under evidence/.
     fs::write(s.archive.join("evidence").join("dirty.txt"), "x").unwrap();
@@ -1319,6 +1413,9 @@ fn apply_refuses_dirty_archive() {
 #[test]
 #[cfg(unix)]
 fn apply_refuses_existing_target() {
+    if isolated_test::run("apply_refuses_existing_target") {
+        return;
+    }
     let s = build_scenario();
     // Pre-create one of the target dirs so it "already exists".
     let report = migrate::prepare(&dry_run_args(&s)).expect("prepare");
@@ -1349,6 +1446,9 @@ fn apply_refuses_existing_target() {
 
 #[test]
 fn linked_child_is_copied_scrubbed_and_path_matches_what_was_written() {
+    if isolated_test::run("linked_child_is_copied_scrubbed_and_path_matches_what_was_written") {
+        return;
+    }
     let _config = isolate_config();
     // Added coverage + F3: a non-empty linked_records child is copied, scrubbed,
     // and the rollup `linked_evidence.path` points at the file actually written.
@@ -1401,6 +1501,9 @@ fn linked_child_is_copied_scrubbed_and_path_matches_what_was_written() {
 
 #[test]
 fn path_traversal_record_type_cannot_escape_archive_target() {
+    if isolated_test::run("path_traversal_record_type_cannot_escape_archive_target") {
+        return;
+    }
     let _config = isolate_config();
     // F1: a malicious record_type like `../../../etc` must NOT write outside
     // the archive target; it is sanitized to a safe in-target segment.
@@ -1465,6 +1568,9 @@ fn path_traversal_record_type_cannot_escape_archive_target() {
 
 #[test]
 fn absolute_and_escaping_child_path_is_not_copied() {
+    if isolated_test::run("absolute_and_escaping_child_path_is_not_copied") {
+        return;
+    }
     let _config = isolate_config();
     // F2: an absolute `link.path` (e.g. /etc/hosts) and a `../escape` path are
     // recorded as references but NOT copied into the archive.
@@ -1504,6 +1610,9 @@ fn absolute_and_escaping_child_path_is_not_copied() {
 
 #[test]
 fn linked_path_with_secret_does_not_leak_into_the_on_disk_path() {
+    if isolated_test::run("linked_path_with_secret_does_not_leak_into_the_on_disk_path") {
+        return;
+    }
     let _config = isolate_config();
     // F3: a secret in a linked PATH must not land in the committed tree path,
     // and the rollup reference must point at the file that was written.
@@ -1550,6 +1659,9 @@ fn linked_path_with_secret_does_not_leak_into_the_on_disk_path() {
 
 #[test]
 fn same_type_same_leaf_children_are_both_preserved() {
+    if isolated_test::run("same_type_same_leaf_children_are_both_preserved") {
+        return;
+    }
     let _config = isolate_config();
     // F5: two children of the same type with the same leaf name must both be
     // preserved at distinct paths, never silently overwritten.
@@ -1597,6 +1709,9 @@ fn same_type_same_leaf_children_are_both_preserved() {
 
 #[test]
 fn filters_by_until_boundary() {
+    if isolated_test::run("filters_by_until_boundary") {
+        return;
+    }
     // Added coverage: `--until` excludes records started after the boundary
     // (inclusive on the boundary day).
     let s = build_empty_scenario();
@@ -1624,6 +1739,9 @@ fn filters_by_until_boundary() {
 
 #[test]
 fn promotion_only_keeps_records_with_heuristic_inbox_link() {
+    if isolated_test::run("promotion_only_keeps_records_with_heuristic_inbox_link") {
+        return;
+    }
     // Added coverage: `--promotion-only` keeps only records that link a
     // heuristic-inbox promotion case.
     let s = build_empty_scenario();
@@ -1654,6 +1772,9 @@ fn promotion_only_keeps_records_with_heuristic_inbox_link() {
 #[test]
 #[cfg(unix)]
 fn push_failure_records_no_digest_and_re_run_dedups_via_catalog() {
+    if isolated_test::run("push_failure_records_no_digest_and_re_run_dedups_via_catalog") {
+        return;
+    }
     let _config = isolate_config();
     // Added coverage: when `git push` fails, apply errors out, no digest is
     // recorded in the (now-removed) sentinel, and a re-run still dedups via the
@@ -1698,6 +1819,9 @@ fn push_failure_records_no_digest_and_re_run_dedups_via_catalog() {
 
 #[test]
 fn outcome_status_is_scrubbed_in_rollup() {
+    if isolated_test::run("outcome_status_is_scrubbed_in_rollup") {
+        return;
+    }
     // Minor-but-do: outcome.status is scrubbed too.
     let s = build_empty_scenario();
     let body = r#"{
@@ -1748,7 +1872,9 @@ fn walk(root: &Path) -> Vec<PathBuf> {
 }
 
 fn git_count_commits(repo: &Path) -> usize {
-    let out = Command::new("git")
+    let fixture = Fixture::new();
+    let out = fixture
+        .git_command(repo)
         .args(["rev-list", "--count", "HEAD"])
         .current_dir(repo)
         .output()
@@ -1761,7 +1887,9 @@ fn git_count_commits(repo: &Path) -> usize {
 
 fn configure_push_remote(s: &Scenario) {
     let remote = s.root.join("archive-remote.git");
-    let out = Command::new("git")
+    let fixture = Fixture::new();
+    let out = fixture
+        .git_command(&s.root)
         .args(["init", "--bare", "-q"])
         .arg(&remote)
         .output()
@@ -1829,6 +1957,9 @@ const GHP_TOKEN: &str = "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 #[test]
 fn promotion_case_link_is_scrubbed_before_archiving() {
+    if isolated_test::run("promotion_case_link_is_scrubbed_before_archiving") {
+        return;
+    }
     // A heuristic-inbox promotion link whose path carries a token must be
     // scrubbed before it lands in the rollup / metadata / catalog.
     let s = build_empty_scenario();
@@ -1859,6 +1990,9 @@ fn promotion_case_link_is_scrubbed_before_archiving() {
 
 #[test]
 fn bare_skill_id_is_scrubbed() {
+    if isolated_test::run("bare_skill_id_is_scrubbed") {
+        return;
+    }
     // A skill value with no `/` must still be scrubbed, not copied verbatim.
     let s = build_empty_scenario();
     write_record(
@@ -1878,6 +2012,9 @@ fn bare_skill_id_is_scrubbed() {
 
 #[test]
 fn linked_evidence_type_is_scrubbed() {
+    if isolated_test::run("linked_evidence_type_is_scrubbed") {
+        return;
+    }
     // The linked-evidence `type` written into the rollup must be scrubbed.
     let s = build_empty_scenario();
     let links = format!(r#"[{{ "type": "review-evidence-{GHP_TOKEN}", "path": "notes.txt" }}]"#);
@@ -1905,6 +2042,9 @@ fn linked_evidence_type_is_scrubbed() {
 
 #[test]
 fn mixed_v1_v2_records_normalize_with_owner_provenance() {
+    if isolated_test::run("mixed_v1_v2_records_normalize_with_owner_provenance") {
+        return;
+    }
     let s = build_empty_scenario();
     write_record(
         &s.source_out,
@@ -1934,6 +2074,9 @@ fn mixed_v1_v2_records_normalize_with_owner_provenance() {
 
 #[test]
 fn mixed_usage_batch_blocks_malformed_v2_without_losing_valid_owners() {
+    if isolated_test::run("mixed_usage_batch_blocks_malformed_v2_without_losing_valid_owners") {
+        return;
+    }
     let s = build_empty_scenario();
     write_record(
         &s.source_out,
