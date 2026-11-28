@@ -2,38 +2,42 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use nils_test_support::{bin, tempdir::ScopedTempDir};
+use nils_test_support::{bin, fixture::Fixture, tempdir::ScopedTempDir};
 use pretty_assertions::assert_eq;
 
 const INDEX: &str = "# Development log\n\nConventions.\n\n## Months\n\n";
 
 struct Repo {
-    _temp: ScopedTempDir,
+    fixture: Fixture,
     root: PathBuf,
 }
 impl Repo {
     fn new() -> Self {
-        let temp = ScopedTempDir::with_prefix("devlog-fragments-");
-        let root = temp.path().canonicalize().unwrap();
-        git(&root, &["init", "-q", "-b", "main"]);
-        git(&root, &["config", "user.name", "Test Maintainer"]);
+        let fixture = Fixture::new();
+        let root = fixture.temp_dir().join("repo");
+        std::fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        git(&fixture, &root, &["init", "-q", "-b", "main"]);
+        git(&fixture, &root, &["config", "user.name", "Test Maintainer"]);
         git(
+            &fixture,
             &root,
             &["config", "user.email", "maintainer@example.invalid"],
         );
-        git(&root, &["config", "commit.gpgsign", "false"]);
-        git(&root, &["config", "core.hooksPath", "/dev/null"]);
+        git(&fixture, &root, &["config", "commit.gpgsign", "false"]);
+        git(&fixture, &root, &["config", "core.hooksPath", "/dev/null"]);
         std::fs::create_dir_all(root.join("docs/devlog")).unwrap();
         std::fs::write(root.join("docs/devlog/README.md"), INDEX).unwrap();
-        commit(&root, "Initialize log");
-        Self { _temp: temp, root }
+        commit(&fixture, &root, "Initialize log");
+        Self { fixture, root }
     }
     fn read(&self, path: &str) -> String {
         std::fs::read_to_string(self.root.join("docs/devlog").join(path)).unwrap()
     }
 }
-fn git(root: &Path, args: &[&str]) -> Output {
-    let output = Command::new("git")
+fn git(fixture: &Fixture, root: &Path, args: &[&str]) -> Output {
+    let output = fixture
+        .git_command(root)
         .args(args)
         .current_dir(root)
         .output()
@@ -45,9 +49,9 @@ fn git(root: &Path, args: &[&str]) -> Output {
     );
     output
 }
-fn commit(root: &Path, message: &str) {
-    git(root, &["add", "."]);
-    git(root, &["commit", "-qm", message]);
+fn commit(fixture: &Fixture, root: &Path, message: &str) {
+    git(fixture, root, &["add", "."]);
+    git(fixture, root, &["commit", "-qm", message]);
 }
 fn run(root: &Path, fragments: bool, args: &[&str]) -> Output {
     let mut command = Command::new(bin::resolve("devlog"));
@@ -159,14 +163,18 @@ fn parallel_fragment_branches_merge_cleanly_in_either_order() {
     for first in ["alpha", "beta"] {
         let repo = Repo::new();
         for branch in ["alpha", "beta"] {
-            git(&repo.root, &["checkout", "-qb", branch, "main"]);
+            git(
+                &repo.fixture,
+                &repo.root,
+                &["checkout", "-qb", branch, "main"],
+            );
             new(&repo.root, "Same title", "2020-04-20", branch);
-            commit(&repo.root, "Add fragment");
+            commit(&repo.fixture, &repo.root, "Add fragment");
         }
-        git(&repo.root, &["checkout", "-q", "main"]);
-        git(&repo.root, &["merge", "--no-edit", first]);
+        git(&repo.fixture, &repo.root, &["checkout", "-q", "main"]);
+        git(&repo.fixture, &repo.root, &["merge", "--no-edit", first]);
         let second = if first == "alpha" { "beta" } else { "alpha" };
-        git(&repo.root, &["merge", "--no-edit", second]);
+        git(&repo.fixture, &repo.root, &["merge", "--no-edit", second]);
         assert_eq!(repo.read("README.md"), INDEX);
         assert!(
             repo.root
@@ -189,12 +197,13 @@ fn fold_is_identical_in_two_clones_idempotent_and_keeps_today() {
     new(&repo.root, "Older", "2020-03-01", "older");
     let today = nils_devlog::EntryDate::today().unwrap().to_string();
     new(&repo.root, "Today", &today, "today");
-    commit(&repo.root, "Pending entries");
+    commit(&repo.fixture, &repo.root, "Pending entries");
     let copies = ScopedTempDir::with_prefix("devlog-clones-");
     let a = copies.path().join("a");
     let b = copies.path().join("b");
     for clone in [&a, &b] {
         git(
+            &repo.fixture,
             copies.path(),
             &[
                 "clone",
@@ -219,18 +228,18 @@ fn fold_is_identical_in_two_clones_idempotent_and_keeps_today() {
         a.join(format!("docs/devlog/pending/{today}-today.md"))
             .exists()
     );
-    let before = git(&a, &["diff"]).stdout;
+    let before = git(&repo.fixture, &a, &["diff"]).stdout;
     let second = success(&a, &["--format", "json", "fold"]);
     let json: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
     assert_eq!(json["data"]["folded"], 0);
-    assert_eq!(git(&a, &["diff"]).stdout, before);
+    assert_eq!(git(&repo.fixture, &a, &["diff"]).stdout, before);
 }
 #[test]
 fn check_rejects_baseline_fragment_edits_and_only_accepts_exact_fold_deletion() {
     let repo = Repo::new();
     new(&repo.root, "Original", "2020-04-20", "original");
-    commit(&repo.root, "Immutable entry");
-    git(&repo.root, &["checkout", "-qb", "change"]);
+    commit(&repo.fixture, &repo.root, "Immutable entry");
+    git(&repo.fixture, &repo.root, &["checkout", "-qb", "change"]);
     let path = repo.root.join("docs/devlog/pending/2020-04-20-original.md");
     let original = std::fs::read_to_string(&path).unwrap();
     std::fs::write(&path, original.replace("Shipped.", "Edited.")).unwrap();
@@ -261,6 +270,7 @@ fn git_merge_driver_unions_independently_folded_entries() {
     .unwrap();
     let binary = bin::resolve("devlog").canonicalize().unwrap();
     git(
+        &repo.fixture,
         &repo.root,
         &[
             "config",
@@ -268,15 +278,19 @@ fn git_merge_driver_unions_independently_folded_entries() {
             &format!("'{}' merge %O %A %B", binary.display()),
         ],
     );
-    commit(&repo.root, "Configure driver");
+    commit(&repo.fixture, &repo.root, "Configure driver");
     for branch in ["alpha", "beta"] {
-        git(&repo.root, &["checkout", "-qb", branch, "main"]);
+        git(
+            &repo.fixture,
+            &repo.root,
+            &["checkout", "-qb", branch, "main"],
+        );
         new(&repo.root, branch, "2020-04-20", branch);
         success(&repo.root, &["fold"]);
-        commit(&repo.root, "Fold entry");
+        commit(&repo.fixture, &repo.root, "Fold entry");
     }
-    git(&repo.root, &["checkout", "-q", "alpha"]);
-    git(&repo.root, &["merge", "--no-edit", "beta"]);
+    git(&repo.fixture, &repo.root, &["checkout", "-q", "alpha"]);
+    git(&repo.fixture, &repo.root, &["merge", "--no-edit", "beta"]);
     let month = repo.read("2020-04.md");
     for title in ["Shared", "alpha", "beta"] {
         assert_eq!(month.matches(&format!(" - {title}\n")).count(), 1);
@@ -380,8 +394,8 @@ fn merge_keeps_one_sided_corrections_and_refuses_incompatible_corrections() {
 fn check_detects_deletion_of_the_entire_pending_directory_and_supports_explicit_base() {
     let repo = Repo::new();
     new(&repo.root, "Immutable", "2020-04-20", "immutable");
-    commit(&repo.root, "Baseline fragment");
-    git(&repo.root, &["checkout", "-qb", "change"]);
+    commit(&repo.fixture, &repo.root, "Baseline fragment");
+    git(&repo.fixture, &repo.root, &["checkout", "-qb", "change"]);
     std::fs::remove_dir_all(repo.root.join("docs/devlog/pending")).unwrap();
     let out = run(&repo.root, true, &["check", "--base", "main"]);
     assert_eq!(out.status.code(), Some(65));
@@ -422,8 +436,8 @@ fn default_index_preserves_repository_pending_prose_byte_for_byte() {
 fn relative_dir_check_enforces_the_default_branch_baseline() {
     let repo = Repo::new();
     new(&repo.root, "Immutable", "2020-04-20", "immutable");
-    commit(&repo.root, "Baseline fragment");
-    git(&repo.root, &["checkout", "-qb", "change"]);
+    commit(&repo.fixture, &repo.root, "Baseline fragment");
+    git(&repo.fixture, &repo.root, &["checkout", "-qb", "change"]);
     let path = repo
         .root
         .join("docs/devlog/pending/2020-04-20-immutable.md");
@@ -447,6 +461,7 @@ fn git_driver_unions_two_branches_adding_the_first_month_file() {
     .unwrap();
     let binary = bin::resolve("devlog").canonicalize().unwrap();
     git(
+        &repo.fixture,
         &repo.root,
         &[
             "config",
@@ -454,15 +469,19 @@ fn git_driver_unions_two_branches_adding_the_first_month_file() {
             &format!("'{}' merge %O %A %B", binary.display()),
         ],
     );
-    commit(&repo.root, "Configure driver");
+    commit(&repo.fixture, &repo.root, "Configure driver");
     for branch in ["alpha", "beta"] {
-        git(&repo.root, &["checkout", "-qb", branch, "main"]);
+        git(
+            &repo.fixture,
+            &repo.root,
+            &["checkout", "-qb", branch, "main"],
+        );
         new(&repo.root, "Same title", "2020-04-20", branch);
         success(&repo.root, &["fold"]);
-        commit(&repo.root, "First month entry");
+        commit(&repo.fixture, &repo.root, "First month entry");
     }
-    git(&repo.root, &["checkout", "-q", "alpha"]);
-    git(&repo.root, &["merge", "--no-edit", "beta"]);
+    git(&repo.fixture, &repo.root, &["checkout", "-q", "alpha"]);
+    git(&repo.fixture, &repo.root, &["merge", "--no-edit", "beta"]);
     let month = repo.read("2020-04.md");
     for slug in ["alpha", "beta"] {
         assert_eq!(
@@ -560,8 +579,8 @@ fn fragments_only_rejects_month_changes_in_all_git_states_and_log_locations() {
                     std::fs::create_dir_all(repo.root.join(dir).parent().unwrap()).unwrap();
                     std::fs::rename(repo.root.join("docs/devlog"), repo.root.join(dir)).unwrap();
                 }
-                commit(&repo.root, "Baseline month");
-                git(&repo.root, &["checkout", "-qb", "feature"]);
+                commit(&repo.fixture, &repo.root, "Baseline month");
+                git(&repo.fixture, &repo.root, &["checkout", "-qb", "feature"]);
                 let month = repo.root.join(dir).join("2020-04.md");
                 let original = std::fs::read_to_string(&month).unwrap();
                 match change {
@@ -584,9 +603,9 @@ fn fragments_only_rejects_month_changes_in_all_git_states_and_log_locations() {
                     _ => unreachable!(),
                 }
                 match state {
-                    "committed" => commit(&repo.root, "Change month"),
+                    "committed" => commit(&repo.fixture, &repo.root, "Change month"),
                     "staged" => {
-                        git(&repo.root, &["add", "."]);
+                        git(&repo.fixture, &repo.root, &["add", "."]);
                     }
                     _ => {}
                 }
@@ -609,13 +628,14 @@ fn fragments_only_rejects_month_changes_in_all_git_states_and_log_locations() {
 fn fragments_only_rejects_local_fold_but_trusted_fold_commit_passes_ordinary_check() {
     let repo = Repo::new();
     new(&repo.root, "Merged", "2020-04-20", "merged");
-    commit(&repo.root, "Merged fragment");
-    let baseline = String::from_utf8(git(&repo.root, &["rev-parse", "HEAD"]).stdout).unwrap();
-    git(&repo.root, &["checkout", "-qb", "feature"]);
+    commit(&repo.fixture, &repo.root, "Merged fragment");
+    let baseline =
+        String::from_utf8(git(&repo.fixture, &repo.root, &["rev-parse", "HEAD"]).stdout).unwrap();
+    git(&repo.fixture, &repo.root, &["checkout", "-qb", "feature"]);
     success(&repo.root, &["fold"]);
     for committed in [false, true] {
         if committed {
-            commit(&repo.root, "Local fold");
+            commit(&repo.fixture, &repo.root, "Local fold");
         }
         assert_problem(
             &strict_check(&repo.root, None, "main"),
@@ -629,10 +649,10 @@ fn fragments_only_rejects_local_fold_but_trusted_fold_commit_passes_ordinary_che
         );
         success(&repo.root, &["check", "--base", "main"]);
     }
-    git(&repo.root, &["checkout", "-q", "main"]);
+    git(&repo.fixture, &repo.root, &["checkout", "-q", "main"]);
     success(&repo.root, &["fold"]);
     success(&repo.root, &["check", "--base", baseline.trim()]);
-    commit(&repo.root, "Scheduled fold");
+    commit(&repo.fixture, &repo.root, "Scheduled fold");
     success(&repo.root, &["check", "--base", baseline.trim()]);
 }
 
@@ -640,15 +660,15 @@ fn fragments_only_rejects_local_fold_but_trusted_fold_commit_passes_ordinary_che
 fn fragments_only_uses_merge_base_when_main_advances_and_accepts_new_fragments() {
     let repo = Repo::new();
     new(&repo.root, "Merged", "2020-04-20", "merged");
-    commit(&repo.root, "Merged fragment");
-    git(&repo.root, &["checkout", "-qb", "feature"]);
+    commit(&repo.fixture, &repo.root, "Merged fragment");
+    git(&repo.fixture, &repo.root, &["checkout", "-qb", "feature"]);
     new(&repo.root, "New", "2020-04-21", "new");
-    commit(&repo.root, "New fragment");
-    git(&repo.root, &["checkout", "-q", "main"]);
+    commit(&repo.fixture, &repo.root, "New fragment");
+    git(&repo.fixture, &repo.root, &["checkout", "-q", "main"]);
     success(&repo.root, &["fold"]);
     new(&repo.root, "Main only", "2020-04-22", "main-only");
-    commit(&repo.root, "Main advanced");
-    git(&repo.root, &["checkout", "-q", "feature"]);
+    commit(&repo.fixture, &repo.root, "Main advanced");
+    git(&repo.fixture, &repo.root, &["checkout", "-q", "feature"]);
     assert!(strict_check(&repo.root, None, "main").status.success());
     let path = repo.root.join("docs/devlog/pending/2020-04-20-merged.md");
     let old = std::fs::read_to_string(&path).unwrap();
@@ -669,8 +689,12 @@ fn fragments_only_fails_closed_without_a_resolvable_merge_base() {
         let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(json["error"]["code"], "baseline-unavailable");
     }
-    git(&repo.root, &["checkout", "--orphan", "unrelated"]);
-    commit(&repo.root, "Unrelated history");
+    git(
+        &repo.fixture,
+        &repo.root,
+        &["checkout", "--orphan", "unrelated"],
+    );
+    commit(&repo.fixture, &repo.root, "Unrelated history");
     assert_eq!(
         strict_check(&repo.root, None, "main").status.code(),
         Some(69)
@@ -689,14 +713,14 @@ fn fragments_only_checks_index_and_head_even_when_worktree_restores_baseline() {
         let repo = Repo::new();
         new(&repo.root, "Baseline", "2020-04-20", "baseline");
         success(&repo.root, &["fold"]);
-        commit(&repo.root, "Baseline month");
-        git(&repo.root, &["checkout", "-qb", "feature"]);
+        commit(&repo.fixture, &repo.root, "Baseline month");
+        git(&repo.fixture, &repo.root, &["checkout", "-qb", "feature"]);
         let month = repo.root.join("docs/devlog/2020-04.md");
         let original = std::fs::read_to_string(&month).unwrap();
         std::fs::write(&month, original.replace("Shipped.", "Edited.")).unwrap();
-        git(&repo.root, &["add", "."]);
+        git(&repo.fixture, &repo.root, &["add", "."]);
         if committed {
-            commit(&repo.root, "Change month");
+            commit(&repo.fixture, &repo.root, "Change month");
         }
         std::fs::write(&month, &original).unwrap();
         assert_problem(
@@ -717,14 +741,14 @@ fn fragments_only_checks_merged_fragment_changes_hidden_by_a_later_git_layer() {
     for committed in [false, true] {
         let repo = Repo::new();
         new(&repo.root, "Merged", "2020-04-20", "merged");
-        commit(&repo.root, "Merged fragment");
-        git(&repo.root, &["checkout", "-qb", "feature"]);
+        commit(&repo.fixture, &repo.root, "Merged fragment");
+        git(&repo.fixture, &repo.root, &["checkout", "-qb", "feature"]);
         let path = repo.root.join("docs/devlog/pending/2020-04-20-merged.md");
         let original = std::fs::read_to_string(&path).unwrap();
         std::fs::write(&path, original.replace("Shipped.", "Edited.")).unwrap();
-        git(&repo.root, &["add", "."]);
+        git(&repo.fixture, &repo.root, &["add", "."]);
         if committed {
-            commit(&repo.root, "Change fragment");
+            commit(&repo.fixture, &repo.root, "Change fragment");
         }
         std::fs::write(&path, original).unwrap();
         assert_problem(
@@ -739,13 +763,13 @@ fn fragments_only_checks_merged_fragment_changes_hidden_by_a_later_git_layer() {
 fn fragments_only_passes_new_fragments_without_requiring_the_writer_environment() {
     for state in ["unstaged", "staged", "committed"] {
         let repo = Repo::new();
-        git(&repo.root, &["checkout", "-qb", "feature"]);
+        git(&repo.fixture, &repo.root, &["checkout", "-qb", "feature"]);
         new(&repo.root, "New", "2020-04-20", "new");
         if state != "unstaged" {
-            git(&repo.root, &["add", "."]);
+            git(&repo.fixture, &repo.root, &["add", "."]);
         }
         if state == "committed" {
-            commit(&repo.root, "New fragment");
+            commit(&repo.fixture, &repo.root, "New fragment");
         }
         let out = run(
             &repo.root,
@@ -777,14 +801,14 @@ fn fragments_only_cannot_hide_baseline_deletions_by_switching_log_conventions() 
             std::fs::create_dir_all(repo.root.join(old_dir).parent().unwrap()).unwrap();
             std::fs::rename(repo.root.join("docs/devlog"), repo.root.join(old_dir)).unwrap();
         }
-        commit(&repo.root, "Baseline log");
-        git(&repo.root, &["checkout", "-qb", "feature"]);
+        commit(&repo.fixture, &repo.root, "Baseline log");
+        git(&repo.fixture, &repo.root, &["checkout", "-qb", "feature"]);
         std::fs::remove_dir_all(repo.root.join(old_dir)).unwrap();
         std::fs::create_dir_all(repo.root.join(new_dir)).unwrap();
         std::fs::write(repo.root.join(new_dir).join("README.md"), INDEX).unwrap();
         for committed in [false, true] {
             if committed {
-                commit(&repo.root, "Switch log directory");
+                commit(&repo.fixture, &repo.root, "Switch log directory");
             }
             for dir in [None, Some(new_dir)] {
                 let out = strict_check(&repo.root, dir, "main");
@@ -808,15 +832,15 @@ fn fragments_only_cannot_hide_custom_log_deletions_by_retargeting_a_symlink() {
     new(&repo.root, "Merged", "2020-04-21", "merged");
     std::fs::create_dir_all(repo.root.join("history")).unwrap();
     std::fs::rename(repo.root.join("docs/devlog"), repo.root.join("history/log")).unwrap();
-    commit(&repo.root, "Baseline custom log");
-    git(&repo.root, &["checkout", "-qb", "feature"]);
+    commit(&repo.fixture, &repo.root, "Baseline custom log");
+    git(&repo.fixture, &repo.root, &["checkout", "-qb", "feature"]);
     std::fs::remove_dir_all(repo.root.join("history/log")).unwrap();
     std::fs::create_dir_all(repo.root.join("history/other")).unwrap();
     std::fs::write(repo.root.join("history/other/README.md"), INDEX).unwrap();
     std::os::unix::fs::symlink("other", repo.root.join("history/log")).unwrap();
     for committed in [false, true] {
         if committed {
-            commit(&repo.root, "Retarget custom log");
+            commit(&repo.fixture, &repo.root, "Retarget custom log");
         }
         let out = strict_check(&repo.root, Some("history/log"), "main");
         assert_problem(&out, "month-file-changed", "history/log/2020-04.md");
@@ -847,8 +871,8 @@ fn baseline_symlink_retarget(committed: bool, ancestor: bool) {
     std::fs::create_dir_all(repo.root.join(old_dir).parent().unwrap()).unwrap();
     std::fs::rename(repo.root.join("docs/devlog"), repo.root.join(old_dir)).unwrap();
     std::os::unix::fs::symlink("old", repo.root.join(link)).unwrap();
-    commit(&repo.root, "Baseline symlink log");
-    git(&repo.root, &["checkout", "-qb", "feature"]);
+    commit(&repo.fixture, &repo.root, "Baseline symlink log");
+    git(&repo.fixture, &repo.root, &["checkout", "-qb", "feature"]);
     // The original symlink and its target are supported while unchanged.
     assert!(
         strict_check(&repo.root, Some(selected), "main")
@@ -861,7 +885,7 @@ fn baseline_symlink_retarget(committed: bool, ancestor: bool) {
     std::fs::remove_file(repo.root.join(link)).unwrap();
     std::os::unix::fs::symlink("new", repo.root.join(link)).unwrap();
     if committed {
-        commit(&repo.root, "Retarget baseline log symlink");
+        commit(&repo.fixture, &repo.root, "Retarget baseline log symlink");
     }
     let out = strict_check(&repo.root, Some(selected), "main");
     assert_problem(&out, "log-path-changed", link);
@@ -908,8 +932,12 @@ fn baseline_symlink_intermediate_retarget(committed: bool, selected: &str) {
     .unwrap();
     std::os::unix::fs::symlink("nested/deeper", repo.root.join("history/pivot")).unwrap();
     std::os::unix::fs::symlink("pivot/../old", repo.root.join("history/log")).unwrap();
-    commit(&repo.root, "Baseline intermediate symlink log");
-    git(&repo.root, &["checkout", "-qb", "feature"]);
+    commit(
+        &repo.fixture,
+        &repo.root,
+        "Baseline intermediate symlink log",
+    );
+    git(&repo.fixture, &repo.root, &["checkout", "-qb", "feature"]);
     assert!(
         strict_check(&repo.root, Some(selected), "main")
             .status
@@ -923,7 +951,11 @@ fn baseline_symlink_intermediate_retarget(committed: bool, selected: &str) {
     std::fs::remove_file(repo.root.join("history/pivot")).unwrap();
     std::os::unix::fs::symlink("new/deeper", repo.root.join("history/pivot")).unwrap();
     if committed {
-        commit(&repo.root, "Retarget intermediate log symlink");
+        commit(
+            &repo.fixture,
+            &repo.root,
+            "Retarget intermediate log symlink",
+        );
     }
     let out = strict_check(&repo.root, Some(selected), "main");
     assert_problem(&out, "log-path-changed", "history/pivot");

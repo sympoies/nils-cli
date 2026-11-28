@@ -6,29 +6,29 @@ use std::process::Command;
 
 use nils_test_support::bin;
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_with};
-use nils_test_support::tempdir::ScopedTempDir;
+use nils_test_support::fixture::Fixture as SharedFixture;
 use pretty_assertions::assert_eq;
 
 const INDEX: &str =
     "# Development log\n\nConventions live here.\n\n## Months\n\n- [2026-04](2026-04.md)\n";
 
 struct Fixture {
-    _dir: ScopedTempDir,
+    _dir: SharedFixture,
     root: PathBuf,
 }
 
 impl Fixture {
     /// A git repository containing a devlog at `dir` with one month file.
     fn new(devlog_dir: &str) -> Self {
-        let dir = ScopedTempDir::with_prefix("devlog-cli-");
+        let dir = SharedFixture::new();
         // The process temp root can itself be a symlink; canonicalize so the
         // path the binary reports back matches what the test compares.
         let root = dir
-            .path()
+            .temp_dir()
             .canonicalize()
             .expect("canonicalize fixture root");
 
-        git(&root, &["init", "--quiet", "."]);
+        git(&dir, &root, &["init", "--quiet", "."]);
 
         let log = root.join(devlog_dir);
         std::fs::create_dir_all(&log).expect("create devlog dir");
@@ -51,8 +51,9 @@ impl Fixture {
     }
 }
 
-fn git(root: &Path, args: &[&str]) {
-    let status = Command::new("git")
+fn git(fixture: &SharedFixture, root: &Path, args: &[&str]) {
+    let status = fixture
+        .git_command(root)
         .args(args)
         .current_dir(root)
         .status()
@@ -329,9 +330,9 @@ fn the_source_render_split_devlog_path_is_detected() {
 
 #[test]
 fn a_repository_without_a_devlog_reports_unavailable() {
-    let dir = ScopedTempDir::with_prefix("devlog-cli-empty-");
-    let root = dir.path().canonicalize().expect("canonicalize");
-    git(&root, &["init", "--quiet", "."]);
+    let dir = SharedFixture::new();
+    let root = dir.temp_dir().canonicalize().expect("canonicalize");
+    git(&dir, &root, &["init", "--quiet", "."]);
 
     let output = run_in(&root, &["check"]);
     assert_eq!(output.code, 69, "stderr={}", output.stderr_text());
@@ -734,9 +735,9 @@ fn an_explicit_dir_overrides_detection_and_a_non_directory_is_refused() {
 
 #[test]
 fn a_missing_devlog_emits_a_json_error_envelope() {
-    let dir = ScopedTempDir::with_prefix("devlog-cli-nolog-");
-    let root = dir.path().canonicalize().expect("canonicalize");
-    git(&root, &["init", "--quiet", "."]);
+    let dir = SharedFixture::new();
+    let root = dir.temp_dir().canonicalize().expect("canonicalize");
+    git(&dir, &root, &["init", "--quiet", "."]);
 
     let output = run_in(&root, &["--format", "json", "check"]);
     assert_eq!(output.code, 69);

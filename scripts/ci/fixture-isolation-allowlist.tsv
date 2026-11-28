@@ -67,8 +67,6 @@ crates/agent-workflow-primitives/tests/integration/control_plane.rs	git	Command:
 crates/agent-workflow-primitives/tests/integration/review_specialists.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
 crates/agent-workflow-primitives/tests/integration/test_first_evidence/subject_binding.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
 crates/codex-cli/tests/integration/execution_capsule.rs	git	let git = std::process::Command::new("git")	1	Existing fixture to migrate under #4172.
-crates/devlog/tests/integration/cli.rs	git	let status = Command::new("git")	1	Existing fixture to migrate under #4172.
-crates/devlog/tests/integration/fragments.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
 crates/forge-cli/src/config.rs	git	let out = std::process::Command::new("git")	1	Existing fixture to migrate under #4172.
 crates/forge-cli/src/ops/pr_create.rs	git	let output = GitCommand::new("git")	1	Existing fixture to migrate under #4172.
 crates/forge-cli/tests/integration/cli.rs	git	let add_remote = Command::new("git")	1	Existing fixture to migrate under #4172.
