@@ -247,6 +247,19 @@ impl Attempt {
     }
 }
 
+/// Enhanced Claude admission runs with the record, activity, and ingress
+/// locks held. Until the shared native idle guard lands (#4183), this draft
+/// retains the existing projected-idle admission and only checks the composer
+/// here. The shared guard will bracket this capture with native observations.
+pub(super) fn check_claude_admission(
+    context: &CliContext,
+    record: &SessionRecord,
+    tmux: &Path,
+    deadline: Instant,
+) -> Result<(), CliError> {
+    check_composer(context, record, tmux, deadline)
+}
+
 fn read_prompt(path: &Path, record: &SessionRecord) -> Result<String, CliError> {
     let invalid = || {
         error(

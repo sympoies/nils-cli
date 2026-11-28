@@ -235,8 +235,9 @@ runtime receipt is ignored after resume. Recovery refuses a stale same-ID Claude
 receipt and does not infer missing native evidence from history.
 
 The initial prompt must be nonempty UTF-8 text in a regular file and at most
-16 KiB. Its bytes are submitted once after verifying that the provider's new
-identity was persisted. The clear keeps its input fence across native
+16 KiB. Invalid files return `conversation-initial-prompt-invalid` before any
+terminal input. The prompt is submitted once after verifying that the
+provider's new identity was persisted. The clear keeps its input fence across native
 confirmation and prompt submission. The provider callback may take the record
 lock to commit its new identity, but managed input remains excluded and mailbox
 wakes remain eligible for delivery after the fence releases.

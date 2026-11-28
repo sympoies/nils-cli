@@ -570,3 +570,41 @@ async fn clear_initial_prompt_is_not_submitted_on_confirmation_timeout() {
 async fn clear_wait_idle_timeout_does_not_submit_clear() {
     check_initial_prompt(AgentKind::Codex, InitialPrompt::NeverIdle).await;
 }
+
+#[test]
+fn clear_initial_prompt_rejects_nonregular_and_oversized_files_before_input() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (context, record, tmux) = tests::fixture(&tmp, AgentKind::Claude);
+    let oversized = tmp.path().join("oversized-prompt");
+    fs::write(
+        &oversized,
+        vec![b'x'; crate::provider_prompt::MAX_PROVIDER_PROMPT_BYTES + 1],
+    )
+    .unwrap();
+    for path in [tmp.path().to_owned(), oversized] {
+        let result = operation(
+            &context,
+            ConversationArgs {
+                id: record.id.clone(),
+                expect_idle: true,
+                timeout: 1,
+                tmux_bin: Some(tmux.clone()),
+                format: crate::OutputFormat::Json,
+            },
+            Operation::Clear(ClearOptions {
+                initial_prompt_file: Some(path),
+                ..Default::default()
+            }),
+        );
+        assert_eq!(
+            result.unwrap_err().code(),
+            "conversation-initial-prompt-invalid"
+        );
+    }
+    assert!(!tmp.path().join("tmux.calls").exists());
+    assert!(
+        !session_dir(&context, &record.id)
+            .join("clear-receipts")
+            .exists()
+    );
+}

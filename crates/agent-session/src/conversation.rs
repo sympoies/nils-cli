@@ -714,13 +714,13 @@ fn admit_clear(
         options.allow_unread_mail || enhanced,
         "retry_conversation_clear",
     )?;
-    let composer_deadline = Instant::now() + crate::send::guarded_hold_budget(current, false);
-    check_composer(
-        context,
-        current,
-        tmux,
-        deadline.map_or(composer_deadline, |d| d.min(composer_deadline)),
-    )?;
+    let composer_budget = Instant::now() + crate::send::guarded_hold_budget(current, false);
+    let composer_deadline = deadline.map_or(composer_budget, |d| d.min(composer_budget));
+    if enhanced && !codex {
+        clear::check_claude_admission(context, current, tmux, composer_deadline)?;
+    } else {
+        check_composer(context, current, tmux, composer_deadline)?;
+    }
     if enhanced {
         attempt.fence_input(context, current)?;
     }
