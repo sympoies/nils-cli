@@ -14,8 +14,10 @@ pub struct DeleteArgs {
     )]
     pub if_stopped: bool,
 
-    /// Retire a running managed Codex session only when provider idleness and an
-    /// empty composer are verified. Requires --expected-incarnation.
+    /// Retire a running managed Claude or Codex session only when provider idleness and an
+    /// empty composer are verified. Claude retirement is best effort: it refuses while a tmux
+    /// client is attached, but a client that attaches and types between the final check and
+    /// teardown can still lose input. Requires --expected-incarnation.
     #[arg(
         long,
         group = "delete_condition",

@@ -15,7 +15,7 @@ use super::{
     CliContext, SessionRecord, ShadowObservationView, TurnPhase, TurnState, now, session_dir,
 };
 
-mod claude_agents;
+pub(crate) mod claude_agents;
 mod claude_outcome;
 mod guarded_idle;
 pub(crate) use guarded_idle::{StoppedIdle, stopped_claude_idle};

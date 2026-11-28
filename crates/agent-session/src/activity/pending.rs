@@ -134,6 +134,17 @@ pub(crate) fn unsettled(context: &CliContext, record: &crate::SessionRecord) -> 
     )
 }
 
+/// Detect unmatched Claude tool starts in the current runtime.
+pub(crate) fn open_claude_tools(
+    context: &CliContext,
+    record: &crate::SessionRecord,
+) -> Option<bool> {
+    let path = session_dir(context, &record.id).join(super::ACTIVITY_FILE);
+    let document = super::read_document(&path).ok()?;
+    super::activity_matches_runtime(&document, record)
+        .then_some(!document.open_tool_calls.is_empty())
+}
+
 fn lock_error(err: io::Error) -> CliError {
     CliError::runtime(
         "activity-ingress-lock-failed",
