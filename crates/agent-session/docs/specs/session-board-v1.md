@@ -296,6 +296,7 @@ naming the additive capabilities the producer supports:
 | `launch_env.v1` | Record `launch_env`, the public non-secret launch switches. |
 | `boot_recovery.v1` | Record `boot_recovery`, the last boot recovery receipt. |
 | `unsubmitted_attempt.v1` | Record `unsubmitted_attempt`, the text-free composer occupancy signal. |
+| `auth_recovery.v1` | Optional record `auth_recovery` and envelope `auth_recovery_summary` for Claude generation recovery. |
 | `runtime_exit.v1` | Record `runtime_exit`, with bounded exit reason and explicit recovery action. |
 | `terminal_activity.v1` | Record `last_terminal_activity_at`, the latest observed terminal activity timestamp. |
 | `review_handoff_retention.v1` | `retained_for_review` on the operator closed feed and authenticated, unfiltered recovery views. |
@@ -322,7 +323,7 @@ strings, so a deployed reader that requires the exact v1 strings keeps working.
   "schema_version": "agent-session.board.v1",
   "record_schema": "agent-session.board-record.v1",
   "machine": "host-a",
-  "extensions": ["lineage.v1", "work.v1", "programs.v1", "context_usage.v1", "launch_env.v1", "terminal_activity.v1", "runtime_exit.v1", "boot_recovery.v1", "unsubmitted_attempt.v1"],
+  "extensions": ["lineage.v1", "work.v1", "programs.v1", "context_usage.v1", "launch_env.v1", "terminal_activity.v1", "runtime_exit.v1", "boot_recovery.v1", "unsubmitted_attempt.v1", "auth_recovery.v1"],
   "generated_at": "2030-01-01T00:05:00Z",
   "ledger_cursor": "opaque",
   "records": [],

@@ -92,7 +92,6 @@ fn credential_wait_expires_at_thirty_seconds_without_new_publication() {
     assert_eq!(receipt["last_reason"], "publication_deadline");
     crate::auth_incident::failover::tick(&context, &record, &tmux, 130).unwrap();
     assert_eq!(failover_receipt(&context)["state"], "blocked_no_credential");
-    publish(tmp.path(), 2);
     tick(&context, &record, &tmux, 131);
     assert_eq!(recovery_receipt(&context)["state"], "blocked");
     assert_eq!(log(tmp.path()), before);

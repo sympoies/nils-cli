@@ -53,7 +53,7 @@ pub(super) fn select(
     operation_id: &str,
     after: &str,
 ) -> Result<(String, Proof), &'static str> {
-    // One bounded inventory and one bounded selection per incident. The new
+    // One bounded inventory and one bounded selection per attempt. The new
     // capability opts the broker into the auth-specific policy contract;
     // capacity selection support alone never authorizes an auth switch.
     let inventory: Inventory = broker

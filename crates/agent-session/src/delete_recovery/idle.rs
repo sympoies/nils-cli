@@ -2,7 +2,7 @@ use super::*;
 use crate::activity::{Confidence, SourceKind, TurnPhase};
 use crate::codex_app_server::{self, guarded};
 
-mod claude;
+pub(crate) mod claude;
 
 pub(super) fn delete_if_idle(
     context: &CliContext,
@@ -32,11 +32,7 @@ pub(super) fn delete_if_idle(
     }
 
     let tmux = resolve_tmux_bin(args.tmux_bin.as_deref());
-    match session_status(context, &tmux, &record).as_str() {
-        "running" => {}
-        "stopped" => return Err(active(&record, "stopped")),
-        _ => return Err(unknown(&record)),
-    }
+    require_running(context, &record, &tmux)?;
     let claude =
         record.agent == "claude" && record.runtime.as_ref().is_some_and(|r| r.kind == "tmux");
     if record.mode != "interactive"
@@ -71,81 +67,33 @@ pub(super) fn delete_if_idle(
     ensure_session_lifecycle_mutation_allowed(context, &record)?;
 
     // The proxy and hook writers can acquire their gates before lifecycle.
-    // Probe both of those gates without waiting while holding lifecycle.
-    let _provider = if claude {
-        None
-    } else {
-        Some(
-            codex_app_server::acquire_account_mutation_gate(context, &record.id).map_err(
-                |error| {
-                    if error.code() == "codex-account-session-busy" {
-                        active(&record, "working")
-                    } else {
-                        unknown(&record)
-                    }
-                },
-            )?,
+    // Probe those gates without waiting while holding lifecycle.
+    let (_provider, _requests, _activity, claude_guard) = if claude {
+        (
+            None,
+            None,
+            None,
+            Some(claude::acquire(context, &record, &tmux)?),
         )
-    };
-    let _requests = if claude {
-        None
     } else {
-        Some(
-            codex_app_server::retirement::probe_requests(context, &record)
-                .map_err(|_| unknown(&record))?
-                .ok_or_else(|| active(&record, "working"))?,
-        )
-    };
-    let _activity = activity::acquire_coordination_activity_lock(context, &record.id)
-        .map_err(|_| unknown(&record))?;
-    let _ingress = activity::pending::probe_lock(context, &record.id)
-        .map_err(|_| unknown(&record))?
-        .ok_or_else(|| active(&record, "provider-event-pending"))?;
-
-    if activity::pending::unsettled(context, &record).ok_or_else(|| unknown(&record))? {
-        return Err(active(&record, "provider-event-pending"));
-    }
-    if claude {
-        claude::require_waiting(context, &record)?;
-        claude::require_native_idle(&record)?;
-    } else {
+        let provider = codex_app_server::acquire_account_mutation_gate(context, &record.id)
+            .map_err(|error| {
+                if error.code() == "codex-account-session-busy" {
+                    active(&record, "working")
+                } else {
+                    unknown(&record)
+                }
+            })?;
+        let requests = codex_app_server::retirement::probe_requests(context, &record)
+            .map_err(|_| unknown(&record))?
+            .ok_or_else(|| active(&record, "working"))?;
+        let activity = acquire_activity(context, &record)?;
         require_waiting_activity(context, &record)?;
-    }
-    let deadline = Instant::now() + crate::send::guarded_hold_budget(&record, false);
-    if !claude {
+        let deadline = Instant::now() + crate::send::guarded_hold_budget(&record, false);
         require_codex_idle(&record, deadline)?;
-    }
-    let composer_guard = send_guard::Admission {
-        stopped_idle: &Default::default(),
-        context,
-        record: &record,
-        args: &send_guard::GuardArgs {
-            require_empty_composer: true,
-            ..Default::default()
-        },
-        tmux_bin: &tmux,
-        verify_composer: false,
-        deadline,
+        check_composer(context, &record, &tmux, deadline)?;
+        (Some(provider), Some(requests), Some(activity), None)
     };
-    let check_composer = || {
-        composer_guard
-            .check_preserving_draft("admission")
-            .map_err(|error| match error.code() {
-                "send-composer-not-empty" | "send-composer-unobservable" => error,
-                _ => unknown(&record),
-            })
-    };
-    check_composer()?;
-
-    if claude {
-        // Both captures bracket the final native query: refuse native work that
-        // appeared meanwhile and any draft that rendered late. Only an attached
-        // client can type, so one also blocks retirement. Nothing here changes
-        // the pane before teardown.
-        claude::require_native_idle(&record)?;
-        check_composer()?;
-        claude::require_detached(&tmux, &record)?;
-    }
 
     let session_dir = resolve_session_record_path(context, &record.id)?.session_dir;
     let options = DeleteSessionOptions::regular(
@@ -153,10 +101,8 @@ pub(super) fn delete_if_idle(
         DELETE_TERMINATION_VERIFY_TIMEOUT,
         board::CloseReason::Deleted,
     );
-    if claude {
-        // A client can attach after the check above. Look again as late as
-        // possible; the remaining check-to-teardown interval is the residual.
-        claude::require_detached(&tmux, &record)?;
+    if let Some(guard) = &claude_guard {
+        guard.check_before_teardown(&tmux, &record)?;
     }
     let (_, mut deleted) = delete_session_locked_with_timeouts_and_prepare(
         context,
@@ -168,6 +114,66 @@ pub(super) fn delete_if_idle(
     )?;
     deleted.children = Some(children);
     Ok(deleted)
+}
+
+pub(crate) fn require_running(
+    context: &CliContext,
+    record: &SessionRecord,
+    tmux: &Path,
+) -> Result<(), CliError> {
+    match session_status(context, tmux, record).as_str() {
+        "running" => Ok(()),
+        "stopped" => Err(active(record, "stopped")),
+        _ => Err(unknown(record)),
+    }
+}
+
+struct ActivityFence {
+    _activity: activity::ActivityLock,
+    _ingress: fs::File,
+}
+
+fn acquire_activity(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Result<ActivityFence, CliError> {
+    let activity = activity::acquire_coordination_activity_lock(context, &record.id)
+        .map_err(|_| unknown(record))?;
+    let ingress = activity::pending::probe_lock(context, &record.id)
+        .map_err(|_| unknown(record))?
+        .ok_or_else(|| active(record, "provider-event-pending"))?;
+    if activity::pending::unsettled(context, record).ok_or_else(|| unknown(record))? {
+        return Err(active(record, "provider-event-pending"));
+    }
+    Ok(ActivityFence {
+        _activity: activity,
+        _ingress: ingress,
+    })
+}
+
+fn check_composer(
+    context: &CliContext,
+    record: &SessionRecord,
+    tmux: &Path,
+    deadline: Instant,
+) -> Result<(), CliError> {
+    send_guard::Admission {
+        stopped_idle: &Default::default(),
+        context,
+        record,
+        args: &send_guard::GuardArgs {
+            require_empty_composer: true,
+            ..Default::default()
+        },
+        tmux_bin: tmux,
+        verify_composer: false,
+        deadline,
+    }
+    .check_preserving_draft("admission")
+    .map_err(|error| match error.code() {
+        "send-composer-not-empty" | "send-composer-unobservable" => error,
+        _ => unknown(record),
+    })
 }
 
 fn require_codex_idle(record: &SessionRecord, deadline: Instant) -> Result<(), CliError> {

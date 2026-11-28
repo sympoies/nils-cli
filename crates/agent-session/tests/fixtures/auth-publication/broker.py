@@ -10,12 +10,12 @@ parser.add_argument("--root", type=Path, required=True)
 parser.add_argument("verb", choices=["stage", "publish", "list", "materialize", "credential-state"])
 parser.add_argument("--generation", type=int)
 parser.add_argument("--provider", choices=["claude"], default="claude")
-parser.add_argument("--account", choices=["alpha"], default="alpha")
+parser.add_argument("--account", choices=["alpha", "beta"], default="alpha")
 parser.add_argument("--format", choices=["json"], default="json")
 args = parser.parse_args()
 root = args.root.resolve(strict=True)
-config = root / "alpha"
-state_file = root / "publication.json"
+config = root / args.account
+state_file = root / f"publication-{args.account}.json"
 time = "2030-01-01T00:00:00Z"
 schema = "agent-session.account-broker.v2"
 
@@ -52,7 +52,7 @@ if args.verb in ("stage", "publish"):
                        "directory_preparation", "active_credentials", "proxy_projection"]]
         state = {
             "schema_version": "agent-session.credential-state.v1", "ok": True,
-            "provider": "claude", "account": "alpha",
+            "provider": "claude", "account": args.account,
             "host_id": "40000000-0000-4000-8000-000000000001",
             "read_at": time, "error": None,
             "state": {
@@ -92,10 +92,10 @@ else:
         log.write(args.verb + "\n")
     if args.verb == "list":
         result = {"schema_version": schema, "provider": "claude",
-                  "capabilities": ["credential_state_v1"], "accounts": [{"account": "alpha"}]}
+                  "capabilities": ["credential_state_v1"], "accounts": [{"account": account} for account in ("alpha", "beta")]}
     elif args.verb == "materialize":
         assert (config / ".credentials.json").is_file()
-        result = {"schema_version": schema, "provider": "claude", "account": "alpha",
+        result = {"schema_version": schema, "provider": "claude", "account": args.account,
                   "config_dir": str(config)}
     else:
         result = json.loads(state_file.read_text())

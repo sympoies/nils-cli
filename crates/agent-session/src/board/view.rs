@@ -155,22 +155,30 @@ pub(crate) fn run(context: &CliContext, args: BoardArgs) -> i32 {
     let format = args.format;
     let result = parse_query(&args).and_then(|query| select_mode(context, &args, &query));
     match result {
-        Ok((data, caller)) => match format {
-            OutputFormat::Json => {
-                crate::render_single_success(COMMAND, format, &data, |_| String::new())
+        Ok((mut data, caller)) => {
+            if let Some(summary) = data["board"]["records"]
+                .as_array()
+                .and_then(|records| crate::auth_incident::recovery::report::summary(records))
+            {
+                data["board"]["auth_recovery_summary"] = summary;
             }
-            OutputFormat::Text => {
-                print!(
-                    "{}",
-                    render_text(
-                        &data,
-                        caller.as_ref(),
-                        &super::machine_identity(None, context)
-                    )
-                );
-                nils_common::cli_contract::exit::SUCCESS
+            match format {
+                OutputFormat::Json => {
+                    crate::render_single_success(COMMAND, format, &data, |_| String::new())
+                }
+                OutputFormat::Text => {
+                    print!(
+                        "{}",
+                        render_text(
+                            &data,
+                            caller.as_ref(),
+                            &super::machine_identity(None, context)
+                        )
+                    );
+                    nils_common::cli_contract::exit::SUCCESS
+                }
             }
-        },
+        }
         Err(err) => crate::render_error(COMMAND, format, err),
     }
 }
@@ -503,6 +511,20 @@ fn render_text(data: &Value, caller: Option<&Caller>, local_machine: &str) -> St
             ));
         }
     }
+    for summary in board["auth_recovery_summary"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        out.push_str(&format!(
+            "auth recovery {} {} generation {}: re-verified {}, restarted {}, deferred {}, still failing {}\n",
+            field(&summary["machine"], REPO_WIDTH),
+            field(&summary["account"], REPO_WIDTH),
+            field(&summary["generation"], REPO_WIDTH),
+            summary["re_verified"],
+            summary["restarted"], summary["deferred_until_idle"], summary["still_failing"],
+        ));
+    }
     for record in board["records"].as_array().into_iter().flatten() {
         let turn = &record["turn_state"];
         let progress = match &turn["current_turn"]["last_progress_at"] {
@@ -536,6 +558,18 @@ fn render_text(data: &Value, caller: Option<&Caller>, local_machine: &str) -> St
         }
         if let Some(reason) = record["native_notice"]["reason"].as_str() {
             out.push_str(&format!("  native_notice: not-attached ({reason})"));
+        }
+        if record["auth_recovery"]["state"].is_string() {
+            out.push_str(&format!(
+                "  auth_recovery={}",
+                field(&record["auth_recovery"]["state"], REPO_WIDTH)
+            ));
+            if record["auth_recovery"]["reason"].is_string() {
+                out.push_str(&format!(
+                    "({})",
+                    field(&record["auth_recovery"]["reason"], REPO_WIDTH)
+                ));
+            }
         }
         if is_caller(record, caller) {
             out.push_str("  (this session)");

@@ -59,10 +59,22 @@ The optional `auth_incident.failover` receipt has schema
 account and binding revision, provider conversation, target nickname, proof,
 30-second switch deadline, replacement runtime selectors and unknown-effect
 selectors. Arbitrary broker fields and credentials are never copied into it.
-States are `candidate_preflight`, `switching`, `account_switched`,
-`credentials_refreshed`, `healthy`
-and terminal `blocked_no_credential`. Fixed reasons distinguish no candidate,
-policy refusal, stale capacity, changed identity, deadlines and unknown outcomes.
+States are `candidate_preflight`, `waiting_credential`, `switching`,
+`account_switched`, `credentials_refreshed`, `healthy`, and terminal
+`blocked_no_credential`. Fixed reasons distinguish no candidate, policy
+refusal, stale capacity, changed identity, deadlines and unknown outcomes.
+
+When Claude failover finds no candidate, or the selected account's local
+credential file or verified publication has not arrived, it waits up to 120
+seconds from that refusal. The receipt retains the deadline and the next
+poll time across daemon restarts. The daemon retries broker admission with
+15-, 30-, then 60-second back-off on its existing ticks. Each attempt checks
+the original runtime, binding and conversation, and obtains fresh policy and
+capacity proof. The wait never stops the running session or changes its account.
+If a candidate becomes ready before the deadline, the existing switch path
+can resume once. If not, the terminal state is `blocked_no_credential` with
+reason `credential_wait_deadline` and no resume. Policy and identity refusals
+and ambiguous lifecycle effects are not retried.
 
 Receipt stages are committed before broker and switch effects. A crash in
 preflight is terminal; it does not silently rerun selection. A persisted Codex

@@ -4,6 +4,11 @@ use super::*;
 use crate::claude_account::generation::{self, Publication};
 use crate::cli::SpecialKey;
 use crate::coordination::auth_effects::UnknownOperation;
+use crate::delete_recovery::idle;
+
+pub(crate) mod report;
+mod verification;
+use verification::{Failure, Verification};
 
 const WAIT_SECONDS: i64 = 30;
 const REVOKED_WAIT_SECONDS: i64 = 120;
@@ -21,6 +26,8 @@ pub(crate) struct Receipt {
     pub provider_session_id: String,
     pub baseline: Option<Publication>,
     pub replacement: Option<Publication>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    verification: Option<Verification>,
     pub new_runtime_incarnation: Option<String>,
     pub new_runtime_generation: Option<u64>,
     pub reread: String,
@@ -33,8 +40,20 @@ pub(crate) struct Receipt {
 pub(super) fn active(receipt: &Receipt) -> bool {
     matches!(
         receipt.state.as_str(),
-        "waiting_generation" | "stopping" | "stopped" | "resuming" | "awaiting_ready"
+        "waiting_generation"
+            | "verifying"
+            | "deferred_until_idle"
+            | "stopping"
+            | "stopped"
+            | "resuming"
+            | "awaiting_ready"
     )
+}
+
+/// After a successful verification, wait for the restart even if the old
+/// process finishes its current turn successfully.
+pub(super) fn verified_restart_pending(receipt: &Receipt) -> bool {
+    receipt.verification == Some(Verification::Verified) && receipt.state == "deferred_until_idle"
 }
 
 /// A receipt that no longer fences the replacement runtime.
@@ -57,7 +76,7 @@ pub(super) fn fences(incident: &AuthIncident, record: &SessionRecord) -> bool {
         !settled(r)
             && r.new_runtime_incarnation.as_deref()
                 == record.runtime.as_ref().map(|r| r.launch_id.as_str())
-            || active(r)
+            || matches!(r.state.as_str(), "resuming" | "awaiting_ready")
                 && record.runtime.as_ref().is_some_and(|runtime| {
                     runtime.generation == incident.runtime_generation.saturating_add(1)
                 })
@@ -138,13 +157,30 @@ fn save_receipt(
     index: usize,
     receipt: &Receipt,
 ) -> Result<(), CliError> {
-    store.incidents[index].same_account_recovery = Some(receipt.clone());
+    let previous = &mut store.incidents[index].same_account_recovery;
+    if previous.as_ref().is_some_and(|previous| {
+        serde_json::to_value(previous).ok() == serde_json::to_value(receipt).ok()
+    }) {
+        return Ok(());
+    }
+    *previous = Some(receipt.clone());
     save(context, record, store)
 }
 
 fn blocked(receipt: &mut Receipt, reason: &str) {
     receipt.state = "blocked".into();
     receipt.last_reason = Some(reason.into());
+}
+
+fn defer_until_idle(receipt: &mut Receipt, cause: &CliError) {
+    receipt.state = "deferred_until_idle".into();
+    receipt.last_reason = Some(
+        cause
+            .details()
+            .and_then(|details| details["state"].as_str())
+            .unwrap_or(cause.code())
+            .into(),
+    );
 }
 
 fn account_matches(record: &SessionRecord, account: &str) -> bool {
@@ -178,15 +214,15 @@ pub(crate) fn tick(
         context,
         &format!("auth-recovery-{}.lock", expected.id),
     )?;
-    let record_lock = crate::acquire_session_record_lock_timed(
+    let mut record_lock = Some(crate::acquire_session_record_lock_timed(
         context,
         &expected.id,
         Duration::from_millis(250),
-    )?;
+    )?);
     let mut record = crate::load_session_record(context, &expected.id)?;
     crate::ensure_same_session_identity(expected, &record)?;
     let mut store = read(context, &record)?;
-    let Some(index) = store.incidents.iter().rposition(|i| {
+    let Some(mut index) = store.incidents.iter().rposition(|i| {
         same_runtime(i, &record) && i.status == "auth_failed"
             || i.same_account_recovery.as_ref().is_some_and(active)
     }) else {
@@ -211,6 +247,7 @@ pub(crate) fn tick(
             provider_session_id: conversation(&record).unwrap_or_default().into(),
             baseline: generation::baseline(&record),
             replacement: None,
+            verification: None,
             new_runtime_incarnation: None,
             new_runtime_generation: None,
             reread: "unsupported".into(),
@@ -219,7 +256,16 @@ pub(crate) fn tick(
             untracked_effects: "unknown".into(),
             replayed: false,
         });
-    if !active(&receipt) {
+    let watching_late_publication = receipt.state == "blocked"
+        && same_runtime(&incident, &record)
+        && (receipt.last_reason.as_deref() == Some("publication_deadline")
+            || matches!(receipt.verification, Some(Verification::Failed(_))));
+    if !(active(&receipt) || watching_late_publication)
+        || incident
+            .failover
+            .as_ref()
+            .is_some_and(failover::Receipt::in_flight)
+    {
         return Ok(());
     }
     // Commit identity and deadline before any broker/lifecycle effect.
@@ -246,9 +292,8 @@ pub(crate) fn tick(
             .as_ref()
             .is_some_and(|r| r.generation == incident.runtime_generation.saturating_add(1))
             && matches!(receipt.state.as_str(), "resuming" | "awaiting_ready")
-            && generation::baseline(&record)
-                .zip(receipt.baseline.as_ref())
-                .is_some_and(|(new, old)| new.newer_than(old));
+            && receipt.verification == Some(Verification::Verified)
+            && generation::baseline(&record).as_ref() == receipt.replacement.as_ref();
         if resumed {
             receipt.new_runtime_incarnation = record.runtime.as_ref().map(|r| r.launch_id.clone());
             receipt.new_runtime_generation = record.runtime.as_ref().map(|r| r.generation);
@@ -265,53 +310,153 @@ pub(crate) fn tick(
         .is_none_or(|b| b.account != account)
     {
         blocked(&mut receipt, "launch_generation_missing");
-    } else if receipt.state == "waiting_generation" {
-        // Controller cadence must not consume the publication window early.
-        // Waiting returns below, releasing both per-session locks until a later tick.
-        if now < receipt.started_at_epoch || now >= receipt.deadline_epoch {
-            blocked(&mut receipt, "publication_deadline");
-        } else {
-            receipt.polls = receipt.polls.saturating_add(1);
-            match generation::published(account) {
-                Ok(Some(p)) if p.newer_than(receipt.baseline.as_ref().unwrap()) => {
-                    receipt.replacement = Some(p);
-                    receipt.state = "stopping".into();
-                    receipt.last_reason = None;
-                }
-                Ok(_) => receipt.last_reason = Some("newer_publication_pending".into()),
-                Err(e)
-                    if e.details().and_then(|d| d["reason"].as_str())
-                        == Some("capability_missing") =>
-                {
-                    blocked(&mut receipt, "capability_missing")
-                }
-                Err(_) => receipt.last_reason = Some("publication_unavailable".into()),
+    } else if receipt.state == "verifying" {
+        // A committed attempt may have reached the provider. Do not repeat it
+        // after a daemon interruption or treat it as a successful response.
+        let reason = Failure::VerificationInterrupted;
+        receipt.verification = Some(Verification::Failed(reason));
+        blocked(&mut receipt, reason.code());
+    } else if watching_late_publication
+        || matches!(
+            receipt.state.as_str(),
+            "waiting_generation" | "deferred_until_idle"
+        )
+    {
+        if receipt.state == "waiting_generation" {
+            if now < receipt.started_at_epoch || now >= receipt.deadline_epoch {
+                blocked(&mut receipt, "publication_deadline");
+            } else {
+                receipt.polls = receipt.polls.saturating_add(1);
+                receipt.last_reason = Some("newer_publication_pending".into());
             }
+        }
+        match generation::published(account) {
+            Ok(Some(p))
+                if p.newer_than(receipt.replacement.as_ref().unwrap_or_else(|| {
+                    receipt
+                        .baseline
+                        .as_ref()
+                        .expect("validated launch publication")
+                })) =>
+            {
+                receipt.replacement = Some(p);
+                receipt.verification = Some(Verification::Started);
+                receipt.state = "verifying".into();
+                receipt.last_reason = None;
+                save_receipt(context, &record, &mut store, index, &receipt)?;
+                // A busy runtime must be free to finish while the provider
+                // read is running. The operation lock still owns this attempt.
+                drop(record_lock.take());
+                let verdict = verification::verify(
+                    &session_dir(context, &record.id),
+                    receipt.replacement.as_ref().unwrap(),
+                );
+                record_lock = Some(crate::acquire_session_record_lock_timed(
+                    context,
+                    &record.id,
+                    Duration::from_millis(250),
+                )?);
+                let current = crate::load_session_record(context, &record.id)?;
+                if !runtime_matches(&record, &current)
+                    || !account_matches(&current, account)
+                    || conversation(&current) != Some(receipt.provider_session_id.as_str())
+                {
+                    return Ok(());
+                }
+                record = current;
+                store = read(context, &record)?;
+                let Some(current_index) = store.incidents.iter().rposition(|entry| {
+                    entry.incident_id == incident.incident_id
+                        && entry.status == "auth_failed"
+                        && entry.same_account_recovery.as_ref().is_some_and(|r| {
+                            r.operation_id == receipt.operation_id
+                                && r.verification == Some(Verification::Started)
+                        })
+                        && !entry
+                            .failover
+                            .as_ref()
+                            .is_some_and(failover::Receipt::in_flight)
+                }) else {
+                    return Ok(());
+                };
+                index = current_index;
+                match verdict {
+                    Ok(()) => {
+                        receipt.verification = Some(Verification::Verified);
+                        receipt.state = "deferred_until_idle".into();
+                    }
+                    Err(reason) => {
+                        receipt.verification = Some(Verification::Failed(reason));
+                        blocked(&mut receipt, reason.code());
+                    }
+                }
+            }
+            Err(e) if receipt.state == "waiting_generation" => {
+                if e.details().and_then(|d| d["reason"].as_str()) == Some("capability_missing") {
+                    blocked(&mut receipt, "capability_missing");
+                } else {
+                    receipt.last_reason = Some("publication_unavailable".into());
+                }
+            }
+            _ => {}
         }
     }
     save_receipt(context, &record, &mut store, index, &receipt)?;
-    if matches!(receipt.state.as_str(), "stopping" | "stopped") {
+    if matches!(
+        receipt.state.as_str(),
+        "deferred_until_idle" | "stopping" | "stopped"
+    ) {
         let result = (|| {
-            // Revalidate publication before stopping, including crash re-entry.
-            let p = generation::published(account)?.ok_or_else(error)?;
-            if !p.newer_than(receipt.baseline.as_ref().ok_or_else(error)?) {
-                return Err(error());
-            }
-            if receipt
-                .replacement
-                .as_ref()
-                .is_none_or(|old| p != *old && !p.newer_than(old))
+            // Revalidate the exact verified publication before stopping,
+            // including crash re-entry. A newer one needs its own request.
+            if receipt.verification != Some(Verification::Verified)
+                || !receipt
+                    .replacement
+                    .as_ref()
+                    .is_some_and(verification::current)
             {
+                if receipt.state == "deferred_until_idle" {
+                    receipt.last_reason = Some("publication_unavailable".into());
+                    return Ok(());
+                }
                 return Err(error());
             }
-            receipt.replacement = Some(p);
             let _fence = crate::restart::auth_recovery::fence(context, &record)?;
+            // A committed stop can recover an already-stopped boundary. For
+            // a running pane, always use the shared live Claude idle guard.
+            let guard = if receipt.state != "deferred_until_idle"
+                && crate::session_status(context, tmux, &record) == "stopped"
+            {
+                None
+            } else {
+                match idle::require_running(context, &record, tmux)
+                    .and_then(|()| idle::claude::acquire(context, &record, tmux))
+                {
+                    Ok(guard) => Some(guard),
+                    Err(cause) => {
+                        defer_until_idle(&mut receipt, &cause);
+                        return Ok(());
+                    }
+                }
+            };
+            if receipt.state == "deferred_until_idle" {
+                receipt.state = "stopping".into();
+                receipt.last_reason = None;
+                save_receipt(context, &record, &mut store, index, &receipt)?;
+            }
             crate::auto_resume::cancel_for_manual_input_locked(
                 context,
                 &record.id,
                 &jiff::Timestamp::now().to_string(),
             )?;
+            if let Some(guard) = &guard
+                && let Err(cause) = guard.check_before_teardown(tmux, &record)
+            {
+                defer_until_idle(&mut receipt, &cause);
+                return Ok(());
+            }
             crate::stop_session_runtime_locked(context, &mut record, tmux)?;
+            drop(guard);
             // The process is stopped before taking the final operation snapshot.
             if receipt.state == "stopping" {
                 (
@@ -332,13 +477,7 @@ pub(crate) fn tick(
             receipt.new_runtime_generation = record.runtime.as_ref().map(|r| r.generation);
             if !account_matches(&record, account)
                 || conversation(&record) != Some(receipt.provider_session_id.as_str())
-                || !generation::baseline(&record).is_some_and(|new| {
-                    new.newer_than(receipt.baseline.as_ref().unwrap())
-                        && receipt
-                            .replacement
-                            .as_ref()
-                            .is_some_and(|p| new == *p || new.newer_than(p))
-                })
+                || generation::baseline(&record).as_ref() != receipt.replacement.as_ref()
                 || record.runtime.as_ref().is_none_or(|r| {
                     r.launch_id == incident.runtime_incarnation
                         || r.generation != incident.runtime_generation.saturating_add(1)
@@ -346,7 +485,6 @@ pub(crate) fn tick(
             {
                 return Err(error());
             }
-            receipt.replacement = generation::baseline(&record);
             receipt.state = "awaiting_ready".into();
             Ok(())
         })();

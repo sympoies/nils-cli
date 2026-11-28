@@ -30,7 +30,7 @@ pub(crate) const BOARD_SCHEMA: &str = "agent-session.board.v1";
 pub(crate) const RECORD_SCHEMA: &str = "agent-session.board-record.v1";
 /// Additive capabilities of the v1 envelopes. A reader feature-detects from
 /// this list, never from the presence of a record field.
-pub(crate) const EXTENSIONS: [&str; 8] = [
+pub(crate) const EXTENSIONS: [&str; 9] = [
     "lineage.v1",
     "work.v1",
     "context_usage.v1",
@@ -39,9 +39,10 @@ pub(crate) const EXTENSIONS: [&str; 8] = [
     "runtime_exit.v1",
     "boot_recovery.v1",
     "unsubmitted_attempt.v1",
+    "auth_recovery.v1",
 ];
 /// What the daemon snapshot names: the extensions plus the programs route.
-const DAEMON_EXTENSIONS: [&str; 9] = [
+const DAEMON_EXTENSIONS: [&str; 10] = [
     "lineage.v1",
     "work.v1",
     "programs.v1",
@@ -51,6 +52,7 @@ const DAEMON_EXTENSIONS: [&str; 9] = [
     "runtime_exit.v1",
     "boot_recovery.v1",
     "unsubmitted_attempt.v1",
+    "auth_recovery.v1",
 ];
 /// `AGENT_SESSION_BOARD=1` enables the daemon board routes, like `--board`.
 pub(crate) const BOARD_ENV: &str = "AGENT_SESSION_BOARD";
@@ -173,7 +175,8 @@ fn snapshot_with(
             .unwrap_or_default()
             .cmp(b["session_id"].as_str().unwrap_or_default())
     });
-    Ok(json!({
+    let summary = crate::auth_incident::recovery::report::summary(&records);
+    let mut snapshot = json!({
         "schema_version": BOARD_SCHEMA,
         "record_schema": RECORD_SCHEMA,
         "machine": machine,
@@ -182,7 +185,11 @@ fn snapshot_with(
         "ledger_cursor": ledger_cursor,
         "records": records,
         "skipped_count": skipped_count,
-    }))
+    });
+    if let Some(summary) = summary {
+        snapshot["auth_recovery_summary"] = summary;
+    }
+    Ok(snapshot)
 }
 
 /// `GET /board/closed/v1` data: retained closed records after `since`.
@@ -382,6 +389,12 @@ pub(crate) fn project_record(
         serde_json::from_value::<crate::auth_incident::AuthIncident>(value.clone()).ok()
     }) {
         projected["auth_incident"] = json!(incident);
+    }
+    if let Some(outcome) = view.get("auth_recovery").and_then(|value| {
+        serde_json::from_value::<crate::auth_incident::recovery::report::Outcome>(value.clone())
+            .ok()
+    }) {
+        projected["auth_recovery"] = json!(outcome);
     }
     if let Some(health) = view
         .get("auth_detection_health")
