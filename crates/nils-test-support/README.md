@@ -63,6 +63,7 @@ Stale-test cleanup sequencing is frozen in
   - `stubs`: ready-made stub scripts for common external tools (e.g. `fzf`, `bat`, `tree`, `file`, ImageMagick/WebP/JPEG)
 - Fixtures
   - `fixtures`: REST/GraphQL setup fixtures + suite manifest helpers
+  - `fixture::Fixture`: private child-process environment, temporary directory, and short Unix runtime directory
 - Loopback HTTP server
   - `http`: in-process loopback servers (`LoopbackServer`, `TestServer`) that record requests
 
@@ -77,6 +78,23 @@ let stub_dir = StubBinDir::new();
 let _path = prepend_path(&lock, stub_dir.path());
 let _env = EnvGuard::set(&lock, "EXAMPLE", "1");
 ```
+
+## Filesystem and subprocess fixtures
+
+Create a `Fixture` for tests that need a private runtime or temporary directory,
+or that spawn Git directly. Use `fixture.runtime_dir().join("test.sock")` for
+Unix sockets and `fixture.temp_dir()` for files. `fixture.git_command(repo)`
+uses private Git configuration with commit and tag signing disabled by default.
+`fixture.command(program)` supplies the same isolated environment to a
+fixture binary or script. Apply test overrides to the returned command and
+keep the fixture alive until all children exit.
+
+The checks entrypoint audits direct Git launches, Unix socket opens, and
+process-temp lookups in Rust tests. Socket tests can also use
+`short_socket_path` directly. The [allowlist](../../scripts/ci/fixture-isolation-allowlist.tsv)
+records existing sites and reviewed exceptions. If a test deliberately needs
+a host setting, record the exact site and the behavior that requires it.
+Remove entries as their fixtures are migrated.
 
 ## Migration guidance
 

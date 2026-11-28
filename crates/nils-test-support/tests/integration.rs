@@ -5,6 +5,8 @@
 
 #[path = "integration/bin_cmd.rs"]
 mod bin_cmd;
+#[path = "integration/fixture.rs"]
+mod fixture;
 #[path = "integration/fixtures.rs"]
 mod fixtures;
 #[path = "integration/fs.rs"]

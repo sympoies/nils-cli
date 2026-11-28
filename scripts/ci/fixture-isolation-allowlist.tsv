@@ -1,0 +1,116 @@
+# path	rule	source signature	count	reason
+crates/agent-hook/src/git_inspection.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-hook/src/workspace_recovery.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/api_contract.rs	git	let git_dir_output = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/dsh_policy.rs	git	let head_output = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/dsh_policy.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/dsh_policy.rs	git	let worktree = Command::new("git")	3	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/dsh_policy.rs	tmpdir	let hidden = std::env::temp_dir().join(format!("nils-hidden-cwd-{}", std::process::id()));	1	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/finish_line.rs	git	let bare_probe = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/finish_line.rs	git	let status = Command::new("git")	3	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/finish_line.rs	git	let status = std::process::Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/finish_line_acceptance.rs	git	let status = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/performance_contract.rs	git	let status = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/security_review.rs	git	let status = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/support/mod.rs	git	let mut command = Command::new("git");	1	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/support/mod.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/workspace_lease.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/workspace_lease_v2.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-hook/tests/workspace_recovery.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-runtime/src/render/time.rs	git	let status = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-runtime/tests/integration/doctor_filesystem.rs	git	let status = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/cli/permission/transport/tests.rs	unix-socket	let listener = UnixListener::bind(&socket).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/cli/permission/transport/tests.rs	unix-socket	let mut caller = UnixStream::connect(socket).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/codex_app_server/proxy_transport/tests.rs	unix-socket	let listener = std::os::unix::net::UnixListener::bind(&upstream).unwrap_or_else(|err| {	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/codex_app_server/tests/auth_refresh_retention.rs	unix-socket	let listener = tokio::net::UnixListener::bind(socket_path(&record).unwrap()).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/codex_app_server/tests/mod.rs	unix-socket	let _listener = std::os::unix::net::UnixListener::bind(path).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/codex_app_server/tests/mod.rs	unix-socket	let ack_socket = UnixDatagram::bind(&ack_path).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/codex_app_server/tests/mod.rs	unix-socket	tokio::net::UnixStream::connect(&listen),	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/codex_app_server/tests/typed_causes.rs	unix-socket	match tokio::net::UnixStream::connect(upstream.with_extension("proxy")).await {	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/coordination/context.rs	git	Command::new("git")	2	Existing fixture to migrate under #4172.
+crates/agent-session/src/provider_prompt/tests/source_resolution.rs	unix-socket	let _socket = UnixListener::bind(&target).expect("socket");	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/provider_prompt/tests/source_resolution.rs	unix-socket	let _socket = UnixListener::bind(codex_root.join("socket.jsonl")).expect("unix socket");	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/provider_resume_import_tests.rs	git	ProcessCommand::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/restart/codex_account_tests.rs	unix-socket	tokio::net::UnixListener::bind(crate::codex_app_server::socket_path(&record).unwrap())	2	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/session_metrics_tests.rs	unix-socket	if let Ok(stream) = tokio::net::UnixStream::connect(&listen).await {	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/session_metrics_tests.rs	unix-socket	let listener = tokio::net::UnixListener::bind(&upstream).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests.rs	git	let add_remote = ProcessCommand::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests.rs	git	let init = ProcessCommand::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests.rs	git	std::process::Command::new("/usr/bin/git")	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests/codex_prompt_outcomes.rs	unix-socket	if let Ok(stream) = tokio::net::UnixStream::connect(&proxy_path).await {	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests/codex_startup.rs	unix-socket	if let Ok(stream) = tokio::net::UnixStream::connect(&listen).await {	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests/codex_startup.rs	unix-socket	let listener = tokio::net::UnixListener::bind(&upstream).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests/continuation_claude.rs	unix-socket	let mut stream = std::os::unix::net::UnixStream::connect(socket).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests/continuation_notices.rs	unix-socket	let listener = tokio::net::UnixListener::bind(root.join(format!("{id}.sock"))).unwrap();	2	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests/interrupt_tests.rs	unix-socket	let listener = tokio::net::UnixListener::bind(root.join("interrupt.sock")).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests/mailbox_notice_admission.rs	unix-socket	let mut stream = std::os::unix::net::UnixStream::connect(socket).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests/mailbox_notice_terminal.rs	unix-socket	let mut stream = std::os::unix::net::UnixStream::connect(&socket).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests/mailbox_notice_terminal.rs	unix-socket	let mut stream = std::os::unix::net::UnixStream::connect(socket).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests/mailbox_wire.rs	unix-socket	let listener = tokio::net::UnixListener::bind(root.join("beta.sock")).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests/native_busy_reply.rs	unix-socket	let listener = tokio::net::UnixListener::bind(root.join(format!("{ID}.sock"))).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests/native_reconciliation.rs	unix-socket	let listener = std::os::unix::net::UnixListener::bind(path).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/src/serve/tests/prompt_receipts.rs	unix-socket	let listener = tokio::net::UnixListener::bind(root.join("startup-prompt.sock")).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/tests/guarded_send/claude_notice.rs	unix-socket	let mut stream = UnixStream::connect(socket).ok()?;	1	Existing fixture to migrate under #4172.
+crates/agent-session/tests/guarded_send/claude_notice/refusals.rs	unix-socket	let mut stream = UnixStream::connect(boot["socket_path"].as_str().unwrap()).unwrap();	2	Existing fixture to migrate under #4172.
+crates/agent-session/tests/guarded_send/native.rs	unix-socket	std::os::unix::net::UnixListener::bind(fixture.root().join("cx.sock")).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/tests/guarded_send/permission.rs	unix-socket	std::os::unix::net::UnixStream::connect(private["socket"].as_str().unwrap()).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-session/tests/integration/coordination.rs	git	let init = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-session/tests/integration/coordination.rs	git	let remote_add = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-session/tests/integration/coordination.rs	git	let removed = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-session/tests/integration/delete_idle.rs	unix-socket	let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();	1	Existing fixture to migrate under #4172.
+crates/agent-workflow-primitives/tests/integration/agent_run_inspect.rs	unix-socket	let datagram = UnixDatagram::bind(&datagram_path).expect("datagram listener");	1	Existing fixture to migrate under #4172.
+crates/agent-workflow-primitives/tests/integration/agent_run_inspect.rs	unix-socket	let stream = UnixListener::bind(&stream_path).expect("stream listener");	1	Existing fixture to migrate under #4172.
+crates/agent-workflow-primitives/tests/integration/cli.rs	git	let mut command = Command::new("git");	1	Existing fixture to migrate under #4172.
+crates/agent-workflow-primitives/tests/integration/cli.rs	git	let status = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-workflow-primitives/tests/integration/cli/retro_git.rs	git	let mut command = Command::new("git");	1	The #4167 fixture supplies private Git config and drops command-scoped signing inputs.
+crates/agent-workflow-primitives/tests/integration/control_plane.rs	git	Command::new("git")	5	Existing fixture to migrate under #4172.
+crates/agent-workflow-primitives/tests/integration/review_specialists.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/agent-workflow-primitives/tests/integration/test_first_evidence/subject_binding.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/codex-cli/tests/integration/execution_capsule.rs	git	let git = std::process::Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/devlog/tests/integration/cli.rs	git	let status = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/devlog/tests/integration/fragments.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/forge-cli/src/config.rs	git	let out = std::process::Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/forge-cli/src/ops/pr_create.rs	git	let output = GitCommand::new("git")	1	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/cli.rs	git	let add_remote = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/cli.rs	git	let init = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/identity.rs	git	Command::new("git")	3	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/identity.rs	git	let out = Command::new("git")	2	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/label_hold_compatibility.rs	git	Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/pr_create.rs	git	Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/pr_create.rs	git	let out = Command::new("git")	2	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/pr_deliver_chain.rs	git	let out = Command::new("git")	2	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/pr_deliver_chain.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/pr_merge.rs	git	let out = Command::new("git")	5	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/pr_review_handoff/retired_coordinator.rs	git	Command::new("git")	9	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/pr_review_handoff_sync.rs	git	Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/read_metadata.rs	git	std::process::Command::new("git")	2	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/repo_bootstrap_github.rs	git	let commit = std::process::Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/repo_bootstrap_github.rs	git	std::process::Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/repo_push_default.rs	git	let initialized = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/repo_push_default.rs	git	let output = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/repo_push_default.rs	git	let output = Command::new("git").args(args).output().expect("run git");	1	Existing fixture to migrate under #4172.
+crates/forge-cli/tests/integration/repo_push_default.rs	git	let tag = Command::new("git")	1	Existing fixture to migrate under #4172.
+crates/git-cli/src/worktree/dirty_checkout_adoption/test_worker_root.rs	tmpdir	let directory = env::temp_dir().join(format!("git-cli-test-worker.{euid}"));	1	Existing fixture to migrate under #4172.
+crates/git-cli/src/worktree/dirty_checkout_adoption/tests/challenge_descriptor.rs	unix-socket	UnixListener::bind(&socket_path).expect("bind challenge descriptor listener");	1	Existing fixture to migrate under #4172.
+crates/git-cli/src/worktree/dirty_checkout_adoption/tests/challenge_descriptor.rs	unix-socket	UnixStream::connect(&socket_path).expect("connect challenge descriptor sender");	1	Existing fixture to migrate under #4172.
+crates/git-cli/src/worktree/dirty_checkout_adoption/tests/mod.rs	git	let status = Command::new("/usr/bin/git")	1	Existing fixture to migrate under #4172.
+crates/git-cli/src/worktree/dirty_checkout_adoption/tests/process_supervisor.rs	unix-socket	let mut sender = UnixStream::connect(socket_path).expect("connect wrong-peer sender");	1	Existing fixture to migrate under #4172.
+crates/git-cli/tests/integration/dirty_checkout_adoption.rs	tmpdir	let parent = fs::canonicalize(std::env::temp_dir()).expect("canonicalize platform temp root");	1	Existing fixture to migrate under #4172.
+crates/git-cli/tests/integration/dirty_checkout_adoption.rs	unix-socket	UnixListener::bind(&socket_path).expect("bind challenge descriptor listener");	1	Existing fixture to migrate under #4172.
+crates/git-cli/tests/integration/dirty_checkout_adoption.rs	unix-socket	UnixStream::connect(&socket_path).expect("connect challenge descriptor sender");	1	Existing fixture to migrate under #4172.
+crates/git-cli/tests/integration/trusted_binary_cache.rs	tmpdir	let system_temp = std::env::temp_dir();	1	Existing fixture to migrate under #4172.
+crates/nils-common/src/forge_identity/replay.rs	git	let mut command = Command::new("git");	2	Existing fixture to migrate under #4172.
+crates/nils-common/tests/integration/forge_identity.rs	git	&mut Command::new("git"),	1	Existing fixture to migrate under #4172.
+crates/nils-common/tests/integration/forge_identity.rs	git	let mut cmd = Command::new("git");	1	Existing fixture to migrate under #4172.
+crates/nils-common/tests/integration/forge_identity.rs	git	let mut command = Command::new("git");	1	Existing fixture to migrate under #4172.
+crates/nils-common/tests/integration/forge_identity.rs	git	let refused = identity::prepare_git(&mut Command::new("git"), Some(repo.path()), &args);	2	Existing fixture to migrate under #4172.
+crates/nils-common/tests/integration/forge_identity_children.rs	git	let mut index = Command::new("git");	1	Existing fixture to migrate under #4172.
+crates/nils-common/tests/integration/forge_identity_children.rs	git	let mut transport = Command::new("git");	1	Existing fixture to migrate under #4172.
+crates/nils-common/tests/integration/forge_identity_network.rs	git	let mut effective = Command::new("git");	1	Existing fixture to migrate under #4172.
+crates/nils-common/tests/integration/forge_identity_network.rs	git	let mut transport = Command::new("git");	1	Existing fixture to migrate under #4172.
+crates/nils-evidence/tests/migrate.rs	git	let out = Command::new("git")	3	Existing fixture to migrate under #4172.
+crates/nils-evidence/tests/purge.rs	git	let out = Command::new("git")	3	Existing fixture to migrate under #4172.
+crates/nils-evidence/tests/purge.rs	git	let st = std::process::Command::new("git")	2	Existing fixture to migrate under #4172.
+crates/nils-test-support/src/hermetic.rs	tmpdir	let fixture = std::env::temp_dir().join("fixture-home");	1	Existing fixture to migrate under #4172.
+crates/nils-test-support/tests/integration/fixture.rs	tmpdir	let host_temp = env::temp_dir().canonicalize().expect("resolve parent temp");	1	Compare the private directory with the synthetic parent temp root.
+crates/nils-test-support/tests/integration/short_socket.rs	tmpdir	let temp_root = std::env::temp_dir();	1	Existing fixture to migrate under #4172.

@@ -180,6 +180,7 @@ run() {
 
 # Run before mode dispatch so PR affected plans also inspect embedded test shell.
 run python3 scripts/ci/test-shell-portability-audit.py
+run python3 scripts/ci/fixture-isolation-audit.py
 
 if [[ "$local_fast" -eq 1 ]]; then
   if [[ "$with_coverage" -eq 1 ]]; then
